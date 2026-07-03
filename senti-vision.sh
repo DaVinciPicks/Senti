@@ -25,14 +25,17 @@ OPERATING=""
 # Downscale the retina screenshot with sips (built-in; no python deps) so the API
 # call is fast and cheap: full-res ~3000px/4MB → a 1536px JPEG that keeps on-screen
 # text readable. Falls back to the original if sips fails.
-SMALL="$WF_RUN/screen-small.jpg"
-/usr/bin/sips -Z 1536 -s format jpeg "$SHOT" --out "$SMALL" >/dev/null 2>&1 || SMALL="$SHOT"
+SMALL="$WF_RUN/screen-small.jpg"; MIME="image/jpeg"
+if ! /usr/bin/sips -Z 1536 -s format jpeg "$SHOT" --out "$SMALL" >/dev/null 2>&1; then
+  SMALL="$SHOT"; MIME="image/png"   # sips failed → send original PNG, labeled correctly
+fi
 
-/usr/bin/python3 - "$INSTR" "$SMALL" "$KEY" "$WF_VISION_MODEL" "$OPERATING" "$KIND" <<'PY'
-import sys, json, base64, urllib.request
-instr, shot, key, model, operating, kind = sys.argv[1:7]
+# Key passed via env (not argv, so it's not visible in `ps`).
+SENTI_KEY="$KEY" /usr/bin/python3 - "$INSTR" "$SMALL" "$WF_VISION_MODEL" "$OPERATING" "$KIND" "$MIME" <<'PY'
+import sys, os, json, base64, urllib.request
+instr, shot, model, operating, kind, mime = sys.argv[1:7]
+key = os.environ["SENTI_KEY"]
 img = base64.b64encode(open(shot, "rb").read()).decode()
-mime = "image/jpeg"
 
 if kind == "prompt":
     system = ("You are a master prompt engineer with vision. First study the screenshot to "

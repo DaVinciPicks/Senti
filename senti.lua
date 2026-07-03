@@ -114,6 +114,21 @@ function wf.setState(s)
   wf.state = s
   if wf.bar then wf.bar:setTitle(ICON[s] or "🎤") end
   if s == "recording" or s == "working" then wf.hud.show(s) else wf.hud.hide() end
+  -- Watchdog: never let a silent task or a missed key-up wedge the tool.
+  if wf.stuckTimer then wf.stuckTimer:stop(); wf.stuckTimer = nil end
+  if s == "working" then
+    wf.stuckTimer = hs.timer.doAfter(75, function()
+      if wf.state == "working" then wf.log("watchdog: 'working' stuck 75s → reset idle"); wf.setState("idle") end
+    end)
+  elseif s == "recording" then
+    wf.stuckTimer = hs.timer.doAfter(150, function()  -- no real dictation runs 2.5 min
+      if wf.state == "recording" then
+        wf.log("watchdog: 'recording' stuck 150s → cancel + reset")
+        hs.task.new(wf.BASH, nil, {wf.DICTATE, "cancel"}):start()
+        wf.held = nil; wf.setState("idle")
+      end
+    end)
+  end
 end
 
 -- ── Insert text into whatever app is focused (clipboard paste) ──────────

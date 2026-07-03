@@ -48,8 +48,10 @@ transcribe() {
   # Skipping near-silent clips stops Whisper hallucinating "Thank you." on nothing.
   local peak
   peak="$("$WF_SOX" "$WF_AUDIO" -n stat 2>&1 | /usr/bin/awk '/Maximum amplitude/{print $3}')"
-  if /usr/bin/awk -v p="${peak:-0}" -v t="${WF_SILENCE_THOLD:-0.005}" 'BEGIN{exit !(p+0 < t+0)}'; then
-    log "silence gate: peak ${peak:-0} below threshold — skipped"
+  # Fail OPEN: only gate when we actually measured a peak below threshold. If sox stat
+  # failed (empty peak), transcribe anyway rather than silently dropping real speech.
+  if [ -n "$peak" ] && /usr/bin/awk -v p="$peak" -v t="${WF_SILENCE_THOLD:-0.005}" 'BEGIN{exit !(p+0 < t+0)}'; then
+    log "silence gate: peak $peak below threshold — skipped"
     return 0
   fi
   if ! server_up; then

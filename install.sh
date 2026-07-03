@@ -8,10 +8,14 @@ LA="$HOME/Library/LaunchAgents"
 mkdir -p "$CFG" "$HOME/.cache/senti" "$HOME/Library/Logs" "$LA" "$HOME/Applications"
 
 echo "→ scripts, config, dictionary, prompts"
-cp "$HERE"/config.sh "$HERE"/replacements.txt "$CFG"/
+# Scripts are code — always update.
 cp "$HERE"/senti-*.sh "$CFG"/
 chmod +x "$CFG"/senti-*.sh
 mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
+# config.sh and the dictionary are user-tunable — install only if missing so a
+# re-run / `git pull` never clobbers local edits.
+[ -f "$CFG/config.sh" ]       || cp "$HERE/config.sh" "$CFG/"
+[ -f "$CFG/replacements.txt" ] || cp "$HERE/replacements.txt" "$CFG/"
 
 echo "→ microphone-permission helper (Swift/AVFoundation)"
 if command -v swiftc >/dev/null 2>&1; then
