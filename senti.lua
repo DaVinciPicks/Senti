@@ -15,7 +15,9 @@ wf.HOME    = os.getenv("HOME")
 wf.DICTATE = wf.HOME .. "/.config/senti/senti-dictate.sh"
 wf.PROMPTS = wf.HOME .. "/.config/senti/senti-prompt.sh"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
+wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
 wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
+wf.SHOT    = wf.HOME .. "/.cache/senti/screen.png"
 wf.AUTH    = wf.HOME .. "/.config/senti/senti-mic-auth"  -- AVFoundation mic-permission helper
 wf.MODELSH = wf.HOME .. "/.config/senti/senti-model.sh"
 wf.LOG     = wf.HOME .. "/Library/Logs/senti.log"
@@ -30,6 +32,7 @@ wf.HOLD_COMMAND   = 63     -- keycode: Fn / 🌐 (globe) key → hold to command
 local TOGGLE_VERBATIM = {{"ctrl","alt"}, "d"}
 local TOGGLE_PROMPT   = {{"ctrl","alt"}, "p"}
 local TOGGLE_COMMAND  = {{"ctrl","alt"}, "c"}
+local TOGGLE_CONTEXT  = {{"ctrl","alt"}, "v"}   -- screenshot + speak → context-aware insert
 
 -- ── State ──────────────────────────────────────────────────────────────
 wf.state = "idle"    -- "idle" | "recording" | "working"
@@ -90,7 +93,7 @@ function wf.hud.show(s)
   local c = wf.hud.canvas
   if s == "recording" then
     c[3].fillColor = { red = 1, green = 0.23, blue = 0.19, alpha = 1 }   -- red
-    local labels = { verbatim = "Listening", prompt = "Prompt", command = "Command" }
+    local labels = { verbatim = "Listening", prompt = "Prompt", command = "Command", context = "Context" }
     c[4].text = labels[wf.mode] or "Listening"
     if not wf.hud.timer then wf.hud.timer = hs.timer.doEvery(0.06, hudAnimate) end
   elseif s == "working" or s == "thinking" then
@@ -160,7 +163,21 @@ function wf.handleTranscript(raw)
   end
   if raw == "" then wf.log("transcript: empty (silence/gated)"); wf.setState("idle"); return end
 
-  if wf.mode == "command" then
+  if wf.mode == "context" then
+    local sf = io.open(wf.SHOT, "r")
+    if not sf then
+      wf.setState("idle")
+      wf.log("context: no screenshot — Screen Recording not granted")
+      hs.alert.show("📸 Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
+      hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
+      return
+    end
+    sf:close()
+    wf.hud.show("thinking")
+    hs.task.new(wf.BASH, function(_, out)
+      wf.setState("idle"); wf.insert((out or ""):gsub("%s+$", ""))
+    end, {wf.VISION, raw, wf.SHOT}):start()
+  elseif wf.mode == "command" then
     wf.runCommand(raw)                 -- raw = the spoken instruction
   elseif wf.mode == "prompt" then
     wf.hud.show("thinking")
@@ -222,6 +239,13 @@ function wf.endCapture()
               {wf.DICTATE, "stop"}):start()
 end
 
+-- Context mode: snapshot the screen now, then dictate an instruction about it.
+function wf.beginContext()
+  if wf.state ~= "idle" then return end
+  hs.task.new("/usr/sbin/screencapture", nil, {"-x", "-m", wf.SHOT}):start()  -- silent, main display
+  wf.beginCapture("context")
+end
+
 -- ── Menu bar ───────────────────────────────────────────────────────────
 wf.bar = hs.menubar.new()
 local function menu()
@@ -234,7 +258,7 @@ local function menu()
     { title = tapOn and "● hold-to-talk: armed" or "○ hold-to-talk: OFF", disabled = true },
     { title = "-" },
     { title = "Hold right ⌥ = dictate · right ⌘ = prompt · Fn(🌐) = command", disabled = true },
-    { title = "Toggles: ⌃⌥D dictate · ⌃⌥P prompt · ⌃⌥C command", disabled = true },
+    { title = "Toggles: ⌃⌥D dictate · ⌃⌥P prompt · ⌃⌥C command · ⌃⌥V context", disabled = true },
     { title = "-" },
     { title = "Speed", menu = {
         { title = (curModel == "fast" and "✓ " or "   ") .. "Fast (base.en, ~0.3s)", fn = function()
@@ -265,6 +289,11 @@ local function menu()
             end
           end, {wf.DICTATE, "mictest"}):start()
         end, {"--request"}):start()
+      end },
+    { title = "📸  Grant screen recording (for ⌃⌥V context)", fn = function()
+        hs.execute("/usr/sbin/screencapture -x -m " .. wf.SHOT .. " 2>/dev/null")  -- nudges the prompt
+        hs.alert.show("System Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
+        hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
       end },
     { title = "Re-arm hotkeys", fn = function() wf.armTap(); hs.alert.show("Hotkeys re-armed") end },
     { title = "-" },
@@ -340,6 +369,11 @@ if wf.hkC then wf.hkC:delete() end
 wf.hkC = hs.hotkey.bind(TOGGLE_COMMAND[1], TOGGLE_COMMAND[2], function()
   wf.log("toggle ⌃⌥C")
   if wf.state == "recording" then wf.endCapture() else wf.beginCapture("command") end
+end)
+if wf.hkVi then wf.hkVi:delete() end
+wf.hkVi = hs.hotkey.bind(TOGGLE_CONTEXT[1], TOGGLE_CONTEXT[2], function()
+  wf.log("toggle ⌃⌥V (context)")
+  if wf.state == "recording" then wf.endCapture() else wf.beginContext() end
 end)
 
 -- ── Diagnostics helper (callable via `hs -c 'return wf.diag()'`) ─────────

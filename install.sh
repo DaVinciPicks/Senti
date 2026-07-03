@@ -7,10 +7,11 @@ CFG="$HOME/.config/senti"
 LA="$HOME/Library/LaunchAgents"
 mkdir -p "$CFG" "$HOME/.cache/senti" "$HOME/Library/Logs" "$LA" "$HOME/Applications"
 
-echo "→ scripts, config, dictionary"
+echo "→ scripts, config, dictionary, prompts"
 cp "$HERE"/config.sh "$HERE"/replacements.txt "$CFG"/
 cp "$HERE"/senti-*.sh "$CFG"/
 chmod +x "$CFG"/senti-*.sh
+mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
 
 echo "→ microphone-permission helper (Swift/AVFoundation)"
 if command -v swiftc >/dev/null 2>&1; then

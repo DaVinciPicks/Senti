@@ -38,6 +38,10 @@ WF_LOG="$HOME/Library/Logs/senti.log"
 # → claude CLI via OAuth (~6s). Drop a key file to enable each path.
 WF_DEEPSEEK_KEY="${WF_DEEPSEEK_KEY:-$HOME/.config/senti/deepseek-key}"
 WF_DEEPSEEK_MODEL="${WF_DEEPSEEK_MODEL:-deepseek-chat}"
+# Context mode (screenshot + voice → context-aware insert) needs a VISION model.
+WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
+WF_VISION_MODEL="${WF_VISION_MODEL:-gpt-5-nano}"   # cheapest vision (~$0.05/M); gpt-4.1-nano = ~3x faster
+WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 WF_APIKEY_FILE="${WF_APIKEY_FILE:-$HOME/.config/senti/api-key}"
 if [ -f "$WF_APIKEY_FILE" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   export ANTHROPIC_API_KEY="$(/usr/bin/tr -d '[:space:]' < "$WF_APIKEY_FILE")"

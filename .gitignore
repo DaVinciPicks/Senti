@@ -18,3 +18,5 @@ appicon.iconset/
 .omc/
 .remember/
 .claude/
+openai-key
+*-key
