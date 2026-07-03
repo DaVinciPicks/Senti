@@ -1,0 +1,20 @@
+# Secrets — NEVER commit
+deepseek-key
+api-key
+*.key
+
+# Runtime state
+model.pref
+*.log
+
+# Build artifacts
+senti-mic-auth
+appicon.iconset/
+*.icns
+
+.DS_Store
+
+# Claude Code / tooling state (never commit)
+.omc/
+.remember/
+.claude/

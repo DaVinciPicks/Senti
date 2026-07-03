@@ -1,0 +1,9 @@
+# Senti custom dictionary — fixes common mistranscriptions.
+# Format:  what whisper hears | what to write     (case-insensitive, literal match)
+# Add your own lines below. Applied to every dictation.
+cloud dot md|CLAUDE.md
+cloud md|CLAUDE.md
+cloud code|Claude Code
+da vinci bets|Da Vinci Bets
+davinci bets|Da Vinci Bets
+centi|Senti
