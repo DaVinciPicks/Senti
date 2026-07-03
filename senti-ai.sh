@@ -8,6 +8,16 @@ source "$HOME/.config/senti/config.sh"
 SYS="${1:-}"
 USER_MSG="${2:-}"
 
+# Behavior layer: prepend the reusable operating prompt so BOTH LLM modes (prompt +
+# command) run at a consistently high level. This never touches verbatim dictation —
+# that path is pure Whisper and never calls this script. Toggle: WF_OPERATING_LAYER=0.
+if [ "${WF_OPERATING_LAYER:-1}" = "1" ] && [ -f "$WF_OPERATING_PROMPT" ]; then
+  SYS="$(cat "$WF_OPERATING_PROMPT")
+
+--- Task ---
+$SYS"
+fi
+
 DS_KEY=""
 [ -f "$WF_DEEPSEEK_KEY" ] && DS_KEY="$(/usr/bin/tr -d '[:space:]\n' < "$WF_DEEPSEEK_KEY")"
 
