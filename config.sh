@@ -40,7 +40,7 @@ WF_DEEPSEEK_KEY="${WF_DEEPSEEK_KEY:-$HOME/.config/senti/deepseek-key}"
 WF_DEEPSEEK_MODEL="${WF_DEEPSEEK_MODEL:-deepseek-chat}"
 # Context mode (screenshot + voice → context-aware insert) needs a VISION model.
 WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
-WF_VISION_MODEL="${WF_VISION_MODEL:-gpt-5-nano}"   # cheapest vision (~$0.05/M); gpt-4.1-nano = ~3x faster
+WF_VISION_MODEL="${WF_VISION_MODEL:-gpt-4o-mini}"  # ~2.7s, ~$0.0002/call (essentially free); 5-nano is cheaper but 30s (reasoning)
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 WF_APIKEY_FILE="${WF_APIKEY_FILE:-$HOME/.config/senti/api-key}"
 if [ -f "$WF_APIKEY_FILE" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then

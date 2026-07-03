@@ -181,9 +181,17 @@ function wf.handleTranscript(raw)
     wf.runCommand(raw)                 -- raw = the spoken instruction
   elseif wf.mode == "prompt" then
     wf.hud.show("thinking")
-    hs.task.new(wf.BASH, function(_, stdout)
-      wf.setState("idle"); wf.insert(stdout)
-    end, {wf.PROMPTS, raw}):start()
+    local sf = io.open(wf.SHOT, "r")
+    if sf then
+      sf:close()   -- screen context available → context-aware prompt (vision model)
+      hs.task.new(wf.BASH, function(_, out)
+        wf.setState("idle"); wf.insert((out or ""):gsub("%s+$", ""))
+      end, {wf.VISION, raw, wf.SHOT, "prompt"}):start()
+    else           -- no screen (Screen Recording off) → text-only prompt via DeepSeek
+      hs.task.new(wf.BASH, function(_, stdout)
+        wf.setState("idle"); wf.insert(stdout)
+      end, {wf.PROMPTS, raw}):start()
+    end
   else
     wf.setState("idle"); wf.insert(raw)
   end
@@ -239,11 +247,12 @@ function wf.endCapture()
               {wf.DICTATE, "stop"}):start()
 end
 
--- Context mode: snapshot the screen now, then dictate an instruction about it.
-function wf.beginContext()
+-- Snapshot the screen now (for prompt + context modes), then start capturing.
+function wf.snapAndCapture(mode)
   if wf.state ~= "idle" then return end
-  hs.task.new("/usr/sbin/screencapture", nil, {"-x", "-m", wf.SHOT}):start()  -- silent, main display
-  wf.beginCapture("context")
+  os.remove(wf.SHOT)   -- clear any stale shot so a failed capture can't reuse an old screen
+  hs.task.new("/usr/sbin/screencapture", nil, {"-x", "-m", wf.SHOT}):start()
+  wf.beginCapture(mode)
 end
 
 -- ── Menu bar ───────────────────────────────────────────────────────────
@@ -324,7 +333,7 @@ function wf.armTap()
       elseif code == wf.HOLD_PROMPT then
         local down = flags.cmd == true
         if down and wf.held == nil and wf.state == "idle" then
-          wf.held = code; wf.log("tap: right⌘ down"); wf.beginCapture("prompt")
+          wf.held = code; wf.log("tap: right⌘ down"); wf.snapAndCapture("prompt")
         elseif not down and wf.held == wf.HOLD_PROMPT then
           wf.held = nil; wf.log("tap: right⌘ up"); wf.endCapture()
         end
@@ -363,7 +372,7 @@ wf.hkV = hs.hotkey.bind(TOGGLE_VERBATIM[1], TOGGLE_VERBATIM[2], function()
 end)
 wf.hkP = hs.hotkey.bind(TOGGLE_PROMPT[1], TOGGLE_PROMPT[2], function()
   wf.log("toggle ⌃⌥P")
-  if wf.state == "recording" then wf.endCapture() else wf.beginCapture("prompt") end
+  if wf.state == "recording" then wf.endCapture() else wf.snapAndCapture("prompt") end
 end)
 if wf.hkC then wf.hkC:delete() end
 wf.hkC = hs.hotkey.bind(TOGGLE_COMMAND[1], TOGGLE_COMMAND[2], function()
@@ -373,7 +382,7 @@ end)
 if wf.hkVi then wf.hkVi:delete() end
 wf.hkVi = hs.hotkey.bind(TOGGLE_CONTEXT[1], TOGGLE_CONTEXT[2], function()
   wf.log("toggle ⌃⌥V (context)")
-  if wf.state == "recording" then wf.endCapture() else wf.beginContext() end
+  if wf.state == "recording" then wf.endCapture() else wf.snapAndCapture("context") end
 end)
 
 -- ── Diagnostics helper (callable via `hs -c 'return wf.diag()'`) ─────────
