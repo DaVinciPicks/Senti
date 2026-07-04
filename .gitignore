@@ -20,3 +20,5 @@ appicon.iconset/
 .claude/
 openai-key
 *-key
+prompt-best.pref
+eval/history.csv

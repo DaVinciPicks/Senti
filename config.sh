@@ -42,6 +42,10 @@ WF_DEEPSEEK_MODEL="${WF_DEEPSEEK_MODEL:-deepseek-chat}"
 WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
 WF_VISION_MODEL="${WF_VISION_MODEL:-gpt-4o-mini}"  # ~2.7s, ~$0.0002/call (essentially free); 5-nano is cheaper but 30s (reasoning)
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
+# Prompt-mode quality: 0 = Fast (1 call, few-shot), 1 = Best (N candidates → judge picks/merges).
+WF_PROMPT_BEST_PREF="${WF_PROMPT_BEST_PREF:-$HOME/.cache/senti/prompt-best.pref}"
+[ -z "${WF_PROMPT_BEST:-}" ] && WF_PROMPT_BEST="$(cat "$WF_PROMPT_BEST_PREF" 2>/dev/null || echo 0)"
+WF_PROMPT_CANDIDATES="${WF_PROMPT_CANDIDATES:-3}"
 WF_APIKEY_FILE="${WF_APIKEY_FILE:-$HOME/.config/senti/api-key}"
 if [ -f "$WF_APIKEY_FILE" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   export ANTHROPIC_API_KEY="$(/usr/bin/tr -d '[:space:]' < "$WF_APIKEY_FILE")"

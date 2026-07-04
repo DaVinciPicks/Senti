@@ -12,6 +12,8 @@ echo "→ scripts, config, dictionary, prompts"
 cp "$HERE"/senti-*.sh "$CFG"/
 chmod +x "$CFG"/senti-*.sh
 mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
+# Eval cases are user-tunable — install only if missing.
+mkdir -p "$CFG/eval"; [ -f "$CFG/eval/cases.txt" ] || cp "$HERE/eval/cases.txt" "$CFG/eval/" 2>/dev/null || true
 # config.sh and the dictionary are user-tunable — install only if missing so a
 # re-run / `git pull` never clobbers local edits.
 [ -f "$CFG/config.sh" ]       || cp "$HERE/config.sh" "$CFG/"
