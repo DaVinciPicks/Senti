@@ -101,4 +101,7 @@ Edit `replacements.txt` for vocabulary fixes and `eval/cases.txt` for eval cases
 
 ---
 
+**Contributing / hacking on this?** See [`CLAUDE.md`](CLAUDE.md) — the repo→live-system
+map, conventions, and the macOS gotchas that will otherwise cost you an afternoon.
+
 Built locally with Claude. Audio stays on your machine.
