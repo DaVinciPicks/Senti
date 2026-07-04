@@ -143,7 +143,7 @@ function wf.insert(text)  -- dictation insert: trailing space + clipboard restor
   local prev = hs.pasteboard.getContents()
   wf.paste(text)
   wf.log("insert: pasted " .. #text .. " chars")
-  hs.timer.doAfter(0.25, function()
+  hs.timer.doAfter(0.5, function()   -- give slow apps time to read the clipboard before restoring
     if prev then hs.pasteboard.setContents(prev) end
   end)
 end
@@ -163,12 +163,35 @@ function wf.runCommand(command)
       out = (out or ""):gsub("%s+$", "")
       if out ~= "" then wf.paste(out) end      -- replaces the selection, or inserts at cursor
       wf.log("command: applied " .. #out .. " chars")
-      hs.timer.doAfter(0.35, function() if prevClip then hs.pasteboard.setContents(prevClip) end end)
+      hs.timer.doAfter(0.5, function() if prevClip then hs.pasteboard.setContents(prevClip) end end)
     end, {wf.COMMAND, command, wf.SELFILE}):start()
   end)
 end
 
 -- ── Transcription pipeline ─────────────────────────────────────────────
+-- Poll briefly for the async screenshot — a very short utterance can outrun the
+-- ~200ms screencapture. cb(true) if it appears within ~1s, else cb(false).
+function wf.awaitShot(tries, cb)
+  local f = io.open(wf.SHOT, "r")
+  if f then f:close(); cb(true); return end
+  if tries <= 0 then cb(false); return end
+  hs.timer.doAfter(0.25, function() wf.awaitShot(tries - 1, cb) end)
+end
+
+-- Run the vision engine; surface failures instead of silently inserting nothing.
+function wf.runVision(raw, kind)
+  wf.hud.show("thinking")
+  hs.task.new(wf.BASH, function(exitCode, out)
+    wf.setState("idle")
+    if exitCode ~= 0 then
+      wf.log("vision failed (exit " .. tostring(exitCode) .. ")")
+      hs.alert.show("⚠️ Senti: request failed — check your network or OpenAI key")
+    else
+      wf.insert((out or ""):gsub("%s+$", ""))
+    end
+  end, {wf.VISION, raw, wf.SHOT, kind}):start()
+end
+
 function wf.handleTranscript(raw)
   raw = (raw or ""):gsub("^%s+",""):gsub("%s+$","")
   if raw == "__WF_SERVER_DOWN__" then
@@ -179,34 +202,27 @@ function wf.handleTranscript(raw)
   if raw == "" then wf.log("transcript: empty (silence/gated)"); wf.setState("idle"); return end
 
   if wf.mode == "context" then
-    local sf = io.open(wf.SHOT, "r")
-    if not sf then
-      wf.setState("idle")
-      wf.log("context: no screenshot — Screen Recording not granted")
-      hs.alert.show("📸 Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
-      hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
-      return
-    end
-    sf:close()
-    wf.hud.show("thinking")
-    hs.task.new(wf.BASH, function(_, out)
-      wf.setState("idle"); wf.insert((out or ""):gsub("%s+$", ""))
-    end, {wf.VISION, raw, wf.SHOT}):start()
+    wf.awaitShot(4, function(has)
+      if has then wf.runVision(raw, "context")
+      else
+        wf.setState("idle")
+        wf.log("context: no screenshot — Screen Recording not granted")
+        hs.alert.show("📸 Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
+        hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
+      end
+    end)
   elseif wf.mode == "command" then
     wf.runCommand(raw)                 -- raw = the spoken instruction
   elseif wf.mode == "prompt" then
-    wf.hud.show("thinking")
-    local sf = io.open(wf.SHOT, "r")
-    if sf then
-      sf:close()   -- screen context available → context-aware prompt (vision model)
-      hs.task.new(wf.BASH, function(_, out)
-        wf.setState("idle"); wf.insert((out or ""):gsub("%s+$", ""))
-      end, {wf.VISION, raw, wf.SHOT, "prompt"}):start()
-    else           -- no screen (Screen Recording off) → text-only prompt via DeepSeek
-      hs.task.new(wf.BASH, function(_, stdout)
-        wf.setState("idle"); wf.insert(stdout)
-      end, {wf.PROMPTS, raw}):start()
-    end
+    wf.awaitShot(4, function(has)
+      if has then wf.runVision(raw, "prompt")   -- screen context → context-aware prompt
+      else                                       -- no screen → text-only prompt via DeepSeek
+        wf.hud.show("thinking")
+        hs.task.new(wf.BASH, function(_, stdout)
+          wf.setState("idle"); wf.insert(stdout)
+        end, {wf.PROMPTS, raw}):start()
+      end
+    end)
   else
     wf.setState("idle"); wf.insert(raw)
   end
@@ -273,9 +289,9 @@ end
 -- ── Menu bar ───────────────────────────────────────────────────────────
 wf.bar = hs.menubar.new()
 local function menu()
-  local serverUp = hs.execute(wf.BASH .. " " .. wf.DICTATE .. " server"):gsub("%s+","") == "up"
+  local serverUp = hs.execute(wf.BASH .. " '" .. wf.DICTATE .. "' server"):gsub("%s+","") == "up"
   local tapOn = wf.flagWatcher and wf.flagWatcher:isEnabled()
-  local curModel = hs.execute(wf.BASH .. " " .. wf.MODELSH .. " current"):gsub("%s+","")
+  local curModel = hs.execute(wf.BASH .. " '" .. wf.MODELSH .. "' current"):gsub("%s+","")
   return {
     { title = "Senti — local dictation", disabled = true },
     { title = serverUp and "● engine: running" or "○ engine: STOPPED", disabled = true },
@@ -315,7 +331,7 @@ local function menu()
         end, {"--request"}):start()
       end },
     { title = "📸  Grant screen recording (for ⌃⌥V context)", fn = function()
-        hs.execute("/usr/sbin/screencapture -x -m " .. wf.SHOT .. " 2>/dev/null")  -- nudges the prompt
+        hs.execute("/usr/sbin/screencapture -x -m '" .. wf.SHOT .. "' 2>/dev/null")  -- nudges the prompt
         hs.alert.show("System Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
         hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
       end },
@@ -325,7 +341,7 @@ local function menu()
         hs.execute("/bin/launchctl kickstart -k gui/$(id -u)/com.leo.senti")
         hs.alert.show("Whisper engine restarting…")
       end },
-    { title = "Open log", fn = function() hs.execute("/usr/bin/open " .. wf.LOG) end },
+    { title = "Open log", fn = function() hs.execute("/usr/bin/open '" .. wf.LOG .. "'") end },
     { title = "-" },
     { title = "Quit Senti", fn = function() hs.application.get("Hammerspoon"):kill() end },
   }
@@ -408,7 +424,7 @@ function wf.diag()
     wf.flagWatcher and tostring(wf.flagWatcher:isEnabled()) or "nil",
     tostring(hs.accessibilityState()),
     #hs.hotkey.getHotkeys(),
-    hs.execute(wf.BASH.." "..wf.DICTATE.." server"):gsub("%s+",""))
+    hs.execute(wf.BASH.." '"..wf.DICTATE.."' server"):gsub("%s+",""))
 end
 
 -- ── Launch/appearance ──────────────────────────────────────────────────
