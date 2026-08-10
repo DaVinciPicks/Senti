@@ -27,6 +27,14 @@ if [ -z "${WF_MODEL:-}" ]; then
     fast) WF_MODEL="$WF_MODEL_FAST" ;;
     *)    WF_MODEL="$WF_MODEL_ACCURATE" ;;
   esac
+  # Fall back to whichever model is actually on disk. Without this, a fresh install
+  # that downloaded only one model points whisper-server at a missing file and
+  # dictation is dead on arrival with no obvious cause.
+  if [ ! -f "$WF_MODEL" ]; then
+    if   [ -f "$WF_MODEL_ACCURATE" ]; then WF_MODEL="$WF_MODEL_ACCURATE"
+    elif [ -f "$WF_MODEL_FAST" ];     then WF_MODEL="$WF_MODEL_FAST"
+    fi
+  fi
 fi
 
 # --- Server ---

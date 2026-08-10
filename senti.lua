@@ -282,12 +282,35 @@ function wf.handleTranscript(raw)
     -- only the subcommand and mode — window titles stay out of `ps`.
     wf.runScript({wf.SESSION, "note", "", "", tostring(wf.mode or "dictate")}, raw, nil)
   end
+  if raw == "__WF_MIC_DEAD__" then
+    -- Peak was exactly 0.000000: the mic returned pure silence, which on macOS almost
+    -- always means Hammerspoon's Microphone permission is missing/revoked or the input
+    -- device is muted — NOT that the user said nothing. Real turns in the log lost 50s
+    -- and 78s of speech to this with zero feedback. Name the cause and open the fix.
+    wf.setState("idle")
+    pcall(function() hs.sound.getByName("Basso"):play() end)
+    hs.alert.show("🎤 Your microphone captured no audio.\nCheck it isn't muted, or re-grant Microphone:\nmenu bar 🎤 → Grant / test microphone", 5)
+    wf.micOK = false   -- force a fresh permission probe on the next capture
+    return
+  end
   if raw == "__WF_SERVER_DOWN__" then
     wf.setState("idle")
     hs.alert.show("⚠️ Whisper engine is not running.\nMenubar 🎤 → Restart engine")
     return
   end
-  if raw == "" then wf.log("transcript: empty (silence/gated)"); wf.setState("idle"); return end
+  if raw == "" then
+    -- NEVER fail silently here. The log shows real turns where the user held the key
+    -- for 50s and 78s, waited ~30s for transcription, and got NOTHING back — no sound,
+    -- no alert, no text — because this branch just returned. Silent, undiagnosed
+    -- failure is the single most-cited complaint about competing dictation tools;
+    -- losing a minute of speech with no signal is the worst thing this app can do.
+    -- Say what happened, and (below) keep the audio so it's recoverable.
+    wf.log("transcript: empty (silence/gated) — alerting user")
+    wf.setState("idle")
+    pcall(function() hs.sound.getByName("Basso"):play() end)
+    hs.alert.show("🎤 Nothing was transcribed.\nThe mic may be muted or the audio was silent.\nMenu bar 🎤 → Grant / test microphone", 4)
+    return
+  end
 
   if wf.mode == "context" then
     wf.awaitShot(4, function(has)

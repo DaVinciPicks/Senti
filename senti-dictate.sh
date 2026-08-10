@@ -91,7 +91,16 @@ transcribe() {
   # Fail OPEN: only gate when we actually measured a peak below threshold. If sox stat
   # failed (empty peak), transcribe anyway rather than silently dropping real speech.
   if [ -n "$peak" ] && /usr/bin/awk -v p="$peak" -v t="${WF_SILENCE_THOLD:-0.005}" 'BEGIN{exit !(p+0 < t+0)}'; then
-    log "silence gate: peak $peak below threshold — skipped"
+    # A peak of EXACTLY 0.000000 is not a quiet room — it's the documented mic-TCC
+    # signature: macOS silently mutes sox's CoreAudio-HAL input when Hammerspoon lacks
+    # Microphone permission, with no prompt. Distinguishing the two turns a mystery
+    # ("I spoke for a minute and nothing happened") into one actionable instruction.
+    if /usr/bin/awk -v p="$peak" 'BEGIN{exit !(p+0 == 0)}'; then
+      log "silence gate: peak 0.000000 — mic captured NO audio (permission/muted input)"
+      echo "__WF_MIC_DEAD__"
+    else
+      log "silence gate: peak $peak below threshold — skipped as silence"
+    fi
     return 0
   fi
   if ! server_up; then

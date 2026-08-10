@@ -73,6 +73,11 @@ Requirements (Homebrew / Xcode CLT):
 brew install whisper-cpp sox
 brew install --cask hammerspoon
 # a model, e.g.:
+mkdir -p ~/.local/share/whisper-models
+# Accurate (the default — best with proper nouns and code identifiers, ~0.8s):
+curl -L -o ~/.local/share/whisper-models/ggml-large-v3-turbo-q5_0.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+# Optional: Fast (~0.3s, English-only) — menu bar → Speed → Fast
 curl -L -o ~/.local/share/whisper-models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
