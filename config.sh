@@ -10,7 +10,9 @@
 # v3: WF_EFFORT default low→none (2.2x cheaper, 1.8x faster at equal quality), plus
 #     per-mode WF_JUDGE_EFFORT / WF_VISION_EFFORT and a tunable WF_SHOT_PX.
 # v4: default model gpt-5.4-mini → gpt-5.6-luna (newer, 3-4.5x cheaper, eval 8.12 vs 8.00).
-WF_CONFIG_VERSION=4
+# v5: Best mode deleted (unreachable from the live path, never measured better, 2x latency);
+#     second-brain bridge added (WF_BRAIN* — Obsidian vault digests in prompt mode).
+WF_CONFIG_VERSION=5
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -62,7 +64,7 @@ WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
 # not a reasoning problem, so `none` is 2.2x cheaper AND 1.8x faster at the same quality —
 # the 269 reasoning tokens `low` spends here are pure overhead.
 WF_EFFORT="${WF_EFFORT:-none}"
-# Judging N candidate prompts IS comparative reasoning, so Best mode pays for depth.
+# The judge (eval harness / pairwise compare) does comparative reasoning — pay for depth there.
 WF_JUDGE_EFFORT="${WF_JUDGE_EFFORT:-low}"
 # Vision: reading a screen benefits from a little reasoning and it's cheap there
 # (~45 output tokens either way).
@@ -85,10 +87,15 @@ WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
 # Which target model prompt mode optimises for. "auto" = detect from the screen.
 WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 
-# Prompt-mode quality: 0 = Fast (1 call, few-shot), 1 = Best (N candidates → judge picks/merges).
-WF_PROMPT_BEST_PREF="${WF_PROMPT_BEST_PREF:-$HOME/.cache/senti/prompt-best.pref}"
-[ -z "${WF_PROMPT_BEST:-}" ] && WF_PROMPT_BEST="$(cat "$WF_PROMPT_BEST_PREF" 2>/dev/null || echo 0)"
-WF_PROMPT_CANDIDATES="${WF_PROMPT_CANDIDATES:-3}"
+# --- Second brain (Obsidian) ---
+# Prompt mode injects a capped digest of YOUR vault note for the current project.
+# The digest rides the API call — that's the point and the risk. Only allowlisted
+# dirs are searched, size is capped, every injection is logged to senti.log.
+# Defaults live in senti-brain.sh; override here if needed:
+# WF_BRAIN=0                                  # kill switch
+# WF_VAULT="$HOME/Documents/Obsidian Vault"
+# WF_BRAIN_MAX=700                            # digest cap, chars
+# WF_BRAIN_REFRESH=0                          # disable the background luna digest (~$0.001)
 
 # --- Binaries (absolute paths — Hammerspoon/launchd have a minimal PATH) ---
 WF_SOX="${WF_SOX:-/opt/homebrew/bin/sox}"

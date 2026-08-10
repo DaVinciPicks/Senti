@@ -20,5 +20,6 @@ appicon.iconset/
 .claude/
 openai-key
 *-key
-prompt-best.pref
 eval/history.csv
+# never commit anything derived from the user's vault
+brain-map.txt.local

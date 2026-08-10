@@ -30,7 +30,7 @@ leaves your Mac.
 | `⌃⌥D` / `⌃⌥P` / `⌃⌥C` | — | Hands-free toggle versions of dictate / prompt / command. |
 
 The floating pill shows **Listening → Thinking → done**. The menu-bar 🎤 controls
-Speed (Fast/Accurate), Prompt quality (Fast/Best), permissions, and engine restart.
+Speed (Fast/Accurate), permissions, and engine restart.
 
 > **Privacy note:** verbatim dictation (right ⌥) is 100% local — audio is transcribed by a
 > whisper.cpp server bound to `127.0.0.1` and never leaves the Mac. The AI modes
@@ -47,7 +47,7 @@ Speed (Fast/Accurate), Prompt quality (Fast/Best), permissions, and engine resta
 - **Smart Formatting** — strips filler words (um/uh), re-capitalizes, and applies a **custom dictionary** (`replacements.txt`, e.g. "cloud md" → `CLAUDE.md`).
 - **Fast / Accurate model toggle** — base.en (~0.3s) vs large-v3-turbo (best proper-noun accuracy).
 - **Reusable operating-prompt layer** (`prompts/operating.md`) — a behavior layer prepended to every AI mode so output stays high-signal and concise.
-- **Few-shot prompt exemplars + Best mode** — prompt mode learns from bootstrapped examples; **Best mode** generates several candidate prompts and a judge picks/merges the strongest (menu → *Prompt quality → Best*).
+- **Second brain (Obsidian)** — if you keep an Obsidian vault, prompt mode reads a small digest of *your own note* for the project you're in, so prompts are grounded in what the project actually is. Scoped hard: only allowlisted folders (never `People/`), capped size, every injection logged, `WF_BRAIN=0` to kill. A cheap background call (~$0.001) keeps a compressed digest fresh per project, refreshed lazily only when you actually work on it. Add a `## Senti` section to any note to control exactly what Senti may see.
 - **Model-aware prompting** — Senti notices which app you're in and writes the prompt *for the model you're about to paste into*. Ask for the same thing in Claude and in ChatGPT and you get two different prompts: the Claude one uses XML tags and states scope explicitly; the ChatGPT one stays lean and tells the model to assume-and-proceed rather than ask. The guidance lives in `prompts/models/*.md` (distilled from ~90 sources across OpenAI, Anthropic, Google, open-weight models, and prompting research) — edit those files and the behavior changes. Detection reads the frontmost app name locally, so it costs no extra API call.
 - **Per-window session memory** — if you run several terminals at once, Senti keeps them apart. Session identity is the *window*, not the app, so four Claude Code terminals are four separate contexts. It reads the project and current task straight off the window title, so saying **"now do the same for the download one"** resolves correctly — and differently — in each terminal. No screenshots, no extra API call, nothing leaves the Mac.
 - **Cache hygiene** — `~/.cache/senti` holds the raw audio of what you just said and a full-resolution picture of your screen. Both are deleted the moment a turn finishes, with a 60-second backstop and a sweep at launch. Session notes are mode 600 and expire after 24h.
@@ -96,7 +96,7 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 - `senti-serve.sh` — warm whisper.cpp server (launchd `com.leo.senti`).
 - `senti-dictate.sh` — record / stop / transcribe / clean / silence-gate / dictionary.
 - `senti-ai.sh` — shared text AI call (DeepSeek → claude), prepends the operating layer.
-- `senti-prompt.sh` — prompt mode (Fast few-shot / Best candidates→judge).
+- `senti-prompt.sh` — prompt mode (one call; craft + vault + session + target-model guidance).
 - `senti-command.sh` — transform selected text.
 - `senti-vision.sh` — OpenAI vision for context + screen-aware prompt.
 - `senti-judge.sh` / `senti-eval.sh` — prompt-quality judge + offline eval harness.
@@ -107,7 +107,7 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 ## Config
 
 Everything is tunable in `config.sh` — models, language, silence threshold, vision
-model, prompt quality (`WF_PROMPT_BEST`), operating layer (`WF_OPERATING_LAYER`).
+model, vault bridge (`WF_BRAIN`), operating layer (`WF_OPERATING_LAYER`).
 Edit `replacements.txt` for vocabulary fixes and `eval/cases.txt` for eval cases.
 
 ---

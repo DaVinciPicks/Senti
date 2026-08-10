@@ -40,6 +40,10 @@ if [ "$KIND" = "prompt" ]; then
 
 --- How to build the prompt ---
 $(cat "$CRAFT")"
+  BRAIN="$(bash "$HOME/.config/senti/senti-brain.sh" "${SENTI_SLABEL:-}" 2>>"$WF_LOG")"
+  [ -n "${BRAIN// /}" ] && EXTRA="$EXTRA
+
+--- $BRAIN"
   SESS="$(bash "$HOME/.config/senti/senti-session.sh" recall \
             "${SENTI_SKEY:-}" "${SENTI_SLABEL:-}" 2>>"$WF_LOG")"
   [ -n "${SESS// /}" ] && EXTRA="$EXTRA

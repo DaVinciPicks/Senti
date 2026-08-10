@@ -111,7 +111,7 @@ echo "── prompt-mode path parity ──"
 # senti-prompt.sh when it isn't. Both must carry the same guidance; when they didn't,
 # every improvement silently applied only to the branch that never runs.
 PAR=0
-for dep in senti-target.sh senti-session.sh prompt-craft.md; do
+for dep in senti-target.sh senti-session.sh senti-brain.sh prompt-craft.md; do
   A="$(/usr/bin/grep -c "$dep" "$CFG/senti-vision.sh" 2>/dev/null || echo 0)"
   B="$(/usr/bin/grep -c "$dep" "$CFG/senti-prompt.sh" 2>/dev/null || echo 0)"
   if [ "$A" -ge 1 ] && [ "$B" -ge 1 ]; then :; else
@@ -134,6 +134,25 @@ esac
 DUPES="$(printf '%s' "$BIAS" | /usr/bin/tr ',' '\n' | /usr/bin/sed 's/^ *//' \
          | /usr/bin/sort | /usr/bin/uniq -d | /usr/bin/grep -c . || true)"
 [ "${DUPES:-0}" -eq 0 ] && ok "no duplicate bias terms" || bad "$DUPES duplicate term(s) in bias"
+
+echo "── second brain (vault bridge) ──"
+BV="${WF_VAULT:-$HOME/Documents/Obsidian Vault}"
+if [ ! -d "$BV" ] || [ "${WF_BRAIN:-1}" != "1" ]; then
+  ok "vault absent or WF_BRAIN=0 — brain checks skipped"
+else
+  # Positive: a real project resolves. Refresh disabled so the check costs $0.
+  BOUT="$(WF_BRAIN_REFRESH=0 bash "$CFG/senti-brain.sh" "senti — ⠐ x — claude — 1×1" 2>/dev/null)"
+  [ -n "${BOUT// /}" ] && ok "brain resolves 'senti' (${#BOUT} chars)" \
+                        || bad "brain returned nothing for 'senti'"
+  # Privacy: names that are NOT allowlisted projects must resolve to NOTHING.
+  # People/ is never searched; a leak here would ship personal notes to the API.
+  for probe in "Renzo" "randomxyzq"; do
+    PB="$(WF_BRAIN_REFRESH=0 bash "$CFG/senti-brain.sh" "$probe" 2>/dev/null)"
+    [ -z "${PB// /}" ] && ok "brain refuses '$probe'" || bad "PRIVACY: brain leaked content for '$probe'"
+  done
+  BPERM="$(/usr/bin/stat -f '%Lp' "$HOME/.cache/senti/brain" 2>/dev/null || echo '')"
+  [ "$BPERM" = "700" ] && ok "brain cache dir mode 700" || bad "brain cache dir mode ${BPERM:-unknown}"
+fi
 
 echo "── per-window session memory ──"
 SS="$CFG/senti-session.sh"

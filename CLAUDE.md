@@ -58,7 +58,7 @@ clobbers the user's local tuning. Scripts and `senti.lua` are code — always ov
   free: no screenshots, no API call, nothing leaves the Mac. Files are mode 600 under a 700
   dir and expire after `WF_SESSION_TTL_H` (24h).
 - **AI output extraction:** AI modes wrap output in `<r></r>` sentinels and extract with
-  perl/sed to kill model preamble. `<c></c>` wraps Best-mode candidates. Preserve these.
+  perl/sed to kill model preamble. Preserve these.
 - **`.gitignore` guards secrets + local state:** `*-key`, `*.pref`, `eval/history.csv`.
   Verify `git status` is clean of these before any commit.
 
@@ -82,13 +82,14 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 | `senti-dictate.sh` | record / transcribe / clean — the only path that stays 100% local |
 | `senti-ai.sh` | the single shared OpenAI text call |
 | `senti-vision.sh` | screenshot + instruction → text |
-| `senti-prompt.sh` | rough idea → optimised prompt (Fast / Best) |
+| `senti-prompt.sh` | rough idea → optimised prompt (fallback path — see path parity) |
 | `senti-command.sh` | transform selected text by voice |
-| `senti-judge.sh` | scores a prompt 0-10 (eval harness + Best mode) |
+| `senti-judge.sh` | prompt quality: legacy 0-10 `score` + discriminating pairwise `compare` |
 | `senti-target.sh` | frontmost app → which model's guidance digest to inject |
 | `senti-session.sh` | per-window session memory (`note` / `recall` / `sweep`) |
+| `senti-brain.sh` | Obsidian vault → capped project digest (+ lazy luna refresh) |
 | `senti-eval.sh` | offline harness over `eval/cases.txt` |
-| `senti-selftest.sh` | 19 checks — run before believing anything works |
+| `senti-selftest.sh` | the full check suite — run before believing anything works |
 | `senti-model.sh` | Fast/Accurate whisper model switch |
 | `app/make-icon.sh` | SVG → resvg → iconutil (no Pillow, no Python) |
 
@@ -115,9 +116,22 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   extra API call) to a knowledge file in `prompts/models/` and injects only that file's
   `## Inject` digest (~900B). Injecting the full research prose instead cost 4.5KB and
   pushed prompt mode to 9.9s — keep the digests small.
-- **Prompt intelligence:** `senti-prompt.sh` Fast = few-shot exemplars + deconstruct framing;
-  Best (`WF_PROMPT_BEST=1`) = N candidates → `senti-judge.sh` picks/merges. `senti-eval.sh`
-  is the offline harness (scores `eval/cases.txt`, A/B via env, history in `eval/history.csv`).
+- **Prompt intelligence:** one call, context-heavy. Both prompt paths assemble: shared craft
+  (`prompts/prompt-craft.md`) + vault digest (`senti-brain.sh`) + session memory
+  (`senti-session.sh`) + target-model guidance (`senti-target.sh`). Best mode was DELETED
+  2026-08-09 — it was unreachable from the live path, never once measured better than one
+  call, and bet 2x latency on sampling variance instead of context quality. Don't rebuild it.
+- **Second brain (Obsidian):** `senti-brain.sh` maps the window-title project to a vault note
+  (allowlist: `Efforts/Active` + `Atlas/DaVinci Bets`; exceptions in `brain-map.txt`), digests
+  it (`## Senti` section wins, else `## For future Claude`, else first lines), caps at
+  `WF_BRAIN_MAX`, logs every injection. A lazy background luna call (~$0.001) writes a tighter
+  digest to `~/.cache/senti/brain/` — refreshed only when stale AND the project is actually
+  used, so there's no cron and untouched projects are never sent anywhere. The digest DOES
+  ride the API call: that's the feature and the risk — never widen the allowlist to `People/`
+  or the vault root, and keep the privacy self-test checks passing.
+- **Eval:** `senti-eval.sh` scores `eval/cases.txt` via `senti-judge.sh score` (absolute 0-10 —
+  saturates around 8, fine for regression, useless for ranking); `senti-judge.sh compare` is
+  the discriminating pairwise judge (order-swapped, disagreement = TIE) for real A/Bs.
 
 ## Modes / hotkeys
 
@@ -152,11 +166,11 @@ Screen Recording (context/vision).
 ## Test / debug
 
 ```bash
-bash ~/.config/senti/senti-selftest.sh          # 15 checks: engine, config, keys, icons, live API, ps-leak
+bash ~/.config/senti/senti-selftest.sh          # full suite: engine, config, keys, icons, live API, ps-leak, sessions, brain
 bash ~/.config/senti/senti-dictate.sh server    # → server up/down
 hs -c 'return wf.diag()'                        # state / eventtap / mic / model
 tail -f ~/Library/Logs/senti.log                # runtime log
-WF_PROMPT_BEST=1 bash ~/.config/senti/senti-eval.sh best   # A/B the prompt strategy
+bash ~/.config/senti/senti-eval.sh baseline        # score the 8 eval cases
 ```
 
 `hs -c` **hangs if Hammerspoon isn't running** (there's no IPC peer) — that looks like a

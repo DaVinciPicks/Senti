@@ -16,8 +16,9 @@ mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || 
 mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/models/" 2>/dev/null || true
 # Eval cases are user-tunable — install only if missing.
 mkdir -p "$CFG/eval"; [ -f "$CFG/eval/cases.txt" ] || cp "$HERE/eval/cases.txt" "$CFG/eval/" 2>/dev/null || true
-# The dictionary is user-tunable — install only if missing.
+# The dictionary and the vault map are user-tunable — install only if missing.
 [ -f "$CFG/replacements.txt" ] || cp "$HERE/replacements.txt" "$CFG/"
+[ -f "$CFG/brain-map.txt" ]    || cp "$HERE/brain-map.txt" "$CFG/"
 
 # config.sh is user-tunable, so it installs only-if-missing and a re-run never
 # clobbers local tuning. But that means a stale config can silently pin retired

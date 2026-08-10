@@ -23,7 +23,7 @@ while IFS= read -r idea; do
   total=$((total + score)); n=$((n + 1))
 done < "$CASES"
 avg="$(/usr/bin/awk -v t="$total" -v n="$n" 'BEGIN{printf "%.2f", (n>0)?t/n:0}')"
-mode="$([ "${WF_PROMPT_BEST:-0}" = "1" ] && echo Best || echo Fast)"
+mode="Fast"   # constant since Best mode was deleted; column kept for CSV continuity
 echo "──────────────────────────────────────────────"
 printf 'RESULT [%s]  mode=%s  avg=%s/10  cases=%s\n' "$LABEL" "$mode" "$avg" "$n"
 printf '%s,%s,%s,%s\n' "$LABEL" "$mode" "$avg" "$n" >> "$DIR/history.csv"

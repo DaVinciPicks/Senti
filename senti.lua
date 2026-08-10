@@ -373,9 +373,6 @@ local function menu()
   local serverUp = hs.execute(wf.BASH .. " '" .. wf.DICTATE .. "' server"):gsub("%s+","") == "up"
   local tapOn = wf.flagWatcher and wf.flagWatcher:isEnabled()
   local curModel = hs.execute(wf.BASH .. " '" .. wf.MODELSH .. "' current"):gsub("%s+","")
-  local pbf = io.open(wf.HOME .. "/.cache/senti/prompt-best.pref", "r")
-  local curBest = pbf and (pbf:read("*a") or ""):gsub("%s+","") or "0"
-  if pbf then pbf:close() end
   return {
     { title = "Senti — local dictation", disabled = true },
     { title = serverUp and "● engine: running" or "○ engine: STOPPED", disabled = true },
@@ -392,16 +389,6 @@ local function menu()
         { title = (curModel ~= "fast" and "✓ " or "   ") .. "Accurate (turbo, ~0.8s)", fn = function()
             hs.alert.show("Switching to Accurate model…")
             hs.task.new(wf.BASH, function() hs.alert.show("🎯 Accurate mode on") end, {wf.MODELSH, "accurate"}):start()
-          end },
-      } },
-    { title = "Prompt quality", menu = {
-        { title = (curBest ~= "1" and "✓ " or "   ") .. "Fast (1 call, few-shot)", fn = function()
-            local f = io.open(wf.HOME .. "/.cache/senti/prompt-best.pref", "w"); if f then f:write("0"); f:close() end
-            hs.alert.show("⚡ Prompt quality: Fast")
-          end },
-        { title = (curBest == "1" and "✓ " or "   ") .. "Best (candidates → judge, slower)", fn = function()
-            local f = io.open(wf.HOME .. "/.cache/senti/prompt-best.pref", "w"); if f then f:write("1"); f:close() end
-            hs.alert.show("🏆 Prompt quality: Best — sharper prompts, ~2× slower")
           end },
       } },
     { title = "-" },
