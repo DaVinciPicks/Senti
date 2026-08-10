@@ -114,14 +114,27 @@ KBN="$(/bin/ls -1 "$WF_MODEL_KB"/*.md 2>/dev/null | wc -l | tr -d ' ')"
 G="$(bash "$CFG/senti-target.sh" "Claude" 2>/dev/null)"
 [ -n "${G// /}" ] && ok "target resolver returned guidance for 'Claude' (${#G} chars)" \
                    || bad "target resolver returned nothing for 'Claude'"
-# Browsers: the app name must never pick a model family ("Google Chrome" once matched
-# the google/Gemini KB); the TAB title decides, and no title → universal only.
+# Resolution is two-step: app name, then window title. Both must work.
 GB="$(SENTI_SLABEL="Claude — chat — Google Chrome" bash "$CFG/senti-target.sh" "Google Chrome" 2>/dev/null)"
 case "$GB" in *Anthropic*) ok "browser hint resolves by tab title (Claude tab → Anthropic)" ;;
               *) bad "browser tab title not resolved (got ${#GB} chars)" ;; esac
-GN="$(SENTI_SLABEL="" bash "$CFG/senti-target.sh" "Google Chrome" 2>/dev/null)"
-case "$GN" in *Gemini*|*Anthropic*|*OpenAI*) bad "bare browser name picked a model family" ;;
-              *) ok "bare browser name → universal guidance only" ;; esac
+# The regression this was built for: a terminal running Claude Code. The app is
+# "Terminal" (matches nothing), but the TITLE ends in "claude" — that must now resolve,
+# or the most-used destination on this machine silently gets generic guidance.
+GT="$(SENTI_SLABEL="senti — ⠐ Fix the sweep — claude — 213×59" bash "$CFG/senti-target.sh" "Terminal" 2>/dev/null)"
+case "$GT" in *Anthropic*) ok "terminal hint resolves by window title (claude → Anthropic)" ;;
+              *) bad "terminal window title not resolved — prompt mode gets generic guidance" ;; esac
+# INVARIANT: a KB `match:` regex must only ever match a MODEL/PRODUCT name, never a
+# browser or terminal app NAME. If one did, step 1 of the lookup would hijack every
+# prompt made from that app regardless of the real destination.
+HIJACK=""
+for APPNAME in "Google Chrome" "Safari" "Arc" "Brave Browser" "Microsoft Edge" "Firefox" \
+               "Terminal" "iTerm2" "Ghostty" "WezTerm" "Warp" "Alacritty" "kitty"; do
+  R="$(SENTI_SLABEL="" bash "$CFG/senti-target.sh" "$APPNAME" 2>/dev/null)"
+  case "$R" in *Gemini*|*Anthropic*|*OpenAI*) HIJACK="$HIJACK $APPNAME" ;; esac
+done
+[ -z "$HIJACK" ] && ok "no browser/terminal app NAME hijacks a model family (13 probed)" \
+                  || bad "KB match regex claims an app name:$HIJACK"
 
 echo "── prompt-mode path parity ──"
 # Parity is STRUCTURAL: both paths source senti-lib.sh and call BOTH shared functions
@@ -147,6 +160,40 @@ case "$LCTX" in
   *"How to build the prompt"*) ok "shared craft emits (+$( printf '%s' "$LCTX" | /usr/bin/grep -c '^--- ' ) sections, ${#LCTX} chars)" ;;
   *) bad "shared craft function emitted nothing" ;;
 esac
+
+echo "── context prefetch (key-down warm-up) ──"
+# Run in a THROWAWAY WF_RUN: Hammerspoon's 60s idle sweeper deletes ctx-* from the real
+# cache dir, and an external selftest run would race it (the same flake the screenshot
+# check above was fixed for).
+PRUN="$(mktemp -d)"
+PKEY="900003"
+WF_RUN="$PRUN" SENTI_SKEY="$PKEY" SENTI_SLABEL="senti — ⠐ x — claude" SENTI_HINT="Terminal" \
+  WF_BRAIN_REFRESH=0 bash "$CFG/senti-lib.sh" 2>/dev/null
+PC="$PRUN/ctx-craft-$PKEY"
+[ -s "$PC" ] && ok "prefetch warmed the craft context ($(wc -c <"$PC" | tr -d ' ') bytes)" \
+              || bad "prefetch produced no craft context at $PC"
+PPERM="$(/usr/bin/stat -f '%Lp' "$PC" 2>/dev/null || echo '')"
+[ "$PPERM" = "600" ] && ok "prefetched context is mode 600" || bad "prefetch mode ${PPERM:-missing}, expected 600"
+# Prove the READ path actually consumes it: poison the cache and require it back.
+CANARY="senti-prefetch-canary-$$"
+printf '%s' "$CANARY" > "$PC"
+PR="$(WF_RUN="$PRUN" SENTI_SKEY="$PKEY" SENTI_SLABEL="senti — ⠐ x — claude" \
+      bash -c 'source "'"$CFG"'/config.sh"; source "'"$CFG"'/senti-lib.sh"; senti_prompt_craft' 2>/dev/null)"
+[ "$PR" = "$CANARY" ] && ok "live path reads the prefetched context (no rebuild)" \
+                       || bad "prefetched context was ignored — the ~220ms saving is not real"
+# Without a window id there is nothing safe to key on, so caching must NOT happen.
+WF_RUN="$PRUN" SENTI_SKEY="" SENTI_SLABEL="senti — ⠐ x — claude" WF_BRAIN_REFRESH=0 \
+  bash "$CFG/senti-lib.sh" 2>/dev/null
+NK="$(/bin/ls -1 "$PRUN" 2>/dev/null | /usr/bin/grep -c '^ctx-.*-$' || true)"
+[ "${NK:-0}" -eq 0 ] && ok "no window id → no cache written (can't cross-serve windows)" \
+                      || bad "unkeyed context was cached — one window could serve another"
+rm -rf "$PRUN"
+# The prefetched files hold the vault digest + session transcript. They are turn
+# artefacts and MUST be covered by senti.lua's sweep pattern, or they outlive the turn.
+HSL="$HOME/.hammerspoon/init.lua"
+/usr/bin/grep -q 'ctx%-' "$HSL" 2>/dev/null \
+  && ok "senti.lua sweeps ctx-* (prefetched context can't outlive the turn)" \
+  || bad "senti.lua's sweepSensitive does NOT match ctx-* — context files persist"
 
 echo "── whisper vocabulary biasing ──"
 BIAS="$(SENTI_SLABEL="senti — ⠐ x — claude — 1×1" bash -c '

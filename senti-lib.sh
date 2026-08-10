@@ -15,6 +15,8 @@
 #                            structurally lower-authority than system.
 # Identity comes from env (SENTI_SLABEL / SENTI_SKEY / SENTI_HINT, set by senti.lua's
 # runScript) so window titles stay off argv.
+#
+# Run this file DIRECTLY (not sourced) to prefetch — see the bottom of the file.
 
 # Blank test for UNBOUNDED strings (transcripts, model output, selections).
 # Never use ${VAR// /} for this: macOS ships bash 3.2, where that substitution is
@@ -23,8 +25,49 @@
 # behaviour we actually want.) See senti-command.sh for the incident this came from.
 blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 
-# Trusted system-side guidance: how to build a prompt + which model it's for.
-senti_prompt_craft() {
+# ── Prefetch cache ──────────────────────────────────────────────────────────────────
+# Assembling context costs ~220ms — three sequential bash spawns (target 64ms, brain
+# 93ms, session 65ms, measured). That time used to be spent AFTER the user stopped
+# speaking, which is precisely when they are sitting there waiting. senti.lua now runs
+# this file at key-DOWN for prompt mode, so the work overlaps the speech and the live
+# call just reads a file.
+#
+# PRIVACY: the cached text is the vault digest plus this window's session transcript.
+# Both ALREADY live at rest in this same 700-mode dir (brain/, sessions/), so caching
+# introduces no new class of on-disk data — but it is still a turn artefact and is
+# swept with the rest: senti.lua's wf.sweepSensitive matches the "ctx-" prefix, and the
+# self-test pins that. Do not rename these files without updating that pattern.
+#
+# Keyed on the window id, so a prefetch for one terminal can never be served to
+# another. No window id → no caching at all (correctness over speed).
+ctx_file() {   # ctx_file <craft|untrusted> → path, or nothing when caching is unsafe
+  [ -n "${SENTI_SKEY:-}" ] || return 0
+  printf '%s/ctx-%s-%s' "${WF_RUN:-$HOME/.cache/senti}" "$1" \
+    "$(printf '%s' "${SENTI_SKEY:-}" | /usr/bin/tr -cd '[:alnum:]._-' | cut -c1-32)"
+}
+
+# Print a fresh cache entry and succeed; fail if absent, stale, or unkeyed. An EMPTY
+# cached value is legitimate (senti_untrusted_ctx returns nothing for a fresh session),
+# so freshness is decided by the file's existence, never by its size.
+ctx_read() {
+  local f; f="$(ctx_file "$1")"; [ -n "$f" ] || return 1
+  [ -n "$(/usr/bin/find "$f" -mmin "-${WF_CTX_TTL_MIN:-10}" 2>/dev/null)" ] || return 1
+  cat "$f" 2>/dev/null
+}
+
+# Atomic write (temp + mv) so a concurrent reader can never see a half-built context.
+ctx_write() {
+  local f t; f="$(ctx_file "$1")"; [ -n "$f" ] || return 0
+  t="$(/usr/bin/mktemp "${f}.XXXXXX" 2>/dev/null)" || return 0
+  if printf '%s' "$2" > "$t" 2>/dev/null && chmod 600 "$t" 2>/dev/null; then
+    mv "$t" "$f" 2>/dev/null || rm -f "$t"
+  else
+    rm -f "$t"
+  fi
+}
+
+# ── Trusted system-side guidance: how to build a prompt + which model it's for ───────
+senti_build_craft() {
   local out craft tgt
   craft="${WF_PROMPT_CRAFT:-$HOME/.config/senti/prompts/prompt-craft.md}"
   if [ -f "$craft" ]; then
@@ -48,10 +91,18 @@ $tgt"
   printf '%s' "$out"
 }
 
-# Untrusted reference data (vault note + session context). Returns a fully fenced block
-# for the USER message, or empty. Newlines survive inside the fence but the fence + the
-# directive make the boundary explicit to the model.
-senti_untrusted_ctx() {
+senti_prompt_craft() {
+  local cached out
+  cached="$(ctx_read craft)" && { printf '%s' "$cached"; return 0; }
+  out="$(senti_build_craft)"
+  ctx_write craft "$out"
+  printf '%s' "$out"
+}
+
+# ── Untrusted reference data (vault note + session context) ──────────────────────────
+# Returns a fully fenced block for the USER message, or empty. Newlines survive inside
+# the fence but the fence + the directive make the boundary explicit to the model.
+senti_build_untrusted() {
   local brain sess body=""
   brain="$(bash "$HOME/.config/senti/senti-brain.sh" 2>>"$WF_LOG")"
   [ -n "${brain// /}" ] && body="$body
@@ -70,3 +121,27 @@ $body
 
 "
 }
+
+senti_untrusted_ctx() {
+  local cached out
+  cached="$(ctx_read untrusted)" && { printf '%s' "$cached"; return 0; }
+  out="$(senti_build_untrusted)"
+  ctx_write untrusted "$out"
+  printf '%s' "$out"
+}
+
+# ── Prefetch entry point ─────────────────────────────────────────────────────────────
+# Executed directly (not sourced) → warm both halves and exit. senti.lua fires this at
+# key-DOWN for prompt mode. The standard BASH_SOURCE/$0 idiom is used rather than an
+# argv flag because sourced files inherit the CALLER's positional parameters, so a
+# `$1 = prefetch` check would misfire on whatever senti-vision.sh was passed.
+#
+# NOTE ON SEMANTICS: prefetching at key-down means the session `recall` reflects the
+# turns BEFORE this one. That is intentional and slightly better than the old timing —
+# senti.lua notes the current utterance before dispatching, so the live path used to
+# hand the model the current sentence twice (once as "recent turn", once as the idea).
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  source "$HOME/.config/senti/config.sh"
+  senti_prompt_craft  >/dev/null 2>&1
+  senti_untrusted_ctx >/dev/null 2>&1
+fi

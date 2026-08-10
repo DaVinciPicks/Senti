@@ -27,6 +27,7 @@ wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
 wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
 wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
+wf.CTXPRE  = wf.HOME .. "/.config/senti/senti-lib.sh"   -- run directly = prefetch context
 wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
 wf.SHOT    = wf.HOME .. "/.cache/senti/screen.png"
 wf.AUTH    = wf.HOME .. "/.config/senti/senti-mic-auth"  -- AVFoundation mic-permission helper
@@ -209,9 +210,12 @@ wf.CACHE = wf.HOME .. "/.cache/senti"
 -- alone. These files are same-uid readable regardless of mode, so the real protection
 -- is a short on-disk life — this runs at the end of every turn, at startup, and on a
 -- 60s backstop.
+-- "ctx-*" are the prefetched prompt-context files (vault digest + session transcript,
+-- written at key-down by senti-lib.sh). They're turn artefacts like the rest — the
+-- self-test asserts this pattern still covers them.
 function wf.sweepSensitive(name)
   return name:match("%.wav$") or name:match("%.png$") or name:match("%.jpg$")
-      or name:match("%.jpeg$") or name == "selection.txt"
+      or name:match("%.jpeg$") or name == "selection.txt" or name:match("^ctx%-")
 end
 function wf.sweepCache()
   if wf.state == "recording" then return end   -- capture.wav is in use
@@ -330,7 +334,7 @@ function wf.handleTranscript(raw)
       else                                       -- no screen → text-only prompt path
         wf.hud.show("thinking")
         wf.runScript({wf.PROMPTS}, raw, function(_, stdout)
-          wf.setState("idle"); wf.insert(stdout)
+          wf.setState("idle"); wf.insert(stdout); wf.sweepCache()
         end)
       end
     end)
@@ -381,6 +385,12 @@ function wf.beginCapture(m)
   else
     wf.sessKey, wf.sessLabel = "", ""
   end
+  -- Prompt mode assembles ~220ms of context (target KB + vault digest + session memory).
+  -- Start it NOW, while the user is still speaking, so the live call reads a warm file
+  -- instead of paying for three bash spawns at the exact moment they're waiting.
+  -- Fire-and-forget: if it doesn't finish in time, the shared functions just build
+  -- inline as before. Everything it needs (sessKey/sessLabel/targetHint) is set above.
+  if m == "prompt" then wf.runScript({wf.CTXPRE}, "", nil) end
   if wf.micOK then wf.record(); return end
   -- First use: check permission without prompting; act on the result.
   hs.task.new(wf.AUTH, function(_, out)

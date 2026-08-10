@@ -18,15 +18,22 @@ KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
 HINT="${1:-${SENTI_HINT:-}}"
 [ -d "$KB" ] || exit 0
 
-# A browser's app name says nothing about the destination model — the TAB does.
-# "Google Chrome" must not match the google/Gemini KB when the tab is chatgpt.com.
-# Swap in the window title (SENTI_SLABEL, set by senti.lua at capture time): browser
-# titles carry the page title, so "Claude — Google Chrome" matches Claude correctly
-# and a title that names no model falls through to universal guidance only.
-case "$(printf '%s' "$HINT" | /usr/bin/tr 'A-Z' 'a-z')" in
-  *chrome*|*safari*|*firefox*|*arc*|*brave*|*edge*|*opera*|*vivaldi*|*orion*|*dia*|*comet*)
-    HINT="${SENTI_SLABEL:-}" ;;
-esac
+# An app NAME frequently says nothing about the destination model — the window TITLE
+# does. "Google Chrome" is whatever tab is open; "Terminal" is very often Claude Code,
+# whose title literally ends in "claude". So resolve in TWO steps: the app name first
+# (right when the app IS the product — the Claude or ChatGPT desktop app), then the
+# window title as a fallback.
+#
+# This replaces an allowlist that swapped in the title for browsers only, which left
+# the most-used destination on this machine — a terminal running Claude Code — falling
+# through to generic universal guidance. Measured before the change: hint "Terminal"
+# → 836B universal digest; hint "Claude" → 974B Anthropic-specific digest.
+#
+# INVARIANT (asserted by senti-selftest.sh): a `match:` regex must only ever match a
+# MODEL or PRODUCT name, never a browser or terminal app name. Were one to match
+# "Terminal" or "Safari", step 1 would hijack every lookup made from that app. The
+# self-test pins this so a future KB edit can't silently break it.
+TITLE="${SENTI_SLABEL:-}"
 
 # Pull one frontmatter value out of a KB file: fm <file> <key>
 fm() { /usr/bin/sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1; }
@@ -52,12 +59,16 @@ if [ -n "$PREF" ] && [ "$PREF" != "auto" ]; then
     [ -f "$f" ] || continue
     [ "$(fm "$f" family)" = "$PREF" ] && { CHOSEN="$f"; break; }
   done
-elif [ -n "$HINT" ]; then
-  for f in "$KB"/*.md; do
-    [ -f "$f" ] || continue
-    fam="$(fm "$f" family)"; [ "$fam" = "universal" ] && continue
-    m="$(fm "$f" match)"; [ -z "$m" ] && continue
-    if printf '%s' "$HINT" | /usr/bin/grep -qiE "$m"; then CHOSEN="$f"; break; fi
+elif [ -n "$HINT" ] || [ -n "$TITLE" ]; then
+  # App name first, window title second. `break 2` leaves both loops on the first hit.
+  for probe in "$HINT" "$TITLE"; do
+    [ -n "$probe" ] || continue
+    for f in "$KB"/*.md; do
+      [ -f "$f" ] || continue
+      fam="$(fm "$f" family)"; [ "$fam" = "universal" ] && continue
+      m="$(fm "$f" match)"; [ -z "$m" ] && continue
+      if printf '%s' "$probe" | /usr/bin/grep -qiE "$m"; then CHOSEN="$f"; break 2; fi
+    done
   done
 fi
 
