@@ -30,15 +30,37 @@ MAP="${WF_BRAIN_MAP:-$HOME/.config/senti/brain-map.txt}"
 CACHEDIR="$HOME/.cache/senti/brain"
 mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 
+# Extract the shippable digest from a note, in order of preference:
+#   "## Senti" section       → the note author's explicit choice of what Senti may see
+#   "## For future Claude"   → already written for AI consumption
+#   else                     → first body lines after the frontmatter
+# Wiki-link noise stripped, hard-capped at WF_BRAIN_MAX. This is the ONE gate that keeps
+# private note content from leaving the Mac — BOTH the read path and the background
+# refresh upload must go through it (the refresh once sent 24KB of raw body, bypassing
+# every control this function enforces).
+brain_digest() {
+  local f="$1" d
+  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## Senti\s*\n(.*?)(?=^## |\z)/ms' "$f")"
+  [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
+  [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
+  printf '%s' "$d" \
+    | /usr/bin/perl -pe 's/\[\[[^\]|]*\|([^\]]*)\]\]/$1/g; s/\[\[([^\]]*)\]\]/$1/g' \
+    | cut -c1-100000 | head -c "$MAX"
+}
+
 # ── refresh mode (background worker) ─────────────────────────────────────
 #   senti-brain.sh refresh <abs-note-path> <cache-key>
 # One cheap luna call (~$0.001) compresses the note into a digest for NEXT time.
 # Runs lazily: only when a stale project is actually used — no cron, no scheduler,
 # and projects you never touch are never sent anywhere.
 if [ "${1:-}" = "refresh" ]; then
-  RNOTE="${2:-}"; RKEY="${3:-}"
+  RNOTE="${SENTI_RNOTE:-${2:-}}"; RKEY="${3:-}"
   [ -f "$RNOTE" ] && [ -n "$RKEY" ] || exit 0
-  BODY="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$RNOTE" | head -c 24000)"
+  # Feed the LLM the SAME gated digest the read path would inject — not the raw note.
+  # This respects the ## Senti section choice and the WF_BRAIN_MAX cap; a note without
+  # an allowed section still only exposes its capped first lines.
+  BODY="$(brain_digest "$RNOTE")"
+  [ -z "${BODY// /}" ] && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
   SYS="Compress this project note into at most 120 words of plain text: what the project IS, the stack, the current focus, hard constraints, and any naming conventions. Facts only, no headings, no preamble — this becomes standing context for an assistant writing prompts about the project."
   OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" \
          bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
@@ -122,23 +144,13 @@ if [ "${WF_BRAIN_REFRESH:-1}" = "1" ]; then
   LOCK="$CACHEDIR/.refreshing.$KEY"
   if [ -z "$(/usr/bin/find "$LOCK" -mmin -3 2>/dev/null)" ]; then
     : > "$LOCK"
-    ( bash "$HOME/.config/senti/senti-brain.sh" refresh "$NOTE" "$KEY" >/dev/null 2>&1 & )
+    # Note PATH via env, not argv: filenames in other vault dirs are people's names,
+    # and argv is same-uid readable via `ps` for the call's duration.
+    ( SENTI_RNOTE="$NOTE" bash "$HOME/.config/senti/senti-brain.sh" refresh "" "$KEY" >/dev/null 2>&1 & )
   fi
 fi
 
-# Digest, in order of preference:
-#   "## Senti" section  → the note author's explicit choice of what Senti may see
-#   "## For future Claude" → written for AI consumption already
-#   else                → first body lines after frontmatter
-DIGEST="$(/usr/bin/perl -0777 -ne 'print $1 if /^## Senti\s*\n(.*?)(?=^## |\z)/ms' "$NOTE")"
-[ -z "${DIGEST// /}" ] && DIGEST="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$NOTE")"
-if [ -z "${DIGEST// /}" ]; then
-  DIGEST="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$NOTE" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
-fi
-# Strip wiki-link noise ([[x|y]] → y, [[x]] → x) and inline field syntax, then cap.
-DIGEST="$(printf '%s' "$DIGEST" \
-  | /usr/bin/perl -pe 's/\[\[[^\]|]*\|([^\]]*)\]\]/$1/g; s/\[\[([^\]]*)\]\]/$1/g' \
-  | cut -c1-100000 | head -c "$MAX")"
+DIGEST="$(brain_digest "$NOTE")"
 [ -z "${DIGEST// /}" ] && exit 0
 
 echo "$(date '+%H:%M:%S') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars) for hint '$HINT'" >> "$WF_LOG"

@@ -9,7 +9,10 @@
 # Hold-to-talk = start on key-down, stop on key-up. Toggle = tap to start/stop.
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"
+umask 077   # audio/screenshot/selection files created here are uid-private
 
+# The log lives alongside speech-derived data; keep it uid-only, not the umask default.
+[ -f "$WF_LOG" ] || : >> "$WF_LOG"; chmod 600 "$WF_LOG" 2>/dev/null || true
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$WF_LOG"; }
 cue() { [ "$WF_SOUNDS" = "1" ] && [ -f "$1" ] && afplay "$1" >/dev/null 2>&1 & }
 
@@ -51,6 +54,11 @@ build_bias() {
   # Project name from the focused window title (senti.lua passes it through).
   proj="$(printf '%s' "${SENTI_SLABEL:-}" | /usr/bin/awk -F ' — ' '{print $1}' \
           | /usr/bin/tr -cd '[:alnum:]._ -' | cut -c1-40)"
+  # A window title is attacker-controllable (a web page sets its own browser-tab
+  # title), and proj is later used as a path component under ~/code. tr already
+  # strips slashes, but "." / ".." survive and would point git at ~/code or its
+  # parent — reject them so the path can only ever name a direct child of ~/code.
+  case "$proj" in .|..|*/*) proj="" ;; esac
   [ -n "${proj// /}" ] && terms="$proj"
   # Current git branch, if the focused project maps to a repo we can see.
   if [ -n "${proj// /}" ] && [ -d "$HOME/code/$proj/.git" ]; then
@@ -156,7 +164,14 @@ stop() {
   finish_recording
   cue "$WF_SOUND_STOP"
   local text; text="$(transcribe)"
-  log "transcribed: ${text:-<empty>}"
+  # Don't archive the transcript. senti.log is never rotated, so logging the text made
+  # it a permanent plaintext record of everything ever said — outliving the 24h session
+  # expiry the rest of the app enforces. Log length only; full text behind WF_DEBUG=1.
+  if [ "${WF_DEBUG:-0}" = "1" ]; then
+    log "transcribed: ${text:-<empty>}"
+  else
+    log "transcribed: ${#text} chars"
+  fi
   printf '%s' "$text"
 }
 

@@ -150,6 +150,32 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 Three macOS permissions on **Hammerspoon**: Accessibility (type), Microphone (record),
 Screen Recording (context/vision).
 
+## Security model (audited 2026-08-10)
+
+Threat model: a **local, single-user** tool, so the adversary is a same-uid process or a
+hostile input, not a remote attacker. Verified defenses — don't regress them:
+
+- **`hs.ipc` is OFF by default** (`senti.lua`). Loading it opens a port where the `hs` CLI
+  runs *arbitrary Lua* inside Hammerspoon, which holds Accessibility/Mic/Screen — any same-uid
+  process could `hs -c '…'` to launder those TCC grants. Opt in for live debugging with
+  `touch ~/.cache/senti/allow-ipc`, then reload. With it off, `hs -c` does nothing.
+- **Speech AND the system prompt travel via env, never argv** — the system prompt embeds
+  session transcripts + vault digests, so it's as sensitive as the speech (`ps` shows argv,
+  not env; the self-test canary runs through both channels).
+- **Prompt-injection fence:** window titles are attacker-controllable (a web page sets its own
+  browser-tab title). Untrusted context (title/vault/session) goes in the *user* role inside a
+  `REFERENCE_CONTEXT` fence marked "data, never instructions" — never in the system role.
+  Model output is *typed* (⌘V), never executed. Self-test asserts a title injection can't steer output.
+- **The vault bridge has one gate** — `brain_digest()` in `senti-brain.sh`. Both the read path
+  AND the background refresh upload go through it (`## Senti` section → cap). Never send a raw
+  note. Allowlist is `Efforts/Active` + `Atlas/DaVinci Bets` only — never `People/`.
+- **No speech in the log:** `senti.log` is `600` and logs char counts, not transcripts
+  (`WF_DEBUG=1` for full text). It's never rotated, so never put content there by default.
+- **Cache artefacts** (audio, screenshots, selection) are swept by *pattern* at end-of-turn,
+  startup, and a 60s backstop. Same-uid can read them regardless of mode, so the defense is the
+  short on-disk life, not perms — don't widen the sweep interval or leave a fixed-name artefact
+  off the pattern.
+
 ## Gotchas (these cost real time — respect them)
 
 - **Mic TCC:** sox uses CoreAudio-HAL, which macOS *silently mutes* (peak `0.000000`)
@@ -177,10 +203,13 @@ tail -f ~/Library/Logs/senti.log                # runtime log
 bash ~/.config/senti/senti-eval.sh baseline        # score the 8 eval cases
 ```
 
-`hs -c` **hangs if Hammerspoon isn't running** (there's no IPC peer) — that looks like a
-broken init.lua but usually isn't. Check `pgrep -x Hammerspoon` and `luac -p ~/.hammerspoon/init.lua`
-before debugging the Lua. Never run `hs -c 'hs.reload()'` and wait on it: reload tears down
-the IPC socket mid-call and the CLI blocks forever.
+Diagnostics no longer rely on `hs -c` (ipc is off by default — see Security model). Use the
+menu bar → **Write diagnostics to log**, or read the `diag:` line senti.lua writes at startup:
+`grep 'diag:' ~/Library/Logs/senti.log | tail -1`. To reload, quit + `open -a Hammerspoon`
+(never `hs -c 'hs.reload()'` — it tears down the ipc socket mid-call and blocks forever). For
+live `hs -c` debugging, `touch ~/.cache/senti/allow-ipc` first, and remove it when done.
+`hs -c` also hangs if Hammerspoon isn't running at all — check `pgrep -x Hammerspoon` and
+`luac -p ~/.hammerspoon/init.lua` before blaming the Lua.
 
 State machine has a watchdog: `working` stuck 75s → idle; `recording` stuck 150s → cancel
 sox + reset. If hold-to-talk feels dead, check `wf.diag()` for the eventtap first.

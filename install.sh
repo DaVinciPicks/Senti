@@ -6,6 +6,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.config/senti"
 LA="$HOME/Library/LaunchAgents"
 mkdir -p "$CFG" "$HOME/.cache/senti" "$HOME/Library/Logs" "$LA" "$HOME/Applications"
+# ~/.config/senti holds the API key (600) plus your dictionary, vault map, and prompt
+# KB. Tighten the dir itself to 700 so nothing here is world-readable — defense in
+# depth even though the key file is already 600.
+chmod 700 "$CFG" "$HOME/.cache/senti" 2>/dev/null || true
 
 echo "→ scripts, config, dictionary, prompts"
 # Scripts are code — always update.

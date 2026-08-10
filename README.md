@@ -41,6 +41,13 @@ Speed (Fast/Accurate), permissions, and engine restart.
 > Senti never puts your speech on a command line: text moves between components via the
 > environment, because `ps` is readable by every process on the machine. The self-test
 > asserts this with a canary on every run.
+>
+> **Security posture** (audited): the `hs` command-line bridge, which would let any process
+> on your Mac run code inside Senti, is **off by default**. Untrusted text — including a
+> web page's browser-tab title — is fed to the AI as fenced *data it must never obey*, and
+> the AI's output is only ever *typed*, never run. Your notes leave the Mac only as a capped,
+> section-limited digest, logged each time. The log stores no transcripts, and audio and
+> screenshots are wiped the moment each turn ends.
 
 ## Features
 

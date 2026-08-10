@@ -8,7 +8,16 @@
 --  silently stops firing. Keeping it on a global keeps hold-to-talk alive.
 -- ═══════════════════════════════════════════════════════════════════════
 
-require("hs.ipc")   -- enables the `hs` command-line bridge
+-- SECURITY: `require("hs.ipc")` opens a local message port that the `hs` CLI uses to
+-- run ARBITRARY Lua inside Hammerspoon. Because Hammerspoon holds Accessibility,
+-- Microphone and Screen Recording, any same-uid process could `hs -c '<lua>'` to
+-- borrow those TCC grants prompt-free (keylog, screen/mic capture, read the API key).
+-- It is therefore OFF by default. Diagnostics run through the log instead
+-- (menu bar → "Write diagnostics to log", and a line at startup) — no open port needed.
+-- Opt back in for live `hs -c` debugging with:  touch ~/.cache/senti/allow-ipc
+if io.open(os.getenv("HOME") .. "/.cache/senti/allow-ipc") then
+  require("hs.ipc")   -- developer opt-in: restores the `hs` command-line bridge
+end
 
 wf = wf or {}
 wf.HOME    = os.getenv("HOME")
@@ -174,7 +183,7 @@ function wf.runCommand(command)
   hs.timer.doAfter(0.18, function()
     local sel = hs.pasteboard.getContents() or ""
     local f = io.open(wf.SELFILE, "w"); if f then f:write(sel); f:close() end
-    wf.log("command: '" .. command .. "' on " .. #sel .. " selected chars")
+    wf.log("command: " .. #command .. " chars on " .. #sel .. " selected chars")  -- not the text itself
     wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(_, out)
       wf.setState("idle")
       out = (out or ""):gsub("%s+$", "")
@@ -193,13 +202,27 @@ end
 -- moment a turn finishes rather than leaving it on disk until the next dictation
 -- overwrites it (which, for screen.png, could be days).
 wf.CACHE = wf.HOME .. "/.cache/senti"
-wf.SWEEPABLE = { "capture.wav", "screen.png", "screen-small.jpg", "selection.txt",
-                 "mictest.wav" }
+-- Sweep by PATTERN, not a hardcoded filename list: a stale full-res screenshot from
+-- July survived on disk for weeks precisely because it wasn't on the old list. Any
+-- top-level audio / screenshot / selection artefact is sensitive and gets removed;
+-- subdirectories (sessions/, brain/), prefs (*.pref) and the allow-ipc toggle are left
+-- alone. These files are same-uid readable regardless of mode, so the real protection
+-- is a short on-disk life — this runs at the end of every turn, at startup, and on a
+-- 60s backstop.
+function wf.sweepSensitive(name)
+  return name:match("%.wav$") or name:match("%.png$") or name:match("%.jpg$")
+      or name:match("%.jpeg$") or name == "selection.txt"
+end
 function wf.sweepCache()
   if wf.state == "recording" then return end   -- capture.wav is in use
   local n = 0
-  for _, f in ipairs(wf.SWEEPABLE) do
-    if os.remove(wf.CACHE .. "/" .. f) then n = n + 1 end
+  local ok, iter, dObj = pcall(hs.fs.dir, wf.CACHE)
+  if ok and iter then
+    for entry in iter, dObj do
+      if entry ~= "." and entry ~= ".." and wf.sweepSensitive(entry) then
+        if os.remove(wf.CACHE .. "/" .. entry) then n = n + 1 end
+      end
+    end
   end
   if n > 0 then wf.log("cache swept: " .. n .. " file(s)") end
   return n
@@ -424,6 +447,9 @@ local function menu()
         hs.execute("/bin/launchctl kickstart -k gui/$(id -u)/com.leo.senti")
         hs.alert.show("Whisper engine restarting…")
       end },
+    { title = "Write diagnostics to log", fn = function()
+        wf.diagToLog(); hs.alert.show("Diagnostics written to senti.log")
+      end },
     { title = "Open log", fn = function() hs.execute("/usr/bin/open '" .. wf.LOG .. "'") end },
     { title = "-" },
     { title = "Quit Senti", fn = function() hs.application.get("Hammerspoon"):kill() end },
@@ -499,21 +525,27 @@ wf.hkVi = hs.hotkey.bind(TOGGLE_CONTEXT[1], TOGGLE_CONTEXT[2], function()
   if wf.state == "recording" then wf.endCapture() else wf.snapAndCapture("context") end
 end)
 
--- ── Diagnostics helper (callable via `hs -c 'return wf.diag()'`) ─────────
+-- ── Diagnostics ─────────────────────────────────────────────────────────
+-- Returns the state string. Callable via `hs -c 'return wf.diag()'` only when the
+-- ipc opt-in above is enabled; otherwise reach it through wf.diagToLog() (menu item
+-- + startup), which needs no open port.
 function wf.diag()
   return string.format(
-    "state=%s | tap=%s | accessibility=%s | hotkeys=%d | server=%s",
+    "state=%s | tap=%s | accessibility=%s | hotkeys=%d | server=%s | ipc=%s",
     wf.state,
     wf.flagWatcher and tostring(wf.flagWatcher:isEnabled()) or "nil",
     tostring(hs.accessibilityState()),
     #hs.hotkey.getHotkeys(),
-    hs.execute(wf.BASH.." '"..wf.DICTATE.."' server"):gsub("%s+",""))
+    hs.execute(wf.BASH.." '"..wf.DICTATE.."' server"):gsub("%s+",""),
+    io.open(wf.HOME .. "/.cache/senti/allow-ipc") and "ON(dev)" or "off")
 end
+function wf.diagToLog() wf.log("diag: " .. wf.diag()) end
 
 -- ── Launch/appearance ──────────────────────────────────────────────────
 hs.autoLaunch(true)
 hs.dockIcon(false)
 wf.setState("idle")
+wf.diagToLog()    -- diagnostics without an open ipc port
 wf.sweepCache()   -- clear anything a previous session left behind (e.g. after a crash)
 -- Backstop: a turn that errors out mid-flight never reaches its completion callback,
 -- so sweep periodically too. Cheap (a handful of os.remove calls) and it means audio
