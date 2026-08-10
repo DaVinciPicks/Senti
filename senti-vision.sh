@@ -4,38 +4,51 @@
 #   $2 = path to the screenshot PNG
 #   $3 = kind: "context" (draft reply/edit at cursor) | "prompt" (generate an
 #        optimized prompt that folds in the on-screen working context)
-# Uses an OpenAI vision model, guided by the reusable operating-prompt layer.
+# Engine: gpt-5.6-luna (~1.4s, ~$0.0004/call — vs gpt-4o-mini's 3.3s, 37k tokens, $0.0056).
 # Prints ONLY the text to insert.
+#
+# Instruction text goes via ENV, never argv — argv is visible in `ps` to any local process.
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"
 
-INSTR="${1:-}"
+# Spoken instruction arrives in SENTI_IN, never argv (see senti-ai.sh).
+INSTR="${SENTI_IN:-${1:-}}"
 SHOT="${2:-}"
 KIND="${3:-context}"
 [ -z "${INSTR// /}" ] && exit 0
 [ -f "$SHOT" ] || { printf ''; exit 0; }
 
+KEYFILE="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
 KEY=""
-[ -f "$WF_OPENAI_KEY" ] && KEY="$(/usr/bin/tr -d '[:space:]\n' < "$WF_OPENAI_KEY")"
-[ -z "$KEY" ] && { printf ''; exit 1; }
+[ -f "$KEYFILE" ] && KEY="$(/usr/bin/tr -d '[:space:]' < "$KEYFILE")"
+[ -z "$KEY" ] && { echo "no OpenAI key at $KEYFILE" >>"$WF_LOG"; printf ''; exit 1; }
 
+OP="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 OPERATING=""
-[ -f "$WF_OPERATING_PROMPT" ] && OPERATING="$(cat "$WF_OPERATING_PROMPT")"
+[ -f "$OP" ] && OPERATING="$(cat "$OP")"
 
 # Downscale the retina screenshot with sips (built-in; no python deps) so the API
 # call is fast and cheap: full-res ~3000px/4MB → a 1536px JPEG that keeps on-screen
 # text readable. Falls back to the original if sips fails.
 SMALL="$WF_RUN/screen-small.jpg"; MIME="image/jpeg"
-if ! /usr/bin/sips -Z 1536 -s format jpeg "$SHOT" --out "$SMALL" >/dev/null 2>&1; then
+if ! /usr/bin/sips -Z "${WF_SHOT_PX:-1536}" -s format jpeg "$SHOT" --out "$SMALL" >/dev/null 2>&1; then
   SMALL="$SHOT"; MIME="image/png"   # sips failed → send original PNG, labeled correctly
 fi
 
-# Key passed via env (not argv, so it's not visible in `ps`).
-SENTI_KEY="$KEY" /usr/bin/python3 - "$INSTR" "$SMALL" "$WF_VISION_MODEL" "$OPERATING" "$KIND" "$MIME" <<'PY'
+SENTI_KEY="$KEY" \
+SENTI_INSTR="$INSTR" \
+SENTI_SHOT="$SMALL" \
+SENTI_MODEL="${WF_VISION_MODEL:-gpt-5.6-luna}" \
+SENTI_EFFORT="${WF_VISION_EFFORT:-low}" \
+SENTI_OPERATING="$OPERATING" \
+SENTI_KIND="$KIND" \
+SENTI_MIME="$MIME" \
+/usr/bin/python3 - <<'PY'
 import sys, os, json, base64, urllib.request
-instr, shot, model, operating, kind, mime = sys.argv[1:7]
 key = os.environ["SENTI_KEY"]
-img = base64.b64encode(open(shot, "rb").read()).decode()
+instr, kind, mime = os.environ["SENTI_INSTR"], os.environ["SENTI_KIND"], os.environ["SENTI_MIME"]
+operating = os.environ["SENTI_OPERATING"]
+img = base64.b64encode(open(os.environ["SENTI_SHOT"], "rb").read()).decode()
 
 if kind == "prompt":
     system = ("You are a master prompt engineer with vision. First study the screenshot to "
@@ -55,7 +68,9 @@ else:
     utext = "INSTRUCTION: " + instr
 
 body = json.dumps({
-    "model": model,
+    "model": os.environ["SENTI_MODEL"],
+    "reasoning_effort": os.environ["SENTI_EFFORT"],
+    "max_completion_tokens": 4000,
     "messages": [
         {"role": "system", "content": system},
         {"role": "user", "content": [
@@ -68,7 +83,7 @@ req = urllib.request.Request("https://api.openai.com/v1/chat/completions",
     data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
 try:
     with urllib.request.urlopen(req, timeout=60) as r:
-        sys.stdout.write(json.load(r)["choices"][0]["message"]["content"].strip())
+        sys.stdout.write((json.load(r)["choices"][0]["message"]["content"] or "").strip())
 except Exception as e:
     sys.stderr.write("vision error: %s" % e); sys.exit(1)
 PY

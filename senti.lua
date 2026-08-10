@@ -14,6 +14,9 @@ wf = wf or {}
 wf.HOME    = os.getenv("HOME")
 wf.DICTATE = wf.HOME .. "/.config/senti/senti-dictate.sh"
 wf.PROMPTS = wf.HOME .. "/.config/senti/senti-prompt.sh"
+wf.TARGETSH = wf.HOME .. "/.config/senti/senti-target.sh"
+wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
+wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
 wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
 wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
@@ -38,6 +41,9 @@ local TOGGLE_CONTEXT  = {{"ctrl","alt"}, "v"}   -- screenshot + speak → contex
 wf.state = "idle"    -- "idle" | "recording" | "working"
 wf.mode  = nil       -- "verbatim" | "prompt"
 wf.held  = nil       -- keycode of the hold-key currently down, or nil
+wf.targetHint = ""   -- frontmost app at capture time → which model we're prompting for
+wf.sessKey    = ""   -- focused WINDOW id → distinguishes your parallel terminals
+wf.sessLabel  = ""   -- that window's title → carries project + current task for free
 
 -- ── Logging (so one test press reveals exactly where it breaks) ─────────
 function wf.log(msg)
@@ -46,7 +52,15 @@ function wf.log(msg)
 end
 
 -- ── UI ─────────────────────────────────────────────────────────────────
-local ICON = { idle = "🎤", recording = "🔴", working = "⏳" }
+-- Menu bar uses a real template image, not an emoji in setTitle: macOS keeps
+-- only the alpha channel and tints it for light/dark/active automatically, which
+-- is what makes it sit correctly next to system items. State is carried by the
+-- floating HUD (which is only ever visible in the non-idle states anyway).
+local function menuIcon()
+  local img = hs.image.imageFromPath(wf.MENUICON)
+  if img then img:setSize({ w = 18, h = 18 }); img:template(true) end
+  return img
+end
 
 -- ── Floating HUD pill (Wispr-style): bottom-center overlay with waveform ─
 local HUD_W, HUD_H, NBARS = 188, 46, 7
@@ -112,7 +126,11 @@ end
 
 function wf.setState(s)
   wf.state = s
-  if wf.bar then wf.bar:setTitle(ICON[s] or "🎤") end
+  if wf.bar then
+    local img = menuIcon()
+    if img then wf.bar:setIcon(img); wf.bar:setTitle("")
+    else wf.bar:setTitle("●") end   -- template missing (icon build skipped): stay visible
+  end
   if s == "recording" or s == "working" then wf.hud.show(s) else wf.hud.hide() end
   -- Watchdog: never let a silent task or a missed key-up wedge the tool.
   if wf.stuckTimer then wf.stuckTimer:stop(); wf.stuckTimer = nil end
@@ -158,14 +176,52 @@ function wf.runCommand(command)
     local sel = hs.pasteboard.getContents() or ""
     local f = io.open(wf.SELFILE, "w"); if f then f:write(sel); f:close() end
     wf.log("command: '" .. command .. "' on " .. #sel .. " selected chars")
-    hs.task.new(wf.BASH, function(_, out)
+    wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(_, out)
       wf.setState("idle")
       out = (out or ""):gsub("%s+$", "")
       if out ~= "" then wf.paste(out) end      -- replaces the selection, or inserts at cursor
       wf.log("command: applied " .. #out .. " chars")
+      os.remove(wf.SELFILE)                    -- selected text is the user's content; don't leave it on disk
       hs.timer.doAfter(0.5, function() if prevClip then hs.pasteboard.setContents(prevClip) end end)
-    end, {wf.COMMAND, command, wf.SELFILE}):start()
+    end)
   end)
+end
+
+-- ── Cache hygiene ──────────────────────────────────────────────────────
+-- ~/.cache/senti accumulates the most sensitive artefacts this app touches: the raw
+-- audio of what you just said, a full-resolution PNG of your screen, and whatever text
+-- you had selected. None of it is needed once the result has been inserted. Sweep it the
+-- moment a turn finishes rather than leaving it on disk until the next dictation
+-- overwrites it (which, for screen.png, could be days).
+wf.CACHE = wf.HOME .. "/.cache/senti"
+wf.SWEEPABLE = { "capture.wav", "screen.png", "screen-small.jpg", "selection.txt",
+                 "mictest.wav", "selftest-shot.png" }
+function wf.sweepCache()
+  if wf.state == "recording" then return end   -- capture.wav is in use
+  local n = 0
+  for _, f in ipairs(wf.SWEEPABLE) do
+    if os.remove(wf.CACHE .. "/" .. f) then n = n + 1 end
+  end
+  if n > 0 then wf.log("cache swept: " .. n .. " file(s)") end
+  return n
+end
+
+-- Run a Senti script with the user's spoken text in the ENVIRONMENT, never argv.
+-- `ps -Ao args` is readable by every process on the machine, so anything on a command
+-- line is effectively public — and the speech is the one thing this app protects.
+-- setEnvironment replaces the environment wholesale, so re-supply what the scripts need.
+function wf.runScript(args, spoken, cb)
+  local t = hs.task.new(wf.BASH, cb, args)
+  if not t then wf.log("runScript: could not create task"); return nil end
+  t:setEnvironment({
+    HOME = wf.HOME,
+    PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+    SENTI_IN = spoken or "",
+    SENTI_SKEY = wf.sessKey or "",
+    SENTI_SLABEL = wf.sessLabel or "",
+  })
+  t:start()
+  return t
 end
 
 -- ── Transcription pipeline ─────────────────────────────────────────────
@@ -181,7 +237,7 @@ end
 -- Run the vision engine; surface failures instead of silently inserting nothing.
 function wf.runVision(raw, kind)
   wf.hud.show("thinking")
-  hs.task.new(wf.BASH, function(exitCode, out)
+  wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
     wf.setState("idle")
     if exitCode ~= 0 then
       wf.log("vision failed (exit " .. tostring(exitCode) .. ")")
@@ -189,11 +245,18 @@ function wf.runVision(raw, kind)
     else
       wf.insert((out or ""):gsub("%s+$", ""))
     end
-  end, {wf.VISION, raw, wf.SHOT, kind}):start()
+    wf.sweepCache()   -- the screenshot is a picture of your screen; don't let it linger
+  end)
 end
 
 function wf.handleTranscript(raw)
   raw = (raw or ""):gsub("^%s+",""):gsub("%s+$","")
+  -- Record the turn against this window's session before acting on it, so the next
+  -- dictation in the SAME window can resolve back-references. Fire-and-forget.
+  if raw ~= "" and raw ~= "__WF_SERVER_DOWN__" and wf.sessKey ~= "" then
+    wf.runScript({wf.SESSION, "note", wf.sessKey, wf.sessLabel, tostring(wf.mode or "dictate")},
+                 raw, nil)
+  end
   if raw == "__WF_SERVER_DOWN__" then
     wf.setState("idle")
     hs.alert.show("⚠️ Whisper engine is not running.\nMenubar 🎤 → Restart engine")
@@ -216,15 +279,15 @@ function wf.handleTranscript(raw)
   elseif wf.mode == "prompt" then
     wf.awaitShot(4, function(has)
       if has then wf.runVision(raw, "prompt")   -- screen context → context-aware prompt
-      else                                       -- no screen → text-only prompt via DeepSeek
+      else                                       -- no screen → text-only prompt path
         wf.hud.show("thinking")
-        hs.task.new(wf.BASH, function(_, stdout)
+        wf.runScript({wf.PROMPTS, "", wf.targetHint}, raw, function(_, stdout)
           wf.setState("idle"); wf.insert(stdout)
-        end, {wf.PROMPTS, raw}):start()
+        end)
       end
     end)
   else
-    wf.setState("idle"); wf.insert(raw)
+    wf.setState("idle"); wf.insert(raw); wf.sweepCache()
   end
 end
 
@@ -254,6 +317,22 @@ end
 function wf.beginCapture(m)
   if wf.state ~= "idle" then wf.log("beginCapture ignored: state="..wf.state); return end
   wf.mode = m
+  -- Which app is the user in? That tells prompt mode which model this prompt is
+  -- headed for, so it can tailor to that model. Read it at capture time, before
+  -- any focus change, and it costs nothing — no extra API call, no latency.
+  local ok, app = pcall(function() return hs.application.frontmostApplication() end)
+  wf.targetHint = (ok and app and app:name()) or ""
+  -- Session identity: the focused WINDOW, not the app. Three Claude Code terminals are
+  -- all "Terminal" but are three different pieces of work. The window title already
+  -- contains the project and what that session is doing, so we get working context with
+  -- no screenshot, no API call, and nothing leaving the Mac.
+  local ok2, win = pcall(function() return hs.window.focusedWindow() end)
+  if ok2 and win then
+    wf.sessKey   = tostring(win:id() or "")
+    wf.sessLabel = tostring(win:title() or "")
+  else
+    wf.sessKey, wf.sessLabel = "", ""
+  end
   if wf.micOK then wf.record(); return end
   -- First use: check permission without prompting; act on the result.
   hs.task.new(wf.AUTH, function(_, out)
@@ -444,6 +523,21 @@ end
 hs.autoLaunch(true)
 hs.dockIcon(false)
 wf.setState("idle")
+wf.sweepCache()   -- clear anything a previous session left behind (e.g. after a crash)
+-- Backstop: a turn that errors out mid-flight never reaches its completion callback,
+-- so sweep periodically too. Cheap (a handful of os.remove calls) and it means audio
+-- and screenshots can't outlive the turn that created them by more than a minute.
+if wf.sweeper then wf.sweeper:stop() end
+wf.sweeper = hs.timer.doEvery(60, function()
+  if wf.state == "idle" then wf.sweepCache() end
+end)
+-- Session files are transcripts of your speech. Expire them on the same principle as
+-- the cache: keep them long enough to be useful within a work session, not forever.
+if wf.sessSweeper then wf.sessSweeper:stop() end
+wf.sessSweeper = hs.timer.doEvery(1800, function()
+  wf.runScript({wf.SESSION, "sweep"}, "", nil)
+end)
+wf.runScript({wf.SESSION, "sweep"}, "", nil)   -- and once at launch
 wf.log("=== init.lua loaded ===")
 
 -- Startup mic-permission probe (no prompt); nudge once if not yet authorized.

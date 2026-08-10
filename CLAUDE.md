@@ -39,9 +39,24 @@ clobbers the user's local tuning. Scripts and `senti.lua` are code — always ov
 - **Script naming:** `senti-<role>.sh`. Env vars are prefixed **`WF_`** and the Lua global
   is **`wf`** — these are *legacy from the "Whisper Flow" name and kept intentionally*.
   Don't mass-rename them; it touches every file for no user-visible gain.
-- **Secrets:** DeepSeek + OpenAI keys live at `~/.config/senti/{deepseek-key,openai-key}`
-  (mode 600), gitignored. They are passed to Python via **ENV (`SENTI_KEY`), never argv** —
-  so they stay out of `ps`. Keep it that way; never put a key on a command line.
+- **Secrets:** one OpenAI key at `~/.config/senti/openai-key` (mode 600), gitignored.
+- **The argv rule (load-bearing):** the key **and every piece of user speech** travel in
+  the **environment (`SENTI_IN`), never argv** — `ps -Ao args` is readable by every process
+  on the box. This applies at *every* layer: `senti.lua` → script (via `hs.task:setEnvironment`),
+  script → script (`SENTI_IN="$X" bash …`), and script → python. Fixing only the innermost
+  call is the bug that shipped once already — the wrapper's own command line leaked.
+  `senti-selftest.sh` asserts it with a canary. **When writing that assertion, never pipe the
+  canary into `grep`** — grep's own argv then contains it and `ps` catches the test itself
+  (a false positive that flaps). Snapshot `ps` into a variable and match with a shell `case`.
+- **Cache is sensitive:** `~/.cache/senti/` holds the raw audio of what was just said, a
+  full-res screenshot, and any selected text. `wf.sweepCache()` clears it at the end of every
+  turn, on a 60s backstop, and at launch. Don't add a new cache artefact without adding it to
+  `wf.SWEEPABLE`.
+- **Session memory:** keyed on the focused **window id**, not the app — several Claude Code
+  terminals are all "Terminal" but are different work. The window title already carries the
+  project and current task (`senti — ⠐ Evaluate software… — claude`), so working context is
+  free: no screenshots, no API call, nothing leaves the Mac. Files are mode 600 under a 700
+  dir and expire after `WF_SESSION_TTL_H` (24h).
 - **AI output extraction:** AI modes wrap output in `<r></r>` sentinels and extract with
   perl/sed to kill model preamble. `<c></c>` wraps Best-mode candidates. Preserve these.
 - **`.gitignore` guards secrets + local state:** `*-key`, `*.pref`, `eval/history.csv`.
@@ -54,18 +69,52 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ DeepSeek (→ claude fallback)   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-4o-mini (reads a downscaled screenshot)
+   prompt/command ─▶ senti-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
+   prompt mode also ─▶ senti-target.sh ─▶ prompts/models/*.md (tailor to the destination model)
+                   └─▶ senti-session.sh ─▶ ~/.cache/senti/sessions/<window-id>.tsv  (per-window memory)
 ```
+
+**Script map** (all deploy to `~/.config/senti/`):
+
+| Script | Role |
+|---|---|
+| `senti-dictate.sh` | record / transcribe / clean — the only path that stays 100% local |
+| `senti-ai.sh` | the single shared OpenAI text call |
+| `senti-vision.sh` | screenshot + instruction → text |
+| `senti-prompt.sh` | rough idea → optimised prompt (Fast / Best) |
+| `senti-command.sh` | transform selected text by voice |
+| `senti-judge.sh` | scores a prompt 0-10 (eval harness + Best mode) |
+| `senti-target.sh` | frontmost app → which model's guidance digest to inject |
+| `senti-session.sh` | per-window session memory (`note` / `recall` / `sweep`) |
+| `senti-eval.sh` | offline harness over `eval/cases.txt` |
+| `senti-selftest.sh` | 19 checks — run before believing anything works |
+| `senti-model.sh` | Fast/Accurate whisper model switch |
+| `app/make-icon.sh` | SVG → resvg → iconutil (no Pillow, no Python) |
 
 - **Engine:** `whisper-cpp` (brew) kept warm in Metal by launchd `com.leo.senti`
   (`senti-serve.sh`). base.en (Fast ~0.2s) / large-v3-turbo-q5 (Accurate). Model choice
   in `~/.cache/senti/model.pref` via `senti-model.sh`.
 - **Recording:** `sox -d` → 16 kHz mono WAV, stopped with **SIGINT** (finalizes the header).
-- **AI text:** `senti-ai.sh` → DeepSeek `deepseek-chat` → falls through to `claude` CLI.
-  Prepends the reusable operating layer (`prompts/operating.md`) when `WF_OPERATING_LAYER=1`.
-- **AI vision:** `senti-vision.sh` → **gpt-4o-mini** (~2.7s). sips-downscales the retina
-  screenshot first. (gpt-5-nano was rejected — 30s of reasoning latency.)
+- **AI text + vision:** both go to **`gpt-5.6-luna`** (`senti-ai.sh` / `senti-vision.sh`).
+  One provider, one key, no fallback chain. Text runs at `reasoning_effort: none`, vision
+  and the judge at `low`. Measured on this Mac (see `config.sh` for the full table):
+  luna text ≈ $0.0005/call, vision ≈ $0.0004 — vs gpt-4o-mini vision at 3.3s, **37k tokens**
+  and $0.0056 (it tokenizes images far more expensively).
+  - `minimal` effort is **rejected** by gpt-5.x — valid values are `none|low|medium|high|xhigh`.
+  - `none` measured 2.2x cheaper and 1.8x faster than `low` at an identical eval score on the
+    prompt-rewrite task: rewriting is transformation, not reasoning. Judging candidates *is*
+    reasoning, so `senti-judge.sh` overrides to `low`.
+  - Reasoning tokens count against `max_completion_tokens` — leave headroom or you get an
+    empty string back with no error.
+  - **Output dominates cost** (~6x input price), so trimming what the model *writes* beats
+    trimming what you send. Prompt caching does NOT engage here: our prompt is ~650 tokens,
+    under OpenAI's 1024-token cache minimum.
+  - Prepends `prompts/operating.md` when `WF_OPERATING_LAYER=1`.
+- **Model-aware prompting:** `senti-target.sh` maps the frontmost app (free, local, no
+  extra API call) to a knowledge file in `prompts/models/` and injects only that file's
+  `## Inject` digest (~900B). Injecting the full research prose instead cost 4.5KB and
+  pushed prompt mode to 9.9s — keep the digests small.
 - **Prompt intelligence:** `senti-prompt.sh` Fast = few-shot exemplars + deconstruct framing;
   Best (`WF_PROMPT_BEST=1`) = N candidates → `senti-judge.sh` picks/merges. `senti-eval.sh`
   is the offline harness (scores `eval/cases.txt`, A/B via env, history in `eval/history.csv`).
@@ -103,11 +152,17 @@ Screen Recording (context/vision).
 ## Test / debug
 
 ```bash
-bash ~/.config/senti/senti-dictate.sh server   # → server up/down
+bash ~/.config/senti/senti-selftest.sh          # 15 checks: engine, config, keys, icons, live API, ps-leak
+bash ~/.config/senti/senti-dictate.sh server    # → server up/down
 hs -c 'return wf.diag()'                        # state / eventtap / mic / model
-tail -f ~/Library/Logs/senti.log               # runtime log
+tail -f ~/Library/Logs/senti.log                # runtime log
 WF_PROMPT_BEST=1 bash ~/.config/senti/senti-eval.sh best   # A/B the prompt strategy
 ```
+
+`hs -c` **hangs if Hammerspoon isn't running** (there's no IPC peer) — that looks like a
+broken init.lua but usually isn't. Check `pgrep -x Hammerspoon` and `luac -p ~/.hammerspoon/init.lua`
+before debugging the Lua. Never run `hs -c 'hs.reload()'` and wait on it: reload tears down
+the IPC socket mid-call and the CLI blocks forever.
 
 State machine has a watchdog: `working` stuck 75s → idle; `recording` stuck 150s → cancel
 sox + reset. If hold-to-talk feels dead, check `wf.diag()` for the eventtap first.

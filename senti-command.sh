@@ -7,7 +7,8 @@
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"
 
-CMD="${1:-}"
+# Spoken command arrives in SENTI_IN, never argv (see senti-ai.sh).
+CMD="${SENTI_IN:-${1:-}}"
 SELFILE="${2:-}"
 SEL=""
 [ -n "$SELFILE" ] && [ -f "$SELFILE" ] && SEL="$(cat "$SELFILE")"
@@ -25,7 +26,7 @@ else
   INPUT="REQUEST: $CMD"
 fi
 
-OUT="$(bash "$HOME/.config/senti/senti-ai.sh" "$SYS" "$INPUT" 2>>"$WF_LOG")"
+OUT="$(SENTI_IN="$INPUT" bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
 
 # Extract only what's between the sentinel tags (discards any stray preamble).
 RESULT="$(printf '%s' "$OUT" | /usr/bin/perl -0777 -ne 'print $1 if /<r>(.*?)<\/r>/s')"

@@ -1,5 +1,16 @@
 # senti shared config — sourced by every script.
 # Edit values here to retune the whole system.
+#
+# NOTE: install.sh only copies this file if it is MISSING, so your local edits
+# survive a `git pull`. When the schema changes, WF_CONFIG_VERSION is bumped and
+# install.sh backs your old file up to config.sh.bak rather than silently keeping
+# stale settings. Model IDs deliberately do NOT live here anymore — they are
+# defaults at the point of use in each script, so an upgrade actually upgrades.
+# Override one anyway by uncommenting it below.
+# v3: WF_EFFORT default low→none (2.2x cheaper, 1.8x faster at equal quality), plus
+#     per-mode WF_JUDGE_EFFORT / WF_VISION_EFFORT and a tunable WF_SHOT_PX.
+# v4: default model gpt-5.4-mini → gpt-5.6-luna (newer, 3-4.5x cheaper, eval 8.12 vs 8.00).
+WF_CONFIG_VERSION=4
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -24,32 +35,60 @@ WF_URL="http://${WF_HOST}:${WF_PORT}"
 # --- Language --- ("auto" to autodetect, or "en", "es", etc.)
 WF_LANG="${WF_LANG:-en}"
 
-# --- Runtime files ---
 # --- Custom dictionary (fixes mistranscriptions like "cloud md" → CLAUDE.md) ---
 WF_REPLACEMENTS="${WF_REPLACEMENTS:-$HOME/.config/senti/replacements.txt}"
 
+# --- Runtime files ---
 WF_RUN="${WF_RUN:-$HOME/.cache/senti}"
 WF_AUDIO="$WF_RUN/capture.wav"
 WF_PIDFILE="$WF_RUN/sox.pid"
 WF_LOG="$HOME/Library/Logs/senti.log"
 
-# --- AI modes (prompt / command) ---
-# Engine priority: DeepSeek (fast ~1.3s, cheap) → claude --bare (if ANTHROPIC key)
-# → claude CLI via OAuth (~6s). Drop a key file to enable each path.
-WF_DEEPSEEK_KEY="${WF_DEEPSEEK_KEY:-$HOME/.config/senti/deepseek-key}"
-WF_DEEPSEEK_MODEL="${WF_DEEPSEEK_MODEL:-deepseek-chat}"
-# Context mode (screenshot + voice → context-aware insert) needs a VISION model.
+# --- AI modes (prompt / command / context) ---
+# One provider, one key, one model: OpenAI gpt-5.6-luna ($0.20/$1.20 per 1M).
+# Measured on this Mac (8-case eval + per-call cost):
+#   gpt-4o-mini   vision 3.30s  37k tok  $0.00560   (the old vision model)
+#   deepseek-chat text   1.37s           $0.00003   (the old text model — still cheapest)
+#   gpt-5.4-mini  8.00   text  $0.00155  vision $0.00177
+#   gpt-5.6-luna  8.12   text  $0.00049  vision $0.00039   ← default
+#   gpt-5.6-terra 8.25   text  $0.00568   (+0.25 eval for ~12x luna's cost — not worth it)
+# Eval granularity is integer scores over 8 cases, so ±0.25 is noise; luna is chosen
+# because it is newer and 3-4.5x cheaper at indistinguishable quality, not because 8.12>8.00.
+# For a one-off quality push: WF_TEXT_MODEL=gpt-5.6-sol bash senti-prompt.sh ...
 WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
-WF_VISION_MODEL="${WF_VISION_MODEL:-gpt-4o-mini}"  # ~2.7s, ~$0.0002/call (essentially free); 5-nano is cheaper but 30s (reasoning)
+# Reasoning depth: none | low | medium | high | xhigh   ('minimal' is REJECTED by gpt-5.x)
+# Measured on the prompt-rewrite task (2 runs each): none 2.05s/$0.00115 ·
+# low 3.68s/$0.00254 · medium 8.43s/$0.00597. Rewriting a prompt is a transformation,
+# not a reasoning problem, so `none` is 2.2x cheaper AND 1.8x faster at the same quality —
+# the 269 reasoning tokens `low` spends here are pure overhead.
+WF_EFFORT="${WF_EFFORT:-none}"
+# Judging N candidate prompts IS comparative reasoning, so Best mode pays for depth.
+WF_JUDGE_EFFORT="${WF_JUDGE_EFFORT:-low}"
+# Vision: reading a screen benefits from a little reasoning and it's cheap there
+# (~45 output tokens either way).
+WF_VISION_EFFORT="${WF_VISION_EFFORT:-low}"
+# Screenshot long edge sent to the vision model. Measured cost/quality:
+#   1024 → 843 tok / $0.00088 (reads on-screen text, misses fine detail)
+#   1536 → 1880 tok / $0.00161 (reads exact commands/filenames — the default)
+#   2048 → 2814 tok / $0.00233 (no material gain over 1536)
+# Drop to 1024 to roughly halve vision cost if you don't need fine text read back.
+WF_SHOT_PX="${WF_SHOT_PX:-1536}"
+# Uncomment to pin a model; otherwise each script's built-in default is used
+# (so upgrades take effect without editing this file).
+# WF_TEXT_MODEL="gpt-5.6-luna"
+# WF_VISION_MODEL="gpt-5.6-luna"
+
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
+# Model-aware prompting knowledge base: prompt mode reads the guidance file for
+# whichever model you're actually about to paste into. See prompts/models/.
+WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
+# Which target model prompt mode optimises for. "auto" = detect from the screen.
+WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
+
 # Prompt-mode quality: 0 = Fast (1 call, few-shot), 1 = Best (N candidates → judge picks/merges).
 WF_PROMPT_BEST_PREF="${WF_PROMPT_BEST_PREF:-$HOME/.cache/senti/prompt-best.pref}"
 [ -z "${WF_PROMPT_BEST:-}" ] && WF_PROMPT_BEST="$(cat "$WF_PROMPT_BEST_PREF" 2>/dev/null || echo 0)"
 WF_PROMPT_CANDIDATES="${WF_PROMPT_CANDIDATES:-3}"
-WF_APIKEY_FILE="${WF_APIKEY_FILE:-$HOME/.config/senti/api-key}"
-if [ -f "$WF_APIKEY_FILE" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  export ANTHROPIC_API_KEY="$(/usr/bin/tr -d '[:space:]' < "$WF_APIKEY_FILE")"
-fi
 
 # --- Binaries (absolute paths — Hammerspoon/launchd have a minimal PATH) ---
 WF_SOX="${WF_SOX:-/opt/homebrew/bin/sox}"

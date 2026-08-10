@@ -13,6 +13,8 @@ IN="ROUGH IDEA: $IDEA
 
 CANDIDATE PROMPT:
 $PROMPT"
-# Judge without the operating layer so it returns only a bare number.
-OUT="$(WF_OPERATING_LAYER=0 bash "$HOME/.config/senti/senti-ai.sh" "$SYS" "$IN" 2>>"$WF_LOG")"
+# Judge without the operating layer so it returns only a bare number. Scoring is a
+# genuine comparative-reasoning task, so it gets more effort than the rewrite path.
+OUT="$(WF_OPERATING_LAYER=0 WF_EFFORT="${WF_JUDGE_EFFORT:-low}" \
+       bash "$HOME/.config/senti/senti-ai.sh" "$SYS" "$IN" 2>>"$WF_LOG")"
 echo "$OUT" | grep -oE '10|[0-9]' | head -1
