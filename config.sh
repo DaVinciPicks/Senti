@@ -84,7 +84,9 @@ WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operatin
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for
 # whichever model you're actually about to paste into. See prompts/models/.
 WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
-# Which target model prompt mode optimises for. "auto" = detect from the screen.
+# Optional manual pin for the target-model family (no UI writes this — it's an
+# escape hatch): `echo anthropic > ~/.cache/senti/target.pref`. Absent/"auto" =
+# detect from the frontmost app / browser tab title.
 WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 
 # --- Second brain (Obsidian) ---

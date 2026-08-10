@@ -51,9 +51,10 @@ if [ "${1:-}" = "refresh" ]; then
   exit 0
 fi
 
-HINT="${1:-}"
+# Identity via env first (window titles stay off argv); argv is a manual fallback.
+HINT="${1:-${SENTI_SLABEL:-}}"
 [ -z "${HINT// /}" ] && exit 0
-# Callers may pass the full window title — the project is its first field.
+# The window title's first field is the project.
 HINT="${HINT%% — *}"
 
 norm() { printf '%s' "$1" | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/tr -cd 'a-z0-9'; }

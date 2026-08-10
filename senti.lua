@@ -218,6 +218,7 @@ function wf.runScript(args, spoken, cb)
     SENTI_IN = spoken or "",
     SENTI_SKEY = wf.sessKey or "",
     SENTI_SLABEL = wf.sessLabel or "",
+    SENTI_HINT = wf.targetHint or "",
   })
   t:start()
   return t
@@ -236,9 +237,8 @@ end
 -- Run the vision engine; surface failures instead of silently inserting nothing.
 function wf.runVision(raw, kind)
   wf.hud.show("thinking")
-  -- 4th arg is the target-model hint: prompt mode runs through THIS path whenever Screen
-  -- Recording is granted, so it needs the same guidance the text-only path gets.
-  wf.runScript({wf.VISION, "", wf.SHOT, kind, wf.targetHint}, raw, function(exitCode, out)
+  -- Target hint + session identity ride the env via runScript; argv carries only paths/kind.
+  wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
     wf.setState("idle")
     if exitCode ~= 0 then
       wf.log("vision failed (exit " .. tostring(exitCode) .. ")")
@@ -255,8 +255,9 @@ function wf.handleTranscript(raw)
   -- Record the turn against this window's session before acting on it, so the next
   -- dictation in the SAME window can resolve back-references. Fire-and-forget.
   if raw ~= "" and raw ~= "__WF_SERVER_DOWN__" and wf.sessKey ~= "" then
-    wf.runScript({wf.SESSION, "note", wf.sessKey, wf.sessLabel, tostring(wf.mode or "dictate")},
-                 raw, nil)
+    -- key/label ride the env (runScript sets SENTI_SKEY/SENTI_SLABEL); argv carries
+    -- only the subcommand and mode — window titles stay out of `ps`.
+    wf.runScript({wf.SESSION, "note", "", "", tostring(wf.mode or "dictate")}, raw, nil)
   end
   if raw == "__WF_SERVER_DOWN__" then
     wf.setState("idle")
@@ -282,7 +283,7 @@ function wf.handleTranscript(raw)
       if has then wf.runVision(raw, "prompt")   -- screen context → context-aware prompt
       else                                       -- no screen → text-only prompt path
         wf.hud.show("thinking")
-        wf.runScript({wf.PROMPTS, "", wf.targetHint}, raw, function(_, stdout)
+        wf.runScript({wf.PROMPTS}, raw, function(_, stdout)
           wf.setState("idle"); wf.insert(stdout)
         end)
       end

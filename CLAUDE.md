@@ -83,8 +83,9 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 | Script | Role |
 |---|---|
 | `senti-dictate.sh` | record / transcribe / clean — the only path that stays 100% local |
-| `senti-ai.sh` | the single shared OpenAI text call |
-| `senti-vision.sh` | screenshot + instruction → text |
+| `senti-ai.sh` | THE single OpenAI call — text and vision (`SENTI_IMG` makes it a vision request) |
+| `senti-vision.sh` | screenshot + instruction → prompt assembly, delegates the call to senti-ai.sh |
+| `senti-lib.sh` | shared `senti_prompt_context` — craft + brain + session + target for BOTH prompt paths |
 | `senti-prompt.sh` | rough idea → optimised prompt (fallback path — see path parity) |
 | `senti-command.sh` | transform selected text by voice |
 | `senti-judge.sh` | prompt quality: legacy 0-10 `score` + discriminating pairwise `compare` |

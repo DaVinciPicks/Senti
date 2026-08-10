@@ -124,21 +124,27 @@ case "$GN" in *Gemini*|*Anthropic*|*OpenAI*) bad "bare browser name picked a mod
               *) ok "bare browser name → universal guidance only" ;; esac
 
 echo "── prompt-mode path parity ──"
-# Prompt mode routes to senti-vision.sh when Screen Recording is granted and to
-# senti-prompt.sh when it isn't. Both must carry the same guidance; when they didn't,
-# every improvement silently applied only to the branch that never runs.
+# Parity is STRUCTURAL now: both paths source senti-lib.sh and call
+# senti_prompt_context, which owns craft + brain + session + target assembly.
+# The checks assert (a) both paths use the shared function, (b) the lib actually
+# still wires all four dependencies — so a drift reintroduction fails loudly.
 PAR=0
-for dep in senti-target.sh senti-session.sh senti-brain.sh prompt-craft.md; do
-  # No `|| echo 0`: grep -c already prints 0 on no-match (while exiting 1), so the
-  # fallback double-emitted "0\n0" and broke the -ge comparison. ${VAR:-0} covers
-  # the file-missing case, where grep prints nothing.
-  A="$(/usr/bin/grep -c "$dep" "$CFG/senti-vision.sh" 2>/dev/null)"; A="${A:-0}"
-  B="$(/usr/bin/grep -c "$dep" "$CFG/senti-prompt.sh" 2>/dev/null)"; B="${B:-0}"
-  if [ "$A" -ge 1 ] && [ "$B" -ge 1 ]; then :; else
-    bad "path parity: $dep missing (vision=$A prompt=$B)"; PAR=1
-  fi
+for f in senti-vision.sh senti-prompt.sh; do
+  /usr/bin/grep -q 'senti-lib.sh' "$CFG/$f" && /usr/bin/grep -q 'senti_prompt_context' "$CFG/$f" \
+    || { bad "path parity: $f does not use the shared context lib"; PAR=1; }
 done
-[ "$PAR" = "0" ] && ok "both prompt paths carry craft + session + target guidance"
+for dep in senti-target.sh senti-session.sh senti-brain.sh prompt-craft.md; do
+  /usr/bin/grep -q "$dep" "$CFG/senti-lib.sh" 2>/dev/null \
+    || { bad "path parity: senti-lib.sh lost its $dep wiring"; PAR=1; }
+done
+[ "$PAR" = "0" ] && ok "both paths share one context lib carrying craft + brain + session + target"
+# The shared function must actually emit for a known project (env-only identity).
+LCTX="$(SENTI_SLABEL="senti — x — y" SENTI_SKEY="" SENTI_HINT="Claude" WF_BRAIN_REFRESH=0 \
+        bash -c 'source "'"$CFG"'/config.sh"; source "'"$CFG"'/senti-lib.sh"; senti_prompt_context' 2>/dev/null)"
+case "$LCTX" in
+  *"How to build the prompt"*) ok "shared context emits craft (+$( printf '%s' "$LCTX" | /usr/bin/grep -c '^--- ' ) sections, ${#LCTX} chars)" ;;
+  *) bad "shared context function emitted nothing" ;;
+esac
 
 echo "── whisper vocabulary biasing ──"
 BIAS="$(SENTI_SLABEL="senti — ⠐ x — claude — 1×1" bash -c '

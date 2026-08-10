@@ -14,7 +14,8 @@ set -uo pipefail
 source "$HOME/.config/senti/config.sh"
 
 KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
-HINT="${1:-}"
+# App-name hint via env first (SENTI_HINT from runScript); argv is a manual fallback.
+HINT="${1:-${SENTI_HINT:-}}"
 [ -d "$KB" ] || exit 0
 
 # A browser's app name says nothing about the destination model — the TAB does.

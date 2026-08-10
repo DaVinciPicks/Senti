@@ -23,7 +23,9 @@ while IFS= read -r idea; do
   total=$((total + score)); n=$((n + 1))
 done < "$CASES"
 avg="$(/usr/bin/awk -v t="$total" -v n="$n" 'BEGIN{printf "%.2f", (n>0)?t/n:0}')"
-mode="Fast"   # constant since Best mode was deleted; column kept for CSV continuity
+# The old mode column was a constant after Best mode's deletion; record the actual
+# text model instead so A/B rows in history.csv are self-documenting.
+mode="${WF_TEXT_MODEL:-gpt-5.6-luna}"
 echo "──────────────────────────────────────────────"
 printf 'RESULT [%s]  mode=%s  avg=%s/10  cases=%s\n' "$LABEL" "$mode" "$avg" "$n"
 printf '%s,%s,%s,%s\n' "$LABEL" "$mode" "$avg" "$n" >> "$DIR/history.csv"

@@ -21,9 +21,11 @@ TTL_H="${WF_SESSION_TTL_H:-24}"     # hours before a session file is considered 
 mkdir -p "$DIR" 2>/dev/null
 chmod 700 "$DIR" 2>/dev/null        # it holds transcripts of your speech
 
+# Identity via env first (SENTI_SKEY/SENTI_SLABEL from senti.lua's runScript): window
+# titles carry project + task names, so they stay off argv. argv is a manual fallback.
 CMD="${1:-recall}"
-KEY="${2:-}"
-LABEL="${3:-}"
+KEY="${2:-${SENTI_SKEY:-}}"
+LABEL="${3:-${SENTI_SLABEL:-}}"
 MODE="${4:-}"
 
 # Window titles are "project — status task — command — dims". Pull the useful fields.
