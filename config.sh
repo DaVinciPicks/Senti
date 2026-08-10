@@ -12,7 +12,10 @@
 # v4: default model gpt-5.4-mini → gpt-5.6-luna (newer, 3-4.5x cheaper, eval 8.12 vs 8.00).
 # v5: Best mode deleted (unreachable from the live path, never measured better, 2x latency);
 #     second-brain bridge added (WF_BRAIN* — Obsidian vault digests in prompt mode).
-WF_CONFIG_VERSION=5
+# v6: model fallback (a config pinning a model that isn't on disk no longer kills
+#     dictation) + WF_AUDIO_CTX* short-clip speedup knobs. Behavioural, so it needs the
+#     bump — install.sh only replaces config.sh when this number changes.
+WF_CONFIG_VERSION=6
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -83,6 +86,15 @@ WF_VISION_EFFORT="${WF_VISION_EFFORT:-low}"
 #   2048 → 2814 tok / $0.00233 (no material gain over 1536)
 # Drop to 1024 to roughly halve vision cost if you don't need fine text read back.
 WF_SHOT_PX="${WF_SHOT_PX:-1536}"
+
+# --- Local transcription speed ---
+# Shrinking whisper's encoder window ~halves latency on short clips (measured 833ms →
+# 420ms on a 6s clip, byte-identical transcript) but TRUNCATES longer ones: at 16s the
+# transcript diverged and ran 3x slower; at 18.8s the end of the recording was silently
+# lost. So it only applies below WF_AUDIO_CTX_MAX_SEC — 12s was still identical, 10s is
+# the shipped margin. Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
+WF_AUDIO_CTX="${WF_AUDIO_CTX:-768}"
+WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
 # Uncomment to pin a model; otherwise each script's built-in default is used
 # (so upgrades take effect without editing this file).
 # WF_TEXT_MODEL="gpt-5.6-luna"
