@@ -42,6 +42,36 @@ finish_recording() {
   done
 }
 
+# Build the whisper vocabulary hint from context that costs nothing to obtain.
+# Kept short on purpose: an over-long hint makes whisper echo the hint text back
+# instead of transcribing, which is worse than no hint at all. Disable with WF_BIAS=0.
+build_bias() {
+  [ "${WF_BIAS:-1}" = "1" ] || return 0
+  local terms="" proj branch
+  # Project name from the focused window title (senti.lua passes it through).
+  proj="$(printf '%s' "${SENTI_SLABEL:-}" | /usr/bin/awk -F ' — ' '{print $1}' \
+          | /usr/bin/tr -cd '[:alnum:]._ -' | cut -c1-40)"
+  [ -n "${proj// /}" ] && terms="$proj"
+  # Current git branch, if the focused project maps to a repo we can see.
+  if [ -n "${proj// /}" ] && [ -d "$HOME/code/$proj/.git" ]; then
+    branch="$(/usr/bin/git -C "$HOME/code/$proj" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    [ -n "$branch" ] && [ "$branch" != "HEAD" ] && terms="$terms, $branch"
+  fi
+  # Replacement targets are, by definition, words this user says and whisper mishears.
+  if [ -f "$WF_REPLACEMENTS" ]; then
+    local dict
+    # Dedupe: several "what whisper hears" lines legitimately map to the SAME target
+    # (cloud md / cloud dot md → CLAUDE.md), and repeating a term in the hint just burns
+    # the budget that keeps whisper from echoing the hint instead of transcribing.
+    dict="$(/usr/bin/awk -F '|' '!/^[[:space:]]*#/ && NF>1 {print $2}' "$WF_REPLACEMENTS" \
+            | /usr/bin/awk '!seen[$0]++' \
+            | /usr/bin/head -12 | /usr/bin/tr '\n' ',' | /usr/bin/sed 's/,$//; s/,/, /g')"
+    [ -n "${dict// /}" ] && terms="${terms:+$terms, }$dict"
+  fi
+  [ -z "${terms// /}" ] && return 0
+  printf 'Vocabulary: %s.' "$(printf '%s' "$terms" | cut -c1-220)"
+}
+
 transcribe() {
   [ -s "$WF_AUDIO" ] || { log "no audio to transcribe"; return 0; }
   # Silence gate: real speech peaks well above 0.02; a quiet room sits near 0.0.
@@ -59,11 +89,26 @@ transcribe() {
     echo "__WF_SERVER_DOWN__"
     return 0
   fi
+  # Vocabulary biasing: whisper takes an `prompt` hint that steers decoding toward
+  # words it expects to hear. Costs nothing, runs locally, and is the cheapest fix for
+  # the #1 dictation complaint — mangled project names and code identifiers. The terms
+  # come from where you already are: the project from the focused window title, the git
+  # branch, and the right-hand side of your custom dictionary.
+  local bias
+  bias="$(build_bias)"
   local raw
-  raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
-        -F file=@"$WF_AUDIO" \
-        -F temperature=0.0 \
-        -F response_format=text 2>>"$WF_LOG")"
+  if [ -n "${bias// /}" ]; then
+    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
+          -F file=@"$WF_AUDIO" \
+          -F temperature=0.0 \
+          -F prompt="$bias" \
+          -F response_format=text 2>>"$WF_LOG")"
+  else
+    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
+          -F file=@"$WF_AUDIO" \
+          -F temperature=0.0 \
+          -F response_format=text 2>>"$WF_LOG")"
+  fi
   clean_text "$raw"
 }
 

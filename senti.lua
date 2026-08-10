@@ -237,7 +237,9 @@ end
 -- Run the vision engine; surface failures instead of silently inserting nothing.
 function wf.runVision(raw, kind)
   wf.hud.show("thinking")
-  wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
+  -- 4th arg is the target-model hint: prompt mode runs through THIS path whenever Screen
+  -- Recording is granted, so it needs the same guidance the text-only path gets.
+  wf.runScript({wf.VISION, "", wf.SHOT, kind, wf.targetHint}, raw, function(exitCode, out)
     wf.setState("idle")
     if exitCode ~= 0 then
       wf.log("vision failed (exit " .. tostring(exitCode) .. ")")

@@ -3,6 +3,12 @@
 # Add your own lines below. Applied to every dictation.
 cloud dot md|CLAUDE.md
 cloud md|CLAUDE.md
+# Whisper often emits these as ONE word with no space, which the spaced entries above
+# never match. Vocabulary biasing helps but is stochastic; a literal rule is not.
+cloudmd|CLAUDE.md
+cloud.md|CLAUDE.md
+claudemd|CLAUDE.md
+davincibets|Da Vinci Bets
 cloud code|Claude Code
 da vinci bets|Da Vinci Bets
 davinci bets|Da Vinci Bets

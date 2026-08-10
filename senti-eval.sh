@@ -17,7 +17,7 @@ while IFS= read -r idea; do
   [ -z "${idea// /}" ] && continue
   case "$idea" in \#*) continue ;; esac
   prompt="$(bash "$HOME/.config/senti/senti-prompt.sh" "$idea" 2>/dev/null)"
-  score="$(bash "$HOME/.config/senti/senti-judge.sh" "$idea" "$prompt" 2>/dev/null)"
+  score="$(bash "$HOME/.config/senti/senti-judge.sh" score "$idea" "$prompt" 2>/dev/null)"
   score="${score:-0}"
   printf '%-46.46s | %2s\n' "$idea" "$score"
   total=$((total + score)); n=$((n + 1))

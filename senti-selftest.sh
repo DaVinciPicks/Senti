@@ -106,6 +106,35 @@ G="$(bash "$CFG/senti-target.sh" "Claude" 2>/dev/null)"
 [ -n "${G// /}" ] && ok "target resolver returned guidance for 'Claude' (${#G} chars)" \
                    || bad "target resolver returned nothing for 'Claude'"
 
+echo "── prompt-mode path parity ──"
+# Prompt mode routes to senti-vision.sh when Screen Recording is granted and to
+# senti-prompt.sh when it isn't. Both must carry the same guidance; when they didn't,
+# every improvement silently applied only to the branch that never runs.
+PAR=0
+for dep in senti-target.sh senti-session.sh prompt-craft.md; do
+  A="$(/usr/bin/grep -c "$dep" "$CFG/senti-vision.sh" 2>/dev/null || echo 0)"
+  B="$(/usr/bin/grep -c "$dep" "$CFG/senti-prompt.sh" 2>/dev/null || echo 0)"
+  if [ "$A" -ge 1 ] && [ "$B" -ge 1 ]; then :; else
+    bad "path parity: $dep missing (vision=$A prompt=$B)"; PAR=1
+  fi
+done
+[ "$PAR" = "0" ] && ok "both prompt paths carry craft + session + target guidance"
+
+echo "── whisper vocabulary biasing ──"
+BIAS="$(SENTI_SLABEL="senti — ⠐ x — claude — 1×1" bash -c '
+  source '"$CFG"'/config.sh
+  '"$(/usr/bin/sed -n '/^build_bias()/,/^}/p' "$CFG/senti-dictate.sh")"'
+  build_bias' 2>/dev/null)"
+case "$BIAS" in
+  *Vocabulary*) ok "bias hint built (${#BIAS} chars)" ;;
+  *)            bad "bias hint empty — misheard identifiers won't be corrected" ;;
+esac
+[ "${#BIAS}" -le 240 ] && ok "bias within length budget (long hints get echoed back)" \
+                        || bad "bias too long (${#BIAS} chars) — whisper may echo it"
+DUPES="$(printf '%s' "$BIAS" | /usr/bin/tr ',' '\n' | /usr/bin/sed 's/^ *//' \
+         | /usr/bin/sort | /usr/bin/uniq -d | /usr/bin/grep -c . || true)"
+[ "${DUPES:-0}" -eq 0 ] && ok "no duplicate bias terms" || bad "$DUPES duplicate term(s) in bias"
+
 echo "── per-window session memory ──"
 SS="$CFG/senti-session.sh"
 LA="proj-alpha — ⠐ Doing alpha work — claude — 213×59"

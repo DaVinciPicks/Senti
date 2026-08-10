@@ -27,6 +27,31 @@ OP="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 OPERATING=""
 [ -f "$OP" ] && OPERATING="$(cat "$OP")"
 
+# Prompt mode reaches THIS script whenever Screen Recording is granted (senti.lua:281),
+# so the vision path is the one that actually runs day to day — the text-only
+# senti-prompt.sh path is the fallback for when it is denied. Both must therefore carry
+# the same craft, session memory and target-model guidance, or every improvement silently
+# applies to the branch the user never hits. (That was a real bug: all of this lived only
+# in senti-prompt.sh.) Shared craft lives in prompts/prompt-craft.md so it can't drift.
+EXTRA=""
+if [ "$KIND" = "prompt" ]; then
+  CRAFT="$HOME/.config/senti/prompts/prompt-craft.md"
+  [ -f "$CRAFT" ] && EXTRA="
+
+--- How to build the prompt ---
+$(cat "$CRAFT")"
+  SESS="$(bash "$HOME/.config/senti/senti-session.sh" recall \
+            "${SENTI_SKEY:-}" "${SENTI_SLABEL:-}" 2>>"$WF_LOG")"
+  [ -n "${SESS// /}" ] && EXTRA="$EXTRA
+
+--- $SESS"
+  TGT="$(bash "$HOME/.config/senti/senti-target.sh" "${4:-}" 2>>"$WF_LOG")"
+  [ -n "${TGT// /}" ] && EXTRA="$EXTRA
+
+--- Target-model guidance (apply this; it reflects how the destination model behaves) ---
+$TGT"
+fi
+
 # Downscale the retina screenshot with sips (built-in; no python deps) so the API
 # call is fast and cheap: full-res ~3000px/4MB → a 1536px JPEG that keeps on-screen
 # text readable. Falls back to the original if sips fails.
@@ -41,6 +66,7 @@ SENTI_SHOT="$SMALL" \
 SENTI_MODEL="${WF_VISION_MODEL:-gpt-5.6-luna}" \
 SENTI_EFFORT="${WF_VISION_EFFORT:-low}" \
 SENTI_OPERATING="$OPERATING" \
+SENTI_EXTRA="$EXTRA" \
 SENTI_KIND="$KIND" \
 SENTI_MIME="$MIME" \
 /usr/bin/python3 - <<'PY'
@@ -48,6 +74,7 @@ import sys, os, json, base64, urllib.request
 key = os.environ["SENTI_KEY"]
 instr, kind, mime = os.environ["SENTI_INSTR"], os.environ["SENTI_KIND"], os.environ["SENTI_MIME"]
 operating = os.environ["SENTI_OPERATING"]
+extra = os.environ.get("SENTI_EXTRA", "")
 img = base64.b64encode(open(os.environ["SENTI_SHOT"], "rb").read()).decode()
 
 if kind == "prompt":
@@ -57,7 +84,7 @@ if kind == "prompt":
               "optimized, high-signal prompt that folds in the relevant on-screen context and "
               "fits what they're doing, ready to paste into a capable LLM. Output ONLY the "
               "finished prompt — no preamble, quotes, code fences, or commentary.\n\n"
-              "Behavior layer:\n" + operating)
+              "Behavior layer:\n" + operating + extra)
     utext = "ROUGH IDEA (turn this into the prompt, using the screen for context): " + instr
 else:
     system = ("You see a screenshot of the user's current screen (a conversation, document, or "
