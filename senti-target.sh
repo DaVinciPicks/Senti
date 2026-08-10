@@ -17,6 +17,16 @@ KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
 HINT="${1:-}"
 [ -d "$KB" ] || exit 0
 
+# A browser's app name says nothing about the destination model — the TAB does.
+# "Google Chrome" must not match the google/Gemini KB when the tab is chatgpt.com.
+# Swap in the window title (SENTI_SLABEL, set by senti.lua at capture time): browser
+# titles carry the page title, so "Claude — Google Chrome" matches Claude correctly
+# and a title that names no model falls through to universal guidance only.
+case "$(printf '%s' "$HINT" | /usr/bin/tr 'A-Z' 'a-z')" in
+  *chrome*|*safari*|*firefox*|*arc*|*brave*|*edge*|*opera*|*vivaldi*|*orion*|*dia*|*comet*)
+    HINT="${SENTI_SLABEL:-}" ;;
+esac
+
 # Pull one frontmatter value out of a KB file: fm <file> <key>
 fm() { /usr/bin/sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1; }
 

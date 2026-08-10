@@ -47,3 +47,7 @@ mkdir -p "$CFG/menubar"
 "$RESVG" --width 22 --height 22 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic.png"    2>/dev/null
 "$RESVG" --width 44 --height 44 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic@2x.png" 2>/dev/null
 [ -f "$CFG/menubar/mic.png" ] && echo "  ✓ menu-bar template built"
+
+# The trailing test above must not decide the script's exit status — a failed
+# menu-bar render should warn, not abort install.sh (which runs under set -e).
+exit 0

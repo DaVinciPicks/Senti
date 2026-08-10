@@ -17,7 +17,7 @@ leaves your Mac.
 - **Private & free** — transcription runs on a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server bound to `127.0.0.1`. Your voice never touches the network.
 - **Fast** — the model stays warm in Apple-Silicon Metal memory; dictation lands in ~0.2–0.8s.
 - **CPU-light** — near-zero idle CPU; the optional AI transforms offload to the cloud, so no local LLM burns your battery.
-- **Cheap** — the AI modes run on `gpt-5.4-mini`: a screen-context call is ~1.5s and ~1.9k tokens.
+- **Cheap** — the AI modes run on `gpt-5.6-luna`: a screen-context call is ~1.5s and ~$0.0004; a prompt rewrite ~$0.0005.
 
 ## Modes
 
@@ -51,7 +51,7 @@ Speed (Fast/Accurate), permissions, and engine restart.
 - **Model-aware prompting** — Senti notices which app you're in and writes the prompt *for the model you're about to paste into*. Ask for the same thing in Claude and in ChatGPT and you get two different prompts: the Claude one uses XML tags and states scope explicitly; the ChatGPT one stays lean and tells the model to assume-and-proceed rather than ask. The guidance lives in `prompts/models/*.md` (distilled from ~90 sources across OpenAI, Anthropic, Google, open-weight models, and prompting research) — edit those files and the behavior changes. Detection reads the frontmost app name locally, so it costs no extra API call.
 - **Per-window session memory** — if you run several terminals at once, Senti keeps them apart. Session identity is the *window*, not the app, so four Claude Code terminals are four separate contexts. It reads the project and current task straight off the window title, so saying **"now do the same for the download one"** resolves correctly — and differently — in each terminal. No screenshots, no extra API call, nothing leaves the Mac.
 - **Cache hygiene** — `~/.cache/senti` holds the raw audio of what you just said and a full-resolution picture of your screen. Both are deleted the moment a turn finishes, with a 60-second backstop and a sweep at launch. Session notes are mode 600 and expire after 24h.
-- **Self-test** — `bash ~/.config/senti/senti-selftest.sh` runs 19 checks end to end: engine, config schema, key permissions, icon build, live API latency, session isolation, and a canary proving your dictated text never reaches the process table.
+- **Self-test** — `bash ~/.config/senti/senti-selftest.sh` runs its full check suite end to end: engine, config schema, key permissions, icon build, live API latency, session isolation, and a canary proving your dictated text never reaches the process table.
 - **Offline eval harness** — `senti-eval.sh` scores prompt-mode output across fixed cases so prompt-strategy changes are *measurable* (A/B via env, history in `eval/history.csv`).
 
 ## Install
@@ -75,11 +75,10 @@ Grant **Hammerspoon** the macOS permissions it needs:
 - **Microphone** — menu-bar 🎤 → *Grant / test microphone* → Allow.
 - **Screen Recording** *(only for context / screen-aware prompt modes)* — menu-bar 🎤 → *Grant screen recording*, then relaunch Hammerspoon.
 
-For the AI modes, drop keys (both optional; prompt/command work with DeepSeek, context/vision need OpenAI):
+For the AI modes, one key (optional — verbatim dictation needs nothing):
 
 ```bash
-echo "sk-..." > ~/.config/senti/deepseek-key   # text modes (cheap)
-echo "sk-..." > ~/.config/senti/openai-key      # vision (context + screen-aware prompt)
+echo "sk-..." > ~/.config/senti/openai-key && chmod 600 ~/.config/senti/openai-key
 ```
 
 ## Architecture
@@ -89,13 +88,18 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ DeepSeek (→ claude fallback)   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-4o-mini (reads a downscaled screenshot)
+   prompt/command ─▶ senti-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
+   prompt mode also ─▶ senti-target.sh (which model you're pasting into)
+                   ├─▶ senti-session.sh (this window's recent turns)
+                   └─▶ senti-brain.sh  (your Obsidian note for this project)
 ```
 
 - `senti-serve.sh` — warm whisper.cpp server (launchd `com.leo.senti`).
 - `senti-dictate.sh` — record / stop / transcribe / clean / silence-gate / dictionary.
-- `senti-ai.sh` — shared text AI call (DeepSeek → claude), prepends the operating layer.
+- `senti-ai.sh` — the single shared OpenAI text call, prepends the operating layer.
+- `senti-target.sh` / `senti-session.sh` / `senti-brain.sh` — model guidance, per-window memory, vault bridge.
+- `senti-selftest.sh` — the full end-to-end check suite.
 - `senti-prompt.sh` — prompt mode (one call; craft + vault + session + target-model guidance).
 - `senti-command.sh` — transform selected text.
 - `senti-vision.sh` — OpenAI vision for context + screen-aware prompt.

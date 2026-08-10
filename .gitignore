@@ -4,7 +4,7 @@ api-key
 *.key
 
 # Runtime state
-model.pref
+*.pref
 *.log
 
 # Build artifacts
@@ -21,5 +21,3 @@ appicon.iconset/
 openai-key
 *-key
 eval/history.csv
-# never commit anything derived from the user's vault
-brain-map.txt.local

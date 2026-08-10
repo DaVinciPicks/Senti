@@ -14,7 +14,6 @@ wf = wf or {}
 wf.HOME    = os.getenv("HOME")
 wf.DICTATE = wf.HOME .. "/.config/senti/senti-dictate.sh"
 wf.PROMPTS = wf.HOME .. "/.config/senti/senti-prompt.sh"
-wf.TARGETSH = wf.HOME .. "/.config/senti/senti-target.sh"
 wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
 wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
@@ -195,7 +194,7 @@ end
 -- overwrites it (which, for screen.png, could be days).
 wf.CACHE = wf.HOME .. "/.cache/senti"
 wf.SWEEPABLE = { "capture.wav", "screen.png", "screen-small.jpg", "selection.txt",
-                 "mictest.wav", "selftest-shot.png" }
+                 "mictest.wav" }
 function wf.sweepCache()
   if wf.state == "recording" then return end   -- capture.wav is in use
   local n = 0
@@ -355,8 +354,10 @@ function wf.endCapture()
   if wf.state ~= "recording" then wf.log("endCapture ignored: state="..wf.state); return end
   wf.setState("working")
   wf.log("endCapture: transcribing")
-  hs.task.new(wf.BASH, function(_, stdout) wf.handleTranscript(stdout) end,
-              {wf.DICTATE, "stop"}):start()
+  -- MUST go through runScript: senti-dictate.sh reads SENTI_SLABEL to build the
+  -- whisper vocabulary hint (project name → correct identifier transcription). A bare
+  -- hs.task.new carries no Senti env, so the hint silently loses its best term.
+  wf.runScript({wf.DICTATE, "stop"}, "", function(_, stdout) wf.handleTranscript(stdout) end)
 end
 
 -- Snapshot the screen now (for prompt + context modes), then start capturing.

@@ -2,7 +2,7 @@
 # Offline eval harness — scores prompt-mode output across fixed rough-idea cases so
 # prompt-strategy changes are MEASURABLE. A/B by env, e.g.:
 #   bash senti-eval.sh baseline
-#   WF_PROMPT_BEST=1 bash senti-eval.sh best
+#   WF_TEXT_MODEL=gpt-5.6-terra bash senti-eval.sh terra   # A/B a different model
 # Averages accumulate in eval/history.csv for before/after comparison.
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"

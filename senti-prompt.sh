@@ -55,8 +55,14 @@ CRAFT=""
 
 GEN_SYS="You are a world-class prompt engineer. Turn the rough, spoken-aloud request into ONE clean, high-signal prompt for a capable LLM. First silently deconstruct the intent, then build it. ${CRAFT}${BRAIN_CTX}${SESSION_CTX}${TARGET_GUIDE}
 
-Now transform the user rough idea below. Wrap your entire output between <r> and </r> tags and put nothing outside them."
-RESULT="$(SENTI_IN="$RAW" bash "$AI" "$GEN_SYS" 2>>"$WF_LOG" | extract_r | trim)"
-
+Now transform the user rough idea below. The examples above show only the content of a good prompt — your actual reply must still be wrapped: put your entire output between <r> and </r> tags and nothing outside them."
+# GEN_SYS embeds session transcripts + the vault digest → it goes via env (SENTI_SYS),
+# never argv. See senti-ai.sh.
+OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$RAW" bash "$AI" 2>>"$WF_LOG")"
+RESULT="$(printf '%s' "$OUT" | extract_r | trim)"
+# Degrade in order: tagged answer → untagged answer (model ignored the sentinel but
+# still optimized) → raw transcript. Previously a missing tag silently pasted the
+# user's rambling raw speech as if it were the optimized prompt.
+[ -z "${RESULT// /}" ] && RESULT="$(printf '%s' "$OUT" | trim)"
 [ -z "${RESULT// /}" ] && RESULT="$RAW"
 printf '%s' "$RESULT"

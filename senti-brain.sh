@@ -47,6 +47,7 @@ if [ "${1:-}" = "refresh" ]; then
       && chmod 600 "$T" && mv "$T" "$CACHEDIR/$RKEY.md"
     echo "$(date '+%H:%M:%S') brain: refreshed digest '$RKEY' ($(printf '%s' "$OUT" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"
   fi
+  rm -f "$CACHEDIR/.refreshing.$RKEY"
   exit 0
 fi
 
@@ -114,8 +115,14 @@ if [ -s "$CACHE" ] && [ -n "$(/usr/bin/find "$CACHE" -mmin -1440 -newer "$NOTE" 
 fi
 # Stale or missing → serve the raw extract NOW (zero added latency) and refresh in
 # the background for next time. `&` + parent exit orphans the worker safely.
+# The lock marker stops rapid consecutive dictations from stampeding parallel
+# refreshes of the same note; a stuck lock self-expires after 3 minutes.
 if [ "${WF_BRAIN_REFRESH:-1}" = "1" ]; then
-  ( bash "$HOME/.config/senti/senti-brain.sh" refresh "$NOTE" "$KEY" >/dev/null 2>&1 & )
+  LOCK="$CACHEDIR/.refreshing.$KEY"
+  if [ -z "$(/usr/bin/find "$LOCK" -mmin -3 2>/dev/null)" ]; then
+    : > "$LOCK"
+    ( bash "$HOME/.config/senti/senti-brain.sh" refresh "$NOTE" "$KEY" >/dev/null 2>&1 & )
+  fi
 fi
 
 # Digest, in order of preference:

@@ -69,6 +69,8 @@ build_bias() {
     [ -n "${dict// /}" ] && terms="${terms:+$terms, }$dict"
   fi
   [ -z "${terms// /}" ] && return 0
+  # Logged so a mistranscription can be debugged against what the hint actually was.
+  log "bias: $terms"
   printf 'Vocabulary: %s.' "$(printf '%s' "$terms" | cut -c1-220)"
 }
 
@@ -98,10 +100,12 @@ transcribe() {
   bias="$(build_bias)"
   local raw
   if [ -n "${bias// /}" ]; then
+    # --form-string, not -F: -F parses ';' in the value as a multipart attribute
+    # separator and silently truncates the hint (branch names can contain ';').
     raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
           -F file=@"$WF_AUDIO" \
           -F temperature=0.0 \
-          -F prompt="$bias" \
+          --form-string "prompt=$bias" \
           -F response_format=text 2>>"$WF_LOG")"
   else
     raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \

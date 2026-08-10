@@ -33,15 +33,19 @@ done
 [ -z "$MISSING" ] && ok "all required config vars resolve" || bad "unset config vars:$MISSING"
 
 echo "── unbound-variable regression (stale config must not crash scripts) ──"
-# The scripts must run off their own defaults when config.sh predates a new var.
-STALE=$(mktemp); : > "$STALE"
-if ( set -uo pipefail; WF_LOG=/dev/null; WF_RUN=/tmp
-     KEYFILE="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"; [ -n "$KEYFILE" ] ) 2>/dev/null; then
-  ok "point-of-use defaults hold under set -u"
-else
-  bad "unbound variable under set -u"
-fi
-rm -f "$STALE"
+# Static check with teeth (the old version was a tautology that never read the
+# scripts): every brace-form WF_ variable dereferenced WITHOUT a :- default in any
+# deployed script must be defined unconditionally by config.sh — otherwise a
+# pre-upgrade config crashes that script under set -u at runtime. NB: this comment
+# must not spell the literal pattern, because the scan includes this file.
+MISS=""
+BARE="$(/usr/bin/grep -ohE '\$\{WF_[A-Z_0-9]+\}' "$CFG"/senti-*.sh 2>/dev/null \
+        | /usr/bin/sort -u | /usr/bin/tr -d '${}')"
+for v in $BARE; do
+  /usr/bin/grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "$CFG/config.sh" || MISS="$MISS $v"
+done
+[ -z "$MISS" ] && ok "every bare \${WF_*} deref is unconditionally defined in config.sh" \
+               || bad "bare deref with no config.sh definition:$MISS"
 
 echo "── secrets ──"
 [ -f "$CFG/openai-key" ] && ok "OpenAI key present" || bad "no OpenAI key at $CFG/openai-key"
@@ -62,11 +66,13 @@ else
   OUT="$(bash "$CFG/senti-ai.sh" 'Reply with exactly the word: PONG. Nothing else.' 'ping' 2>/dev/null)"
   T1=$(date +%s)
   case "$OUT" in
-    *PONG*) ok "text path answered in $((T1-T0))s (${WF_TEXT_MODEL:-gpt-5.4-mini})" ;;
+    *PONG*) ok "text path answered in $((T1-T0))s (${WF_TEXT_MODEL:-gpt-5.6-luna})" ;;
     *)      bad "text path returned: '${OUT:0:60}'" ;;
   esac
 
-  SHOT="$WF_RUN/selftest-shot.png"
+  # Screenshot lives OUTSIDE ~/.cache/senti: Hammerspoon's 60s idle sweeper deletes
+  # wf.SWEEPABLE files there, and an external selftest run races it (flapping failure).
+  SHOT="$(mktemp -d)/selftest-shot.png"
   /usr/sbin/screencapture -x -m "$SHOT" 2>/dev/null
   if [ -s "$SHOT" ]; then
     T0=$(date +%s)
@@ -81,9 +87,12 @@ else
 fi
 
 echo "── privacy: dictated text must not be visible in \`ps\` ──"
-# Exercise the REAL call path: senti.lua passes spoken text in SENTI_IN, never argv.
+# Exercise the REAL call path and BOTH env channels: SENTI_IN (spoken text) and
+# SENTI_SYS (system prompt — it embeds session transcripts + vault digests, so it is
+# just as sensitive; a canary only in SENTI_IN missed exactly that leak once).
 SECRET="senti-canary-$$-do-not-log"
-( SENTI_IN="$SECRET" bash "$CFG/senti-ai.sh" 'Reply with the single word OK.' >/dev/null 2>&1 ) &
+( SENTI_SYS="Reply with the single word OK. (ctx: $SECRET)" SENTI_IN="$SECRET" \
+    bash "$CFG/senti-ai.sh" >/dev/null 2>&1 ) &
 BGPID=$!
 # Snapshot ps into a variable and match with a shell glob. Piping to `grep -- "$SECRET"`
 # would put the canary in GREP's own argv, which ps then catches — the test reports a
@@ -105,6 +114,14 @@ KBN="$(/bin/ls -1 "$WF_MODEL_KB"/*.md 2>/dev/null | wc -l | tr -d ' ')"
 G="$(bash "$CFG/senti-target.sh" "Claude" 2>/dev/null)"
 [ -n "${G// /}" ] && ok "target resolver returned guidance for 'Claude' (${#G} chars)" \
                    || bad "target resolver returned nothing for 'Claude'"
+# Browsers: the app name must never pick a model family ("Google Chrome" once matched
+# the google/Gemini KB); the TAB title decides, and no title → universal only.
+GB="$(SENTI_SLABEL="Claude — chat — Google Chrome" bash "$CFG/senti-target.sh" "Google Chrome" 2>/dev/null)"
+case "$GB" in *Anthropic*) ok "browser hint resolves by tab title (Claude tab → Anthropic)" ;;
+              *) bad "browser tab title not resolved (got ${#GB} chars)" ;; esac
+GN="$(SENTI_SLABEL="" bash "$CFG/senti-target.sh" "Google Chrome" 2>/dev/null)"
+case "$GN" in *Gemini*|*Anthropic*|*OpenAI*) bad "bare browser name picked a model family" ;;
+              *) ok "bare browser name → universal guidance only" ;; esac
 
 echo "── prompt-mode path parity ──"
 # Prompt mode routes to senti-vision.sh when Screen Recording is granted and to
@@ -112,8 +129,11 @@ echo "── prompt-mode path parity ──"
 # every improvement silently applied only to the branch that never runs.
 PAR=0
 for dep in senti-target.sh senti-session.sh senti-brain.sh prompt-craft.md; do
-  A="$(/usr/bin/grep -c "$dep" "$CFG/senti-vision.sh" 2>/dev/null || echo 0)"
-  B="$(/usr/bin/grep -c "$dep" "$CFG/senti-prompt.sh" 2>/dev/null || echo 0)"
+  # No `|| echo 0`: grep -c already prints 0 on no-match (while exiting 1), so the
+  # fallback double-emitted "0\n0" and broke the -ge comparison. ${VAR:-0} covers
+  # the file-missing case, where grep prints nothing.
+  A="$(/usr/bin/grep -c "$dep" "$CFG/senti-vision.sh" 2>/dev/null)"; A="${A:-0}"
+  B="$(/usr/bin/grep -c "$dep" "$CFG/senti-prompt.sh" 2>/dev/null)"; B="${B:-0}"
   if [ "$A" -ge 1 ] && [ "$B" -ge 1 ]; then :; else
     bad "path parity: $dep missing (vision=$A prompt=$B)"; PAR=1
   fi
@@ -145,11 +165,16 @@ else
   [ -n "${BOUT// /}" ] && ok "brain resolves 'senti' (${#BOUT} chars)" \
                         || bad "brain returned nothing for 'senti'"
   # Privacy: names that are NOT allowlisted projects must resolve to NOTHING.
-  # People/ is never searched; a leak here would ship personal notes to the API.
-  for probe in "Renzo" "randomxyzq"; do
-    PB="$(WF_BRAIN_REFRESH=0 bash "$CFG/senti-brain.sh" "$probe" 2>/dev/null)"
-    [ -z "${PB// /}" ] && ok "brain refuses '$probe'" || bad "PRIVACY: brain leaked content for '$probe'"
-  done
+  # The People/ probe is derived from the vault AT RUNTIME so no real name is ever
+  # committed to the repo (house rule: names were scrubbed from files and history).
+  PPROBE="$(/bin/ls "$BV/People" 2>/dev/null | head -1 | /usr/bin/sed 's/\.md$//')"
+  if [ -n "${PPROBE// /}" ]; then
+    PB="$(WF_BRAIN_REFRESH=0 bash "$CFG/senti-brain.sh" "$PPROBE" 2>/dev/null)"
+    [ -z "${PB// /}" ] && ok "brain refuses a real People/ note (probe derived at runtime)" \
+                        || bad "PRIVACY: brain leaked a People/ note"
+  fi
+  PB="$(WF_BRAIN_REFRESH=0 bash "$CFG/senti-brain.sh" "randomxyzq" 2>/dev/null)"
+  [ -z "${PB// /}" ] && ok "brain refuses an unknown project" || bad "brain leaked content for garbage hint"
   BPERM="$(/usr/bin/stat -f '%Lp' "$HOME/.cache/senti/brain" 2>/dev/null || echo '')"
   [ "$BPERM" = "700" ] && ok "brain cache dir mode 700" || bad "brain cache dir mode ${BPERM:-unknown}"
 fi

@@ -7,11 +7,13 @@
 # world-readable in `ps`, and the user's speech is the whole thing we're protecting.
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"
-SYS="${1:-}"
-# The user's dictated text arrives in SENTI_IN, NOT argv. `ps -Ao args` is readable by
-# every process on the box, so anything on a command line is effectively public — and
-# the speech is the one thing this app exists to protect. $2 is kept only as a fallback
-# for manual invocation; callers must use SENTI_IN. senti-selftest.sh asserts this.
+# BOTH channels arrive via env, not argv: SENTI_IN carries the user's dictated text,
+# and SENTI_SYS carries the system prompt — which is NOT static: it embeds session
+# transcripts (recent utterances) and vault digests, so putting it on a command line
+# leaks exactly what SENTI_IN protects. `ps -Ao args` is readable by every process on
+# the box. argv remains only as a fallback for manual/static invocation.
+# senti-selftest.sh runs a canary through BOTH channels and greps ps for it.
+SYS="${SENTI_SYS:-${1:-}}"
 USER_MSG="${SENTI_IN:-${2:-}}"
 
 # Behavior layer: prepend the reusable operating prompt so BOTH LLM modes run high-level.
