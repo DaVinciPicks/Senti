@@ -16,6 +16,13 @@
 # Identity comes from env (SENTI_SLABEL / SENTI_SKEY / SENTI_HINT, set by senti.lua's
 # runScript) so window titles stay off argv.
 
+# Blank test for UNBOUNDED strings (transcripts, model output, selections).
+# Never use ${VAR// /} for this: macOS ships bash 3.2, where that substitution is
+# O(n^2) on strings containing spaces — measured 1K:17ms, 2K:72ms, 4K:492ms, 8K:3720ms.
+# This costs ~6ms flat at 32KB. (It also treats tabs/newlines as blank, which is the
+# behaviour we actually want.) See senti-command.sh for the incident this came from.
+blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
+
 # Trusted system-side guidance: how to build a prompt + which model it's for.
 senti_prompt_craft() {
   local out craft tgt

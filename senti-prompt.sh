@@ -16,7 +16,7 @@ source "$HOME/.config/senti/senti-lib.sh"
 RAW="${SENTI_IN:-}"
 [ -z "$RAW" ] && RAW="${1:-$(cat)}"
 export SENTI_HINT="${SENTI_HINT:-${2:-}}"
-[ -z "${RAW// /}" ] && exit 0
+blank "$RAW" && exit 0
 AI="$HOME/.config/senti/senti-ai.sh"
 extract_r(){ /usr/bin/perl -0777 -ne 'print $1 if /<r>(.*?)<\/r>/s'; }
 trim(){ /usr/bin/perl -0777 -pe 's/^\s+//; s/\s+$//'; }
@@ -32,6 +32,6 @@ OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$USER_MSG" bash "$AI" 2>>"$WF_LOG")"
 RESULT="$(printf '%s' "$OUT" | extract_r | trim)"
 # Degrade in order: tagged answer → untagged answer (model ignored the sentinel but
 # still optimized) → raw transcript.
-[ -z "${RESULT// /}" ] && RESULT="$(printf '%s' "$OUT" | trim)"
-[ -z "${RESULT// /}" ] && RESULT="$RAW"
+blank "$RESULT" && RESULT="$(printf '%s' "$OUT" | trim)"
+blank "$RESULT" && RESULT="$RAW"
 printf '%s' "$RESULT"

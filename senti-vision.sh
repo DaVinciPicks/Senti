@@ -21,7 +21,7 @@ INSTR="${SENTI_IN:-${1:-}}"
 SHOT="${2:-}"
 KIND="${3:-context}"
 export SENTI_HINT="${SENTI_HINT:-${4:-}}"
-[ -z "${INSTR// /}" ] && exit 0
+blank "$INSTR" && exit 0
 [ -f "$SHOT" ] || { printf ''; exit 0; }
 
 if [ "$KIND" = "prompt" ]; then

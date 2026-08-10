@@ -14,7 +14,13 @@ umask 077   # audio/screenshot/selection files created here are uid-private
 # The log lives alongside speech-derived data; keep it uid-only, not the umask default.
 [ -f "$WF_LOG" ] || : >> "$WF_LOG"; chmod 600 "$WF_LOG" 2>/dev/null || true
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$WF_LOG"; }
-cue() { [ "$WF_SOUNDS" = "1" ] && [ -f "$1" ] && afplay "$1" >/dev/null 2>&1 & }
+# The redirect MUST wrap the whole group, not just afplay. `cmd >/dev/null &` backgrounds
+# the entire && chain as one subshell, and that subshell inherits this script's stdout —
+# which is a PIPE (senti.lua reads it via hs.task; a shell reads it via $( )). The reader
+# waits for EOF on that pipe, so it waited for afplay to finish playing: MEASURED 2392ms
+# with sound vs 539ms without, i.e. every single dictation paid ~1.85s waiting for the
+# stop chime. Redirecting the group detaches the subshell's stdout before it forks.
+cue() { { [ "$WF_SOUNDS" = "1" ] && [ -f "$1" ] && afplay "$1"; } >/dev/null 2>&1 & }
 
 server_up() { "$WF_CURL" -s -o /dev/null -m 1 "$WF_URL/" 2>/dev/null; }
 
@@ -86,8 +92,11 @@ transcribe() {
   [ -s "$WF_AUDIO" ] || { log "no audio to transcribe"; return 0; }
   # Silence gate: real speech peaks well above 0.02; a quiet room sits near 0.0.
   # Skipping near-silent clips stops Whisper hallucinating "Thank you." on nothing.
-  local peak
-  peak="$("$WF_SOX" "$WF_AUDIO" -n stat 2>&1 | /usr/bin/awk '/Maximum amplitude/{print $3}')"
+  # One sox pass gives both the peak (silence gate) and the length (audio_ctx gate).
+  local stat peak dur
+  stat="$("$WF_SOX" "$WF_AUDIO" -n stat 2>&1)"
+  peak="$(printf '%s' "$stat" | /usr/bin/awk '/Maximum amplitude/{print $3}')"
+  dur="$(printf '%s' "$stat" | /usr/bin/awk '/^Length \(seconds\)/{print $3}')"
   # Fail OPEN: only gate when we actually measured a peak below threshold. If sox stat
   # failed (empty peak), transcribe anyway rather than silently dropping real speech.
   if [ -n "$peak" ] && /usr/bin/awk -v p="$peak" -v t="${WF_SILENCE_THOLD:-0.005}" 'BEGIN{exit !(p+0 < t+0)}'; then
@@ -115,8 +124,36 @@ transcribe() {
   # branch, and the right-hand side of your custom dictionary.
   local bias
   bias="$(build_bias)"
+
+  # audio_ctx: shrink whisper's encoder window on SHORT clips. Measured on this Mac
+  # (large-v3-turbo, 6s clip): 833ms → 418ms, byte-identical transcript. It is a 2x win
+  # on the common case, because most of whisper's cost is a fixed encoder toll that
+  # barely scales with clip length.
+  # STRICTLY duration-gated, because past ~12s it does not just get slower — it
+  # TRUNCATES. Measured at ctx=768: 8s identical, 12s identical, 16s diverged AND took
+  # 2803ms (3x slower than default), losing the end of the recording entirely. Silently
+  # dropping the end of a long dictation is the worst failure this app can have, so the
+  # gate is set at 10s — a deliberate margin below the last length proven safe.
+  local ctx_arg=""
+  if [ -n "$dur" ] && /usr/bin/awk -v d="$dur" -v m="${WF_AUDIO_CTX_MAX_SEC:-10}" 'BEGIN{exit !(d+0 > 0 && d+0 < m+0)}'; then
+    ctx_arg="${WF_AUDIO_CTX:-768}"
+  fi
+
   local raw
-  if [ -n "${bias// /}" ]; then
+  if [ -n "$ctx_arg" ] && [ -n "${bias// /}" ]; then
+    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
+          -F file=@"$WF_AUDIO" \
+          -F temperature=0.0 \
+          -F audio_ctx="$ctx_arg" \
+          --form-string "prompt=$bias" \
+          -F response_format=text 2>>"$WF_LOG")"
+  elif [ -n "$ctx_arg" ]; then
+    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
+          -F file=@"$WF_AUDIO" \
+          -F temperature=0.0 \
+          -F audio_ctx="$ctx_arg" \
+          -F response_format=text 2>>"$WF_LOG")"
+  elif [ -n "${bias// /}" ]; then
     # --form-string, not -F: -F parses ';' in the value as a multipart attribute
     # separator and silently truncates the hint (branch names can contain ';').
     raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
