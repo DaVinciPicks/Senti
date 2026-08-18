@@ -10,12 +10,12 @@ leaves the Mac (whisper.cpp server bound to `127.0.0.1`). Optional AI modes
 (prompt / command / context) send text — and, with screen context on, a downscaled
 screenshot — to cheap cloud APIs.
 
-- **Repo is PRIVATE + proprietary** ("all rights reserved", see `LICENSE`). It was
-  briefly public/MIT, then locked down for IP protection. The owner's name and Mac
-  username were scrubbed from files *and* git history — **do not reintroduce them**
+- **Repo is PUBLIC. The code is source-available, not open source** — proprietary,
+  "all rights reserved", see `LICENSE`. The owner's name and Mac username were
+  scrubbed from files *and* git history — **do not reintroduce them**
   (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` / `__HOME__`).
-- Flagship product under the planned **Da Vinci Tech LLC**. Freemium: free local
-  dictation → paid Pro AI modes.
+- Treat everything committed here as world-readable. No roadmap, pricing, or
+  business-entity detail in this repo.
 
 ## Repo → live system (the mental model that matters most)
 
@@ -223,5 +223,4 @@ sox + reset. If hold-to-talk feels dead, check `wf.diag()` for the eventtap firs
 ## Where the rest of the context lives
 
 - User-facing: `README.md`. Go-to-market: `docs/marketing-italy.md`.
-- Second brain (Obsidian): the `Senti` effort note + `Da Vinci Tech LLC` note.
 - Claude memory: `whisper-flow-local-dictation-2026-07-03.md` (has the full audited state).
