@@ -23,7 +23,7 @@ openai-key
 eval/history.csv
 
 # Prompting knowledge base — PRIVATE (DaVinciPicks/sanele-kb). The paid artifact.
-prompts/
+prompts
 
 # Private operator notes (never commit — names the private KB repo + real vault paths)
 CLAUDE.local.md
