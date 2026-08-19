@@ -11,11 +11,11 @@
 # costs no extra API call and no latency. The knowledge base lives in
 # prompts/models/*.md; each file's frontmatter carries a `match:` regex.
 set -uo pipefail
-source "$HOME/.config/senti/config.sh"
+source "$HOME/.config/sanele/config.sh"
 
-KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
-# App-name hint via env first (SENTI_HINT from runScript); argv is a manual fallback.
-HINT="${1:-${SENTI_HINT:-}}"
+KB="${WF_MODEL_KB:-$HOME/.config/sanele/prompts/models}"
+# App-name hint via env first (SANELE_HINT from runScript); argv is a manual fallback.
+HINT="${1:-${SANELE_HINT:-}}"
 [ -d "$KB" ] || exit 0
 
 # An app NAME frequently says nothing about the destination model — the window TITLE
@@ -29,11 +29,11 @@ HINT="${1:-${SENTI_HINT:-}}"
 # through to generic universal guidance. Measured before the change: hint "Terminal"
 # → 836B universal digest; hint "Claude" → 974B Anthropic-specific digest.
 #
-# INVARIANT (asserted by senti-selftest.sh): a `match:` regex must only ever match a
+# INVARIANT (asserted by sanele-selftest.sh): a `match:` regex must only ever match a
 # MODEL or PRODUCT name, never a browser or terminal app name. Were one to match
 # "Terminal" or "Safari", step 1 would hijack every lookup made from that app. The
 # self-test pins this so a future KB edit can't silently break it.
-TITLE="${SENTI_SLABEL:-}"
+TITLE="${SANELE_SLABEL:-}"
 
 # Pull one frontmatter value out of a KB file: fm <file> <key>
 fm() { /usr/bin/sed -n "s/^$2:[[:space:]]*//p" "$1" 2>/dev/null | head -1; }
@@ -51,7 +51,7 @@ section() {
 }
 
 CHOSEN=""
-PREF_FILE="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
+PREF_FILE="${WF_TARGET_PREF:-$HOME/.cache/sanele/target.pref}"
 PREF="$(cat "$PREF_FILE" 2>/dev/null | tr -d '[:space:]')"
 
 if [ -n "$PREF" ] && [ "$PREF" != "auto" ]; then

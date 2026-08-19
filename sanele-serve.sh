@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs the whisper-server daemon that keeps the model warm in memory.
-# Invoked by launchd (com.leo.senti) and kept alive across reboots.
+# Invoked by launchd (io.sanele.server) and kept alive across reboots.
 set -euo pipefail
-source "$HOME/.config/senti/config.sh"
+source "$HOME/.config/sanele/config.sh"
 
 # Optional domain vocabulary bias (proper nouns, jargon). Empty by default.
 PROMPT_ARGS=()

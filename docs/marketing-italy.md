@@ -1,17 +1,17 @@
-# Senti — Go-to-Market: Italia 🇮🇹
+# Sanele — Go-to-Market: Italia 🇮🇹
 
-**Positioning:** *Senti — la dettatura vocale che non lascia mai il tuo Mac.*
+**Positioning:** *Sanele — la dettatura vocale che non lascia mai il tuo Mac.*
 Free, 100% local, private-by-design speech-to-text. The alternative to Wispr Flow
 for people who don't want their voice sent to the cloud.
 
 ## Why the name wins in Italy
-"Senti" is how Italians naturally grab attention — *"Senti…"* = "Hey, listen…".
+"Sanele" is how Italians naturally grab attention — *"Sanele…"* = "Hey, listen…".
 It's warm, instantly understood, memorable, and needs zero translation. A native-
 Italian brand beats an English name ("Whisper Flow") for local trust and word-of-mouth.
 
 ## Killer angle for this market
 Whisper transcribes **Italian** natively. Set `WF_LANG=it` + the multilingual turbo
-model and Senti dictates fluent Italian — locally. So the pitch isn't just "voice
+model and Sanele dictates fluent Italian — locally. So the pitch isn't just "voice
 typing," it's **"detta in italiano, resta sul tuo Mac."**
 
 ## Three messages (in order of pull)
@@ -35,11 +35,11 @@ typing," it's **"detta in italiano, resta sul tuo Mac."**
 
 ## Assets to ship
 - 15–20s screen-recording demo (dictating Italian into Notes/VS Code).
-- Landing page: senti + one-line pitch, GIF, "Scarica gratis", GitHub link.
-- Tagline options: *"Senti. Parla, non scrivere."* · *"La voce resta a casa."*
+- Landing page: sanele + one-line pitch, GIF, "Scarica gratis", GitHub link.
+- Tagline options: *"Sanele. Parla, non scrivere."* · *"La voce resta a casa."*
 
 ## Positioning vs Wispr Flow
-| | Senti | Wispr Flow |
+| | Sanele | Wispr Flow |
 |---|---|---|
 | Prezzo | Gratis | Abbonamento |
 | Privacy | 100% locale | Cloud |
