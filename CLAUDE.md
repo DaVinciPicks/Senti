@@ -17,7 +17,7 @@ screenshot — to cheap cloud APIs.
 - Treat everything committed here as world-readable. No roadmap, pricing, or
   business-entity detail in this repo.
 - **The prompting knowledge base is NOT in this repo.** `prompts/` is gitignored and
-  lives in the private repo `DaVinciPicks/sanele-kb`. It is the paid artifact — the app
+  lives in a separate private repo (named in `CLAUDE.local.md`). It is the paid artifact — the app
   is the free on-ramp, the knowledge is what people subscribe to. Clone it beside this
   repo (or symlink) so `install.sh` can deploy it; without it the AI modes run with no
   craft layer and no model guidance, and install.sh says so. **Never commit `prompts/`
@@ -133,13 +133,13 @@ hold key ─▶ Hammerspoon (sanele.lua) ─▶ sox records mic ─▶ SIGINT fi
   2026-08-09 — it was unreachable from the live path, never once measured better than one
   call, and bet 2x latency on sampling variance instead of context quality. Don't rebuild it.
 - **Second brain (Obsidian):** `sanele-brain.sh` maps the window-title project to a vault note
-  (allowlist: `Efforts/Active` + `Atlas/DaVinci Bets`; exceptions in `brain-map.txt`), digests
+  (allowlist is narrow and configured locally; exceptions in `brain-map.txt`), digests
   it (`## Sanele` section wins, else `## For future Claude`, else first lines), caps at
   `WF_BRAIN_MAX`, logs every injection. A lazy background luna call (~$0.001) writes a tighter
   digest to `~/.cache/sanele/brain/` — refreshed only when stale AND the project is actually
   used, so there's no cron and untouched projects are never sent anywhere. The digest DOES
   ride the API call: that's the feature and the risk — never widen the allowlist to `People/`
-  or the vault root, and keep the privacy self-test checks passing.
+  or the vault root, and keep the privacy self-test checks passing. Never commit a real vault path here.
 - **Eval:** `sanele-eval.sh` scores `eval/cases.txt` via `sanele-judge.sh score` (absolute 0-10 —
   saturates around 8, fine for regression, useless for ranking); `sanele-judge.sh compare` is
   the discriminating pairwise judge (order-swapped, disagreement = TIE) for real A/Bs.
