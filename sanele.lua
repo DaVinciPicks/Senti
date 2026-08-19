@@ -25,7 +25,6 @@ wf.DICTATE = wf.HOME .. "/.config/sanele/sanele-dictate.sh"
 wf.PROMPTS = wf.HOME .. "/.config/sanele/sanele-prompt.sh"
 wf.SESSION  = wf.HOME .. "/.config/sanele/sanele-session.sh"
 wf.MENUICON = wf.HOME .. "/.config/sanele/menubar/mic.png"
-wf.MARKICON = wf.HOME .. "/.config/sanele/menubar/mark@3x.png"
 wf.COMMAND = wf.HOME .. "/.config/sanele/sanele-command.sh"
 wf.VISION  = wf.HOME .. "/.config/sanele/sanele-vision.sh"
 wf.CTXPRE  = wf.HOME .. "/.config/sanele/sanele-lib.sh"   -- run directly = prefetch context
@@ -73,24 +72,25 @@ local function menuIcon()
 end
 
 -- ── Floating HUD pill: bottom-center overlay, Sanele mark + live waveform ─
--- Brand-aligned: #108CFF is sampled from the logo itself, so the HUD reads as
--- part of the product rather than a generic system alert.
---
--- The mark is an IMAGE, not canvas primitives. The previous glyph was four
--- rectangles and an arc, which meant it could be recoloured to carry state; the
--- current logo is an organic swirl with negative space and cannot be expressed
--- that way. So the mark now stays brand blue at all times and the waveform plus
--- the label carry the state instead — which is the more correct convention
--- anyway: a logo should not change colour to report status.
+-- Brand-aligned: the violet is the app icon's gradient top (#A78BFA on dark),
+-- so the HUD reads as part of the product rather than a generic system alert.
+-- The mark on the left is the SAME geometry as assets/icon-menubar.svg, drawn
+-- natively in canvas rather than loaded as an image — a template PNG can only
+-- be black, and this needs to change colour to carry state.
 local HUD_W, HUD_H, NBARS = 224, 54, 8
 local BAR_W, BAR_GAP, BAR_X = 4, 8, 142
-local ACCENT  = { red = 0.063, green = 0.549, blue = 1.000, alpha = 1 }  -- #108CFF, recording
+local ACCENT  = { red = 0.655, green = 0.545, blue = 0.980, alpha = 1 }  -- violet, recording
 local WORKING = { red = 0.984, green = 0.749, blue = 0.141, alpha = 1 }  -- amber, transcribing
 wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
 
 -- Element indices. Named because a bare c[4] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
-local I_MARK, I_LABEL = 3, 4
+local I_CAP, I_STEM, I_BASE, I_ARC, I_LABEL = 3, 4, 5, 6, 7
+
+-- Sanele mark, scaled from the 44px source viewBox onto the pill.
+local S, OX, OY = 0.62, 12.36, 12.36   -- scale + offset: centres the glyph at (26, 26)
+local function gx(v) return v * S + OX end
+local function gy(v) return v * S + OY end
 
 local function hudBuild()
   local scr = hs.screen.mainScreen():frame()
@@ -109,9 +109,22 @@ local function hudBuild()
            roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
 
-  c[I_MARK] = { type = "image", image = hs.image.imageFromPath(wf.MARKICON),
-                imageScaling = "scaleProportionally", imageAlignment = "center",
-                frame = { x = 14, y = (HUD_H - 26) / 2, w = 26, h = 26 } }
+  -- The mark: capsule + stem + base + cradle arc (same shapes as the app icon).
+  c[I_CAP]  = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = gx(5.5) - gx(0), yRadius = gx(5.5) - gx(0) },
+                fillColor = ACCENT,
+                frame = { x = gx(16.5), y = gy(7), w = 11 * S, h = 19 * S } }
+  c[I_STEM] = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
+                frame = { x = gx(20.7), y = gy(32), w = 2.6 * S, h = 5 * S } }
+  c[I_BASE] = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
+                frame = { x = gx(15.5), y = gy(35.6), w = 13 * S, h = 2.6 * S } }
+  -- 90°→270° sweeps clockwise through the bottom, giving the U-shaped cradle.
+  c[I_ARC]  = { type = "arc", action = "stroke", arcRadii = false,
+                center = { x = gx(22), y = gy(22.5) }, radius = 10.5 * S,
+                startAngle = 90, endAngle = 270,
+                strokeColor = ACCENT, strokeWidth = 2.6 * S, strokeCapStyle = "round" }
 
   c[I_LABEL] = { type = "text", text = "Listening",
                  frame = { x = 46, y = HUD_H / 2 - 10, w = 92, h = 20 },
@@ -158,10 +171,11 @@ local function hudAnimate()
   end
 end
 
--- Tints the waveform only. The mark is an image and stays brand blue.
 local function hudTint(col)
   local c = wf.hud.canvas
   wf.hud.tone = col
+  c[I_CAP].fillColor, c[I_STEM].fillColor, c[I_BASE].fillColor = col, col, col
+  c[I_ARC].strokeColor = col
   for i = 1, NBARS do c[I_LABEL + i].fillColor = col end
 end
 
@@ -197,13 +211,26 @@ local T_INFO = ACCENT
 local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
 local T_OK   = { red = 0.36, green = 0.85, blue = 0.55, alpha = 1 }
 
--- The mark, as one canvas image element centred on (cx, cy). Shared with the
--- HUD so the two can't drift apart. Severity is carried by an accent bar rather
--- than by recolouring the logo.
-local function markElement(cx, cy, size)
-  return { type = "image", image = hs.image.imageFromPath(wf.MARKICON),
-           imageScaling = "scaleProportionally", imageAlignment = "center",
-           frame = { x = cx - size / 2, y = cy - size / 2, w = size, h = size } }
+-- The mark as a list of canvas elements, positioned around (cx, cy). Factored
+-- out because the HUD and the toast must never drift apart visually.
+local function markElements(cx, cy, k, col)
+  local function mx(v) return (v - 22) * k + cx end
+  local function my(v) return (v - 22) * k + cy end
+  return {
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 5.5 * k, yRadius = 5.5 * k },
+      frame = { x = mx(16.5), y = my(7), w = 11 * k, h = 19 * k } },
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
+      frame = { x = mx(20.7), y = my(32), w = 2.6 * k, h = 5 * k } },
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
+      frame = { x = mx(15.5), y = my(35.6), w = 13 * k, h = 2.6 * k } },
+    { type = "arc", action = "stroke", arcRadii = false, strokeColor = col,
+      center = { x = mx(22), y = my(22.5) }, radius = 10.5 * k,
+      startAngle = 90, endAngle = 270,
+      strokeWidth = 2.6 * k, strokeCapStyle = "round" },
+  }
 end
 
 function wf.notify(msg, secs, tone)
@@ -226,13 +253,9 @@ function wf.notify(msg, secs, tone)
   c[2] = { type = "rectangle", action = "stroke",
            roundedRectRadii = { xRadius = 16, yRadius = 16 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
-  -- Severity reads off a slim accent rule, so the logo stays brand-correct.
-  c[#c + 1] = { type = "rectangle", action = "fill", fillColor = tone,
-                roundedRectRadii = { xRadius = 2, yRadius = 2 },
-                frame = { x = 12, y = 13, w = 3, h = H - 26 } }
-  c[#c + 1] = markElement(38, H / 2, 24)
+  for _, e in ipairs(markElements(32, H / 2, 0.52, tone)) do c[#c + 1] = e end
   c[#c + 1] = { type = "text", text = tostring(msg),
-                frame = { x = 60, y = 15, w = W - 76, h = H - 24 },
+                frame = { x = 58, y = 15, w = W - 74, h = H - 24 },
                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
                 textFont = "SF Pro Text" }
   c:show()
