@@ -1,9 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
      width="44" height="44" viewBox="0 0 44 44">
   <!-- Menu-bar template. macOS discards RGB and uses the alpha channel as a
-       silhouette, tinting it for light/dark/active. The mark's negative space is
-       genuinely transparent in the master, so the swirl survives as a shape
-       rather than collapsing into a blob. Inset to ~18pt of optical weight. -->
-  <image x="3" y="3" width="38" height="38"
+       silhouette, tinting it for light / dark / active.
+       The inset is the size control, not sanele.lua's setSize. This mark is a
+       solid organic shape with no internal padding of its own, so at the 86%
+       fill it started with it carried far more optical weight than the system
+       glyphs beside it, which sit nearer 70% of their box. 32/44 matches them.
+       Rendered oversampled in app/make-icon.sh: setSize(18) needs 36 physical
+       pixels on Retina and imageFromPath does no @2x resolution. -->
+  <image x="6" y="6" width="32" height="32"
          xlink:href="logo-mark.png" preserveAspectRatio="xMidYMid meet"/>
 </svg>
