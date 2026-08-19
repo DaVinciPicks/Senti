@@ -71,60 +71,129 @@ local function menuIcon()
   return img
 end
 
--- ── Floating HUD pill (Wispr-style): bottom-center overlay with waveform ─
-local HUD_W, HUD_H, NBARS = 188, 46, 7
-wf.hud = { canvas = nil, timer = nil, phase = 0 }
+-- ── Floating HUD pill: bottom-center overlay, Sanele mark + live waveform ─
+-- Brand-aligned: the violet is the app icon's gradient top (#A78BFA on dark),
+-- so the HUD reads as part of the product rather than a generic system alert.
+-- The mark on the left is the SAME geometry as assets/icon-menubar.svg, drawn
+-- natively in canvas rather than loaded as an image — a template PNG can only
+-- be black, and this needs to change colour to carry state.
+local HUD_W, HUD_H, NBARS = 224, 54, 8
+local BAR_W, BAR_GAP, BAR_X = 4, 8, 142
+local ACCENT  = { red = 0.655, green = 0.545, blue = 0.980, alpha = 1 }  -- violet, recording
+local WORKING = { red = 0.984, green = 0.749, blue = 0.141, alpha = 1 }  -- amber, transcribing
+wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
+
+-- Element indices. Named because a bare c[4] is unreadable and the waveform
+-- loop appends after them — inserting an element silently shifts every access.
+local I_CAP, I_STEM, I_BASE, I_ARC, I_LABEL = 3, 4, 5, 6, 7
+
+-- Sanele mark, scaled from the 44px source viewBox onto the pill.
+local S, OX, OY = 0.62, 12.36, 12.36   -- scale + offset: centres the glyph at (26, 26)
+local function gx(v) return v * S + OX end
+local function gy(v) return v * S + OY end
 
 local function hudBuild()
   local scr = hs.screen.mainScreen():frame()
-  local x = scr.x + (scr.w - HUD_W) / 2
-  local y = scr.y + scr.h - HUD_H - 72
-  local c = hs.canvas.new({ x = x, y = y, w = HUD_W, h = HUD_H })
+  local c = hs.canvas.new({ x = scr.x + (scr.w - HUD_W) / 2,
+                            y = scr.y + scr.h - HUD_H - 72, w = HUD_W, h = HUD_H })
   c:level(hs.canvas.windowLevels.overlay)
   c:behavior({ "canJoinAllSpaces", "stationary" })
-  c[#c + 1] = { type = "rectangle", action = "fill", roundedRectRadii = { xRadius = 22, yRadius = 22 },
-                fillColor = { red = 0.09, green = 0.09, blue = 0.11, alpha = 0.94 } }
-  c[#c + 1] = { type = "rectangle", action = "stroke", roundedRectRadii = { xRadius = 22, yRadius = 22 },
-                strokeColor = { white = 1, alpha = 0.08 }, strokeWidth = 1 }
-  c[#c + 1] = { type = "circle", action = "fill", center = { x = 22, y = HUD_H / 2 }, radius = 6,
-                fillColor = { red = 1, green = 0.23, blue = 0.19, alpha = 1 } }  -- status dot (idx 3)
-  c[#c + 1] = { type = "text", text = "Listening", frame = { x = 36, y = HUD_H / 2 - 10, w = 74, h = 20 },
-                textColor = { white = 0.96, alpha = 1 }, textSize = 13,
-                textFont = "SF Pro Text" }  -- label (idx 4)
-  local bx = 116
-  for i = 1, NBARS do  -- waveform bars (idx 5..)
-    c[#c + 1] = { type = "rectangle", action = "fill",
-                  roundedRectRadii = { xRadius = 1.5, yRadius = 1.5 },
-                  fillColor = { red = 0.55, green = 0.78, blue = 1, alpha = 1 },
-                  frame = { x = bx + (i - 1) * 8, y = HUD_H / 2 - 3, w = 4, h = 6 } }
+
+  c[1] = { type = "rectangle", action = "fill",
+           roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
+           fillColor = { red = 0.055, green = 0.055, blue = 0.071, alpha = 0.96 },
+           withShadow = true,
+           shadow = { blurRadius = 18, offset = { h = -4, w = 0 },
+                      color = { alpha = 0.45, white = 0 } } }
+  c[2] = { type = "rectangle", action = "stroke",
+           roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
+           strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
+
+  -- The mark: capsule + stem + base + cradle arc (same shapes as the app icon).
+  c[I_CAP]  = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = gx(5.5) - gx(0), yRadius = gx(5.5) - gx(0) },
+                fillColor = ACCENT,
+                frame = { x = gx(16.5), y = gy(7), w = 11 * S, h = 19 * S } }
+  c[I_STEM] = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
+                frame = { x = gx(20.7), y = gy(32), w = 2.6 * S, h = 5 * S } }
+  c[I_BASE] = { type = "rectangle", action = "fill",
+                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
+                frame = { x = gx(15.5), y = gy(35.6), w = 13 * S, h = 2.6 * S } }
+  -- 90°→270° sweeps clockwise through the bottom, giving the U-shaped cradle.
+  c[I_ARC]  = { type = "arc", action = "stroke", arcRadii = false,
+                center = { x = gx(22), y = gy(22.5) }, radius = 10.5 * S,
+                startAngle = 90, endAngle = 270,
+                strokeColor = ACCENT, strokeWidth = 2.6 * S, strokeCapStyle = "round" }
+
+  c[I_LABEL] = { type = "text", text = "Listening",
+                 frame = { x = 46, y = HUD_H / 2 - 10, w = 92, h = 20 },
+                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
+                 textFont = "SF Pro Text" }
+
+  for i = 1, NBARS do
+    c[I_LABEL + i] = { type = "rectangle", action = "fill",
+                       roundedRectRadii = { xRadius = BAR_W / 2, yRadius = BAR_W / 2 },
+                       fillColor = ACCENT,
+                       frame = { x = BAR_X + (i - 1) * BAR_GAP, y = HUD_H / 2 - 2,
+                                 w = BAR_W, h = 4 } }
   end
   return c
 end
 
+-- Two animations off one timer. Recording: a waveform with a centre-weighted
+-- envelope, so the middle bars run taller than the edges the way real speech
+-- energy does — a flat sine across all bars reads as a loading spinner, not a voice.
+-- Working: a single travelling pulse, which says "busy" without implying it is
+-- still hearing you.
 local function hudAnimate()
   local c = wf.hud.canvas
   if not c then return end
   wf.hud.phase = wf.hud.phase + 1
+  local working = (wf.hud.tone == WORKING)
   for i = 1, NBARS do
-    local h = 4 + math.floor(12 * math.abs(math.sin(wf.hud.phase * 0.35 + i * 0.9)))
-    c[4 + i].frame = { x = 116 + (i - 1) * 8, y = (HUD_H - h) / 2, w = 4, h = h }
+    local h
+    if working then
+      -- A travelling sine, not a discrete pulse. A pulse indexed by
+      -- (phase % (NBARS+3)) spends ~27% of its cycle past the last bar with
+      -- nothing lit, which reads as frozen — the exact impression this state
+      -- must never give. A wave always has motion somewhere on the strip.
+      h = 4 + 9 * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.22 - i * 0.7))
+    else
+      -- Centre-weighted so the middle bars run taller, the way speech energy
+      -- does. Floor the envelope at 0.65: at 0.5 the outer bars collapse to
+      -- 4px circles and the waveform reads as a trailing ellipsis.
+      local env = 0.65 + 0.35 * math.sin(math.pi * (i - 0.5) / NBARS)
+      h = 4 + 15 * env * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.30 + i * 0.75))
+    end
+    c[I_LABEL + i].frame = { x = BAR_X + (i - 1) * BAR_GAP, y = (HUD_H - h) / 2,
+                             w = BAR_W, h = h }
   end
+end
+
+local function hudTint(col)
+  local c = wf.hud.canvas
+  wf.hud.tone = col
+  c[I_CAP].fillColor, c[I_STEM].fillColor, c[I_BASE].fillColor = col, col, col
+  c[I_ARC].strokeColor = col
+  for i = 1, NBARS do c[I_LABEL + i].fillColor = col end
 end
 
 function wf.hud.show(s)
   if not wf.hud.canvas then wf.hud.canvas = hudBuild() end
   local c = wf.hud.canvas
   if s == "recording" then
-    c[3].fillColor = { red = 1, green = 0.23, blue = 0.19, alpha = 1 }   -- red
-    local labels = { verbatim = "Listening", prompt = "Prompt", command = "Command", context = "Context" }
-    c[4].text = labels[wf.mode] or "Listening"
-    if not wf.hud.timer then wf.hud.timer = hs.timer.doEvery(0.06, hudAnimate) end
+    hudTint(ACCENT)
+    local labels = { verbatim = "Listening", prompt = "Prompt",
+                     command = "Command", context = "Context" }
+    c[I_LABEL].text = labels[wf.mode] or "Listening"
   elseif s == "working" or s == "thinking" then
-    c[3].fillColor = { red = 1, green = 0.72, blue = 0.2, alpha = 1 }    -- amber
-    c[4].text = (s == "thinking") and "Thinking…" or "Transcribing…"
-    if wf.hud.timer then wf.hud.timer:stop(); wf.hud.timer = nil end
-    for i = 1, NBARS do c[4 + i].frame = { x = 116 + (i - 1) * 8, y = HUD_H / 2 - 2, w = 4, h = 4 } end
+    hudTint(WORKING)
+    c[I_LABEL].text = (s == "thinking") and "Thinking…" or "Transcribing…"
   end
+  -- One timer for both states; hudAnimate branches on tone. Previously the
+  -- working state stopped the timer and froze the bars flat, which looked hung.
+  if not wf.hud.timer then wf.hud.timer = hs.timer.doEvery(0.05, hudAnimate) end
   c:show()
 end
 
@@ -132,6 +201,71 @@ function wf.hud.hide()
   if wf.hud.timer then wf.hud.timer:stop(); wf.hud.timer = nil end
   if wf.hud.canvas then wf.hud.canvas:hide() end
 end
+
+-- ── Toast: messages in the HUD's visual language, carrying the Sanele mark ──
+-- hs.alert's style table is text-only — no image key — so the brand was being
+-- stood in for by a 🎤 emoji. This draws the real mark, same geometry as the
+-- HUD and the app icon, and tints it to carry severity.
+wf.toast = { canvas = nil, timer = nil }
+local T_INFO = ACCENT
+local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
+local T_OK   = { red = 0.36, green = 0.85, blue = 0.55, alpha = 1 }
+
+-- The mark as a list of canvas elements, positioned around (cx, cy). Factored
+-- out because the HUD and the toast must never drift apart visually.
+local function markElements(cx, cy, k, col)
+  local function mx(v) return (v - 22) * k + cx end
+  local function my(v) return (v - 22) * k + cy end
+  return {
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 5.5 * k, yRadius = 5.5 * k },
+      frame = { x = mx(16.5), y = my(7), w = 11 * k, h = 19 * k } },
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
+      frame = { x = mx(20.7), y = my(32), w = 2.6 * k, h = 5 * k } },
+    { type = "rectangle", action = "fill", fillColor = col,
+      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
+      frame = { x = mx(15.5), y = my(35.6), w = 13 * k, h = 2.6 * k } },
+    { type = "arc", action = "stroke", arcRadii = false, strokeColor = col,
+      center = { x = mx(22), y = my(22.5) }, radius = 10.5 * k,
+      startAngle = 90, endAngle = 270,
+      strokeWidth = 2.6 * k, strokeCapStyle = "round" },
+  }
+end
+
+function wf.notify(msg, secs, tone)
+  secs, tone = secs or 3, tone or T_INFO
+  local lines = 1
+  for _ in tostring(msg):gmatch("\n") do lines = lines + 1 end
+  local W, H = 400, 34 + 19 * lines
+  local scr = hs.screen.mainScreen():frame()
+  if wf.toast.canvas then wf.toast.canvas:delete(); wf.toast.canvas = nil end
+  local c = hs.canvas.new({ x = scr.x + (scr.w - W) / 2,
+                            y = scr.y + scr.h - H - 138, w = W, h = H })
+  c:level(hs.canvas.windowLevels.overlay)
+  c:behavior({ "canJoinAllSpaces", "stationary" })
+  c[1] = { type = "rectangle", action = "fill",
+           roundedRectRadii = { xRadius = 16, yRadius = 16 },
+           fillColor = { red = 0.055, green = 0.055, blue = 0.071, alpha = 0.96 },
+           withShadow = true,
+           shadow = { blurRadius = 18, offset = { h = -4, w = 0 },
+                      color = { alpha = 0.45, white = 0 } } }
+  c[2] = { type = "rectangle", action = "stroke",
+           roundedRectRadii = { xRadius = 16, yRadius = 16 },
+           strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
+  for _, e in ipairs(markElements(32, H / 2, 0.52, tone)) do c[#c + 1] = e end
+  c[#c + 1] = { type = "text", text = tostring(msg),
+                frame = { x = 58, y = 15, w = W - 74, h = H - 24 },
+                textColor = { white = 0.97, alpha = 1 }, textSize = 13,
+                textFont = "SF Pro Text" }
+  c:show()
+  wf.toast.canvas = c
+  if wf.toast.timer then wf.toast.timer:stop() end
+  wf.toast.timer = hs.timer.doAfter(secs, function()
+    if wf.toast.canvas then wf.toast.canvas:delete(); wf.toast.canvas = nil end
+  end)
+end
+wf.TONE = { info = T_INFO, warn = T_WARN, ok = T_OK }
 
 function wf.setState(s)
   wf.state = s
@@ -269,7 +403,7 @@ function wf.runVision(raw, kind)
     wf.setState("idle")
     if exitCode ~= 0 then
       wf.log("vision failed (exit " .. tostring(exitCode) .. ")")
-      hs.alert.show("⚠️ Sanele: request failed — check your network or OpenAI key")
+      wf.notify("Request failed — check your network or OpenAI key", 4, wf.TONE.warn)
     else
       wf.insert((out or ""):gsub("%s+$", ""))
     end
@@ -293,13 +427,13 @@ function wf.handleTranscript(raw)
     -- and 78s of speech to this with zero feedback. Name the cause and open the fix.
     wf.setState("idle")
     pcall(function() hs.sound.getByName("Basso"):play() end)
-    hs.alert.show("🎤 Your microphone captured no audio.\nCheck it isn't muted, or re-grant Microphone:\nmenu bar 🎤 → Grant / test microphone", 5)
+    wf.notify("Your microphone captured no audio.\nCheck it isn't muted, or re-grant Microphone:\nmenu bar → Grant / test microphone", 5, wf.TONE.warn)
     wf.micOK = false   -- force a fresh permission probe on the next capture
     return
   end
   if raw == "__WF_SERVER_DOWN__" then
     wf.setState("idle")
-    hs.alert.show("⚠️ Whisper engine is not running.\nMenubar 🎤 → Restart engine")
+    wf.notify("Whisper engine is not running.\nMenu bar → Restart engine", 4, wf.TONE.warn)
     return
   end
   if raw == "" then
@@ -312,7 +446,7 @@ function wf.handleTranscript(raw)
     wf.log("transcript: empty (silence/gated) — alerting user")
     wf.setState("idle")
     pcall(function() hs.sound.getByName("Basso"):play() end)
-    hs.alert.show("🎤 Nothing was transcribed.\nThe mic may be muted or the audio was silent.\nMenu bar 🎤 → Grant / test microphone", 4)
+    wf.notify("Nothing was transcribed.\nThe mic may be muted or the audio was silent.\nMenu bar → Grant / test microphone", 4, wf.TONE.warn)
     return
   end
 
@@ -322,7 +456,7 @@ function wf.handleTranscript(raw)
       else
         wf.setState("idle")
         wf.log("context: no screenshot — Screen Recording not granted")
-        hs.alert.show("📸 Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
+        wf.notify("Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it", 5, wf.TONE.warn)
         hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
       end
     end)
@@ -358,10 +492,10 @@ function wf.grantMic(andThenRecord)
       if andThenRecord then wf.record() end
     elseif out == "DENIED" or out == "RESTRICTED" then
       wf.log("mic "..out)
-      hs.alert.show("🎤 Microphone is blocked for Hammerspoon.\nSystem Settings ▸ Privacy & Security ▸\nMicrophone → turn ON Hammerspoon")
+      wf.notify("Microphone is blocked for Hammerspoon.\nSystem Settings ▸ Privacy & Security ▸\nMicrophone → turn ON Hammerspoon", 5, wf.TONE.warn)
       hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'")
     else
-      hs.alert.show("🎤 requesting mic access…")
+      wf.notify("Requesting microphone access…")
     end
   end, {"--request"}):start()
 end
@@ -399,7 +533,7 @@ function wf.beginCapture(m)
     if out == "AUTHORIZED" then
       wf.micOK = true; wf.record()
     elseif out == "NOTDETERMINED" then
-      hs.alert.show("🎤 Allow the microphone prompt,\nthen hold ⌥ again to dictate")
+      wf.notify("Allow the microphone prompt,\nthen hold ⌥ again to dictate", 4)
       wf.grantMic(false)   -- triggers the macOS prompt
     else  -- DENIED / RESTRICTED
       wf.grantMic(false)   -- shows the Settings guidance + opens the pane
@@ -441,16 +575,16 @@ local function menu()
     { title = "-" },
     { title = "Speed", menu = {
         { title = (curModel == "fast" and "✓ " or "   ") .. "Fast (base.en, ~0.3s)", fn = function()
-            hs.alert.show("Switching to Fast model…")
-            hs.task.new(wf.BASH, function() hs.alert.show("⚡ Fast mode on") end, {wf.MODELSH, "fast"}):start()
+            wf.notify("Switching to Fast model…")
+            hs.task.new(wf.BASH, function() wf.notify("Fast mode on", 2) end, {wf.MODELSH, "fast"}):start()
           end },
         { title = (curModel ~= "fast" and "✓ " or "   ") .. "Accurate (turbo, ~0.8s)", fn = function()
-            hs.alert.show("Switching to Accurate model…")
-            hs.task.new(wf.BASH, function() hs.alert.show("🎯 Accurate mode on") end, {wf.MODELSH, "accurate"}):start()
+            wf.notify("Switching to Accurate model…")
+            hs.task.new(wf.BASH, function() wf.notify("Accurate mode on", 2) end, {wf.MODELSH, "accurate"}):start()
           end },
       } },
     { title = "-" },
-    { title = "🎙️  Grant / test microphone", fn = function()
+    { title = "Grant / test microphone", fn = function()
         -- Step 1: request authorization (prompts on first use), then Step 2: verify capture.
         hs.task.new(wf.AUTH, function(_, aout)
           aout = (aout or ""):gsub("%s+","")
@@ -458,30 +592,30 @@ local function menu()
             wf.grantMic(false); return
           end
           wf.micOK = true
-          hs.alert.show("Recording 1.2s… say something")
+          wf.notify("Recording 1.2s… say something", 2)
           hs.task.new(wf.BASH, function(_, out)
             local amp = tonumber((out or ""):match("[%d%.]+")) or 0
             if (out or ""):find("NO_MIC") or amp < 0.005 then
-              hs.alert.show(string.format("⚠️ Very low signal (peak %.4f).\nCheck your input device / mic isn't muted.", amp))
+              wf.notify(string.format("Very low signal (peak %.4f).\nCheck your input device / mic isn't muted.", amp), 5, wf.TONE.warn)
             else
-              hs.alert.show(string.format("✅ Microphone works (peak %.2f). You're set!", amp))
+              wf.notify(string.format("Microphone works (peak %.2f). You're set!", amp), 3, wf.TONE.ok)
             end
           end, {wf.DICTATE, "mictest"}):start()
         end, {"--request"}):start()
       end },
-    { title = "📸  Grant screen recording (for ⌃⌥V context)", fn = function()
+    { title = "Grant screen recording (for ⌃⌥V context)", fn = function()
         hs.execute("/usr/sbin/screencapture -x -m '" .. wf.SHOT .. "' 2>/dev/null")  -- nudges the prompt
-        hs.alert.show("System Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it")
+        wf.notify("System Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it", 5, wf.TONE.warn)
         hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
       end },
-    { title = "Re-arm hotkeys", fn = function() wf.armTap(); hs.alert.show("Hotkeys re-armed") end },
+    { title = "Re-arm hotkeys", fn = function() wf.armTap(); wf.notify("Hotkeys re-armed", 2, wf.TONE.ok) end },
     { title = "-" },
     { title = "Restart engine", fn = function()
         hs.execute("/bin/launchctl kickstart -k gui/$(id -u)/io.sanele.server")
-        hs.alert.show("Whisper engine restarting…")
+        wf.notify("Whisper engine restarting…")
       end },
     { title = "Write diagnostics to log", fn = function()
-        wf.diagToLog(); hs.alert.show("Diagnostics written to sanele.log")
+        wf.diagToLog(); wf.notify("Diagnostics written to sanele.log", 3, wf.TONE.ok)
       end },
     { title = "Open log", fn = function() hs.execute("/usr/bin/open '" .. wf.LOG .. "'") end },
     { title = "-" },
@@ -602,8 +736,8 @@ hs.task.new(wf.AUTH, function(_, out)
   wf.log("startup mic probe: "..out)
   if out == "AUTHORIZED" then
     wf.micOK = true
-    hs.alert.show("🎤 Sanele ready — hold right ⌥ to dictate")
+    wf.notify("Sanele ready — hold right ⌥ to dictate", 3, wf.TONE.ok)
   else
-    hs.alert.show("🎤 Sanele: one step left —\nmenu bar 🎤 → Grant / test microphone")
+    wf.notify("One step left — menu bar → Grant / test microphone", 5, wf.TONE.warn)
   end
 end, {"--probe"}):start()
