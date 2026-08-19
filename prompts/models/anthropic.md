@@ -122,3 +122,38 @@ Swap `model` for `claude-sonnet-5` on cost/latency-sensitive routes, or `claude-
 - Use XML tags (<instructions>, <context>, <examples>) to separate different kinds of content — Claude parses that far more reliably than prose structure.
 - For format-sensitive output, give 3-5 short diverse examples in <example> tags.
 - Ask for length directly if you want it short. Never use an assistant-turn prefill.
+
+## Model: claude-fable-5
+
+Anthropic's most capable widely released model. When the prompt is going here:
+
+- **Under-specify.** This is the counter-intuitive one and it comes from Anthropic's own
+  migration guidance: prompts written for earlier models are often *too prescriptive* and
+  measurably reduce output quality on Fable 5. State the goal, the constraints that
+  actually matter, and what "done" looks like — then stop. Do not script the method.
+- **Never write a reasoning scaffold.** Thinking is always on and cannot be disabled
+  (`{type:"disabled"}` is a 400). "Think step by step", "reason carefully", `<scratchpad>`
+  are all redundant here and crowd out the real instruction.
+- **Give it the whole task at once.** Single turns on hard problems can run many minutes
+  by design. A chain of small asks is worse than one complete brief.
+- **No assistant prefill** — it 400s. Ask for the output shape in words instead.
+- If the work is security-, bio-, or cyber-adjacent, state why it is legitimate up front:
+  safety classifiers can decline (`stop_reason: "refusal"`) and a bare request reads worse
+  than a framed one.
+
+## Model: claude-opus-5
+
+The daily driver. Thinking is on by default here too, so the reasoning-scaffold rule
+above applies unchanged. What differs from Fable 5:
+
+- **State scope explicitly, or it will widen.** Opus 5 adds unrequested refactors, extra
+  files and "improvements" by default. If you want a narrow diff, say so and name what
+  must not be touched.
+- **Delete self-verification instructions.** "Double-check your answer", "verify before
+  responding" now cause *over*-verification — it already checks its own work, and asking
+  compounds it for no quality gain. This inverts the old best practice.
+- **Cap delegation.** It reaches for subagents readily. Say when delegation is warranted,
+  or say not to.
+- **Ask for length directly.** Default responses run long, and nothing in the prompt
+  shortens them except saying so.
+- **No assistant prefill** — it 400s, same as Fable 5.
