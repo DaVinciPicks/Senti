@@ -138,15 +138,21 @@ done
 
 echo "── prompt-mode path parity ──"
 # Parity is STRUCTURAL: both paths source sanele-lib.sh and call BOTH shared functions
-# — sanele_prompt_craft (trusted → system) and sanele_untrusted_ctx (fenced → user).
-# The checks assert (a) both paths use both functions, (b) the lib still wires all
-# four dependencies — so a drift reintroduction fails loudly.
+# — sanele_prompt_craft (trusted → system) and sanele_ctx_for_intent (fenced → user,
+# gated on intent). The checks assert (a) both paths use both functions, (b) the lib
+# still wires all four dependencies — so a drift reintroduction fails loudly.
+#
+# The untrusted half is reached via sanele_ctx_for_intent, NOT sanele_untrusted_ctx
+# directly: a caller that skipped the gate would silently send the full context stack on
+# every turn, which is exactly the regression this split exists to prevent.
 PAR=0
 for f in sanele-vision.sh sanele-prompt.sh; do
   /usr/bin/grep -q 'sanele-lib.sh' "$CFG/$f" \
     && /usr/bin/grep -q 'sanele_prompt_craft' "$CFG/$f" \
-    && /usr/bin/grep -q 'sanele_untrusted_ctx' "$CFG/$f" \
+    && /usr/bin/grep -q 'sanele_ctx_for_intent' "$CFG/$f" \
     || { bad "path parity: $f does not use both shared context functions"; PAR=1; }
+  /usr/bin/grep -q 'sanele_untrusted_ctx' "$CFG/$f" \
+    && { bad "path parity: $f bypasses the intent gate (calls sanele_untrusted_ctx directly)"; PAR=1; }
 done
 for dep in sanele-target.sh sanele-session.sh sanele-brain.sh prompt-craft.md; do
   /usr/bin/grep -q "$dep" "$CFG/sanele-lib.sh" 2>/dev/null \
@@ -160,6 +166,25 @@ case "$LCTX" in
   *"How to build the prompt"*) ok "shared craft emits (+$( printf '%s' "$LCTX" | /usr/bin/grep -c '^--- ' ) sections, ${#LCTX} chars)" ;;
   *) bad "shared craft function emitted nothing" ;;
 esac
+
+echo "── intent gating (context scales to the ask) ──"
+IG=0
+for probe in "make this clearer:light" "today let's work on the pipeline:heavy" \
+             "think hard about the cache:heavy" "I need to think hard later:light"; do
+  U="${probe%:*}"; WANT="${probe##*:}"
+  GOT="$(bash -c 'source "'"$CFG"'/config.sh"; source "'"$CFG"'/sanele-lib.sh"; sanele_intent "$1"' _ "$U" 2>/dev/null)"
+  [ "$GOT" = "$WANT" ] || { bad "intent: \"$U\" → $GOT (want $WANT)"; IG=1; }
+done
+[ "$IG" = "0" ] && ok "intent gating: trigger phrases heavy, everything else light (4 probed)"
+# A mid-sentence trigger must NOT fire — that is the user talking about thinking, not
+# asking for it. Anchoring on the opening is the whole reason this is cheap to reason about.
+MID="$(bash -c 'source "'"$CFG"'/config.sh"; source "'"$CFG"'/sanele-lib.sh"; sanele_intent "explain why I should think hard here"' 2>/dev/null)"
+[ "$MID" = "light" ] && ok "mid-sentence trigger does not escalate" \
+                      || bad "mid-sentence 'think hard' wrongly escalated to $MID"
+# Light turns must carry NO untrusted block at all.
+LGT="$(SANELE_SLABEL="sanele — x — claude" SANELE_SKEY="" bash -c 'source "'"$CFG"'/config.sh"; source "'"$CFG"'/sanele-lib.sh"; sanele_ctx_for_intent "make this clearer"' 2>/dev/null)"
+[ -z "${LGT// /}" ] && ok "light turn sends no vault/session context" \
+                     || bad "light turn leaked $(printf '%s' "$LGT" | wc -c | tr -d ' ') chars of context"
 
 echo "── context prefetch (key-down warm-up) ──"
 # Run in a THROWAWAY WF_RUN: Hammerspoon's 60s idle sweeper deletes ctx-* from the real

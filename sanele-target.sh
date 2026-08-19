@@ -72,6 +72,37 @@ elif [ -n "$HINT" ] || [ -n "$TITLE" ]; then
   done
 fi
 
+# ── Exact model, not just the family ────────────────────────────────────────────────
+# The window title carries the project and the task but NOT the model — what looks like
+# a model name in a Claude Code terminal is its statusline, rendered inside the pane and
+# invisible to us. Claude Code does however write the active model into its own session
+# transcript, which is a local file we can read for free:
+#     ~/.claude/projects/<cwd-slug>/<session>.jsonl  →  "model":"claude-opus-5"
+# Newest transcript in the matching project dir wins, which is the session the user is
+# actually in. No API call, no screenshot, no extra latency budget.
+#
+# This only resolves for Claude Code. The Claude desktop app, ChatGPT and everything else
+# have no such file and fall through to family-level guidance, exactly as before.
+cc_model() {
+  local proj base dir newest
+  proj="$(printf '%s' "${TITLE:-}" | /usr/bin/sed 's/ —.*//; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+  [ -n "$proj" ] || return 0
+  base="$HOME/.claude/projects"; [ -d "$base" ] || return 0
+  dir="$(/bin/ls -1dt "$base"/*"$proj" 2>/dev/null | head -1)"
+  [ -n "$dir" ] || return 0
+  newest="$(/bin/ls -1t "$dir"/*.jsonl 2>/dev/null | head -1)"
+  [ -n "$newest" ] || return 0
+  # Only the tail: transcripts reach tens of MB and the newest model line is at the end.
+  /usr/bin/tail -c 120000 "$newest" 2>/dev/null \
+    | /usr/bin/grep -oE '"model":"claude-[a-z0-9.-]+"' | tail -1 \
+    | /usr/bin/sed 's/.*"model":"//; s/"$//'
+}
+
+# Pull a per-model delta out of the KB file: "## Model: <id>" ... up to the next "## ".
+model_section() {
+  /usr/bin/perl -0777 -ne "print \$1 if /^## Model: \Q$2\E\s*\n(.*?)(?=^## |\z)/ms" "$1" 2>/dev/null
+}
+
 # Universal technique guidance always applies; model-specific stacks on top.
 UNI="$KB/_techniques.md"
 OUT=""
@@ -79,10 +110,18 @@ OUT=""
 
 if [ -n "$CHOSEN" ]; then
   NAME="$(fm "$CHOSEN" display_name)"
+  MODEL="$(cc_model)"
+  DELTA=""
+  [ -n "$MODEL" ] && DELTA="$(model_section "$CHOSEN" "$MODEL")"
+  if [ -n "${DELTA// /}" ]; then
+    NAME="$MODEL"
+    echo "$(date +%H:%M:%S) target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
+  fi
   OUT="$OUT
 
 The user is about to paste this prompt into: ${NAME:-that model}. Tailor it to that model specifically.
-$(section "$CHOSEN")"
+$(section "$CHOSEN")${DELTA:+
+$DELTA}"
 fi
 
 printf '%s' "$OUT"

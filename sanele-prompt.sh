@@ -27,7 +27,7 @@ The user message may begin with a fenced REFERENCE_CONTEXT block (untrusted back
 
 # Untrusted context (title/vault/session) goes in the USER message, fenced; the trusted
 # craft stays in the system prompt. Both ride env, never argv (sanele-ai.sh).
-USER_MSG="$(sanele_untrusted_ctx)Rough idea to transform: $RAW"
+USER_MSG="$(sanele_ctx_for_intent "$RAW")Rough idea to transform: $RAW"
 OUT="$(SANELE_SYS="$GEN_SYS" SANELE_IN="$USER_MSG" bash "$AI" 2>>"$WF_LOG")"
 RESULT="$(printf '%s' "$OUT" | extract_r | trim)"
 # Degrade in order: tagged answer → untagged answer (model ignored the sentinel but

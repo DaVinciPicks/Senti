@@ -99,6 +99,45 @@ sanele_prompt_craft() {
   printf '%s' "$out"
 }
 
+# ── Intent: how much context does this turn actually deserve? ───────────────────────
+# Every prompt-mode turn used to carry the whole stack — craft + target digest +
+# operating layer + vault digest + session recall, ~5.8KB (~1450 tokens) — whether the
+# user said "make this clearer" or "today let's work on the settlement pipeline". That
+# is overkill on the common path, and on a model that already over-triggers on
+# elaborate prompts it is actively counterproductive.
+#
+# So heavy context is now OPT-IN BY PHRASE. The user's own convention: a turn that
+# deserves the full stack opens with "today let's work on…" or "think hard". Everything
+# else is a quick rewrite and gets the lean prompt.
+#
+# The lean path still keeps craft + target-model guidance — those are what make the
+# output a good prompt at all. What it drops is the *situational* half: the vault digest
+# and the session transcript, which are the expensive, least-relevant part of a one-line
+# ask, and the only part that is untrusted input.
+#
+# Matching is on the OPENING of the utterance, deliberately: a mid-sentence "think hard"
+# is the user talking about thinking, not asking for it.
+sanele_intent() {
+  local t
+  t="$(printf '%s' "${1:-}" | /usr/bin/tr '[:upper:]' '[:lower:]' \
+       | /usr/bin/sed 's/^[^a-z]*//; s/[[:space:]][[:space:]]*/ /g')"
+  case "$t" in
+    "today let's work on"*|"today lets work on"*|"today let us work on"*|\
+    "think hard"*|"think harder"*|"let's think hard"*|"lets think hard"*)
+      printf 'heavy' ;;
+    *) printf 'light' ;;
+  esac
+}
+
+# Returns the untrusted block only when the turn earned it. Logs which way it went, so
+# the split is measurable rather than a matter of belief.
+sanele_ctx_for_intent() {
+  local mode; mode="$(sanele_intent "${1:-}")"
+  echo "$(date +%H:%M:%S) intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+  [ "$mode" = heavy ] || return 0
+  sanele_untrusted_ctx
+}
+
 # ── Untrusted reference data (vault note + session context) ──────────────────────────
 # Returns a fully fenced block for the USER message, or empty. Newlines survive inside
 # the fence but the fence + the directive make the boundary explicit to the model.
