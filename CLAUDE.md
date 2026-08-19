@@ -16,6 +16,13 @@ screenshot — to cheap cloud APIs.
   (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` / `__HOME__`).
 - Treat everything committed here as world-readable. No roadmap, pricing, or
   business-entity detail in this repo.
+- **The prompting knowledge base is NOT in this repo.** `prompts/` is gitignored and
+  lives in the private repo `DaVinciPicks/sanele-kb`. It is the paid artifact — the app
+  is the free on-ramp, the knowledge is what people subscribe to. Clone it beside this
+  repo (or symlink) so `install.sh` can deploy it; without it the AI modes run with no
+  craft layer and no model guidance, and install.sh says so. **Never commit `prompts/`
+  back into this repo** — it was purged from history on 2026-08-19, and re-adding it
+  would republish the asset.
 
 ## Repo → live system (the mental model that matters most)
 

@@ -21,3 +21,6 @@ appicon.iconset/
 openai-key
 *-key
 eval/history.csv
+
+# Prompting knowledge base — PRIVATE (DaVinciPicks/sanele-kb). The paid artifact.
+prompts/

@@ -46,6 +46,16 @@ chmod +x "$CFG"/sanele-*.sh
 mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
 # Model-aware prompting knowledge base — code, always update.
 mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/models/" 2>/dev/null || true
+# The KB is PRIVATE and gitignored here, so a fresh clone of the public repo has no
+# prompts/ at all. Both copies above are `|| true`, which means that failure is silent —
+# AI modes would then run with no craft layer and no model guidance and still look fine.
+# Say so loudly instead.
+if [ ! -f "$CFG/prompts/models/_techniques.md" ]; then
+  echo "  ! no prompting knowledge base found — AI modes will run WITHOUT model guidance."
+  echo "    The KB lives in the private repo DaVinciPicks/sanele-kb. Put it beside this one:"
+  echo "      git clone git@github.com:DaVinciPicks/sanele-kb.git ../sanele-kb"
+  echo "      ln -s ../sanele-kb/prompts \"$HERE/prompts\""
+fi
 # Eval cases are user-tunable — install only if missing.
 mkdir -p "$CFG/eval"; [ -f "$CFG/eval/cases.txt" ] || cp "$HERE/eval/cases.txt" "$CFG/eval/" 2>/dev/null || true
 # The dictionary and the vault map are user-tunable — install only if missing.
