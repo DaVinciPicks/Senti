@@ -229,5 +229,7 @@ sox + reset. If hold-to-talk feels dead, check `wf.diag()` for the eventtap firs
 
 ## Where the rest of the context lives
 
-- User-facing: `README.md`. Go-to-market: `docs/marketing-italy.md`.
+- User-facing: `README.md`. Go-to-market, pricing, and roadmap are deliberately NOT in
+  this repo — they live in the private vault (`Efforts/Active/Sanele/`). If you find
+  yourself writing strategy here, that's the signal it belongs there instead.
 - Claude memory: `whisper-flow-local-dictation-2026-07-03.md` (has the full audited state).

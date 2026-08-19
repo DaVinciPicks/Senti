@@ -1,5 +1,7 @@
 # sanele-brain.sh explicit mappings — project hint | vault-relative note path.
 # Used when a repo name doesn't match its vault dir by name. First match wins.
-# This file is user-tunable: install.sh copies it only if missing.
-davincibets|Atlas/DaVinci Bets/Operating Contract.md
-dvb-social|Atlas/DaVinci Bets/Operating Contract.md
+# This file is user-tunable: install.sh copies it only if missing, so your own
+# mappings survive every upgrade. The lines below are EXAMPLES — replace them.
+#
+# my-repo-name|Efforts/Active/My Project/My Project.md
+# some-client|Atlas/Clients/Some Client.md

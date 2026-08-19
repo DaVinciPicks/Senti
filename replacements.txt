@@ -8,8 +8,5 @@ cloud md|CLAUDE.md
 cloudmd|CLAUDE.md
 cloud.md|CLAUDE.md
 claudemd|CLAUDE.md
-davincibets|Da Vinci Bets
 cloud code|Claude Code
-da vinci bets|Da Vinci Bets
-davinci bets|Da Vinci Bets
 centi|Sanele
