@@ -1,4 +1,4 @@
-# senti shared config — sourced by every script.
+# sanele shared config — sourced by every script.
 # Edit values here to retune the whole system.
 #
 # NOTE: install.sh only copies this file if it is MISSING, so your local edits
@@ -15,7 +15,11 @@
 # v6: model fallback (a config pinning a model that isn't on disk no longer kills
 #     dictation) + WF_AUDIO_CTX* short-clip speedup knobs. Behavioural, so it needs the
 #     bump — install.sh only replaces config.sh when this number changes.
-WF_CONFIG_VERSION=6
+# v7: Senti → Sanele rename. Every path in this file moved (~/.config/senti →
+#     ~/.config/sanele, ~/.cache/senti → ~/.cache/sanele, senti.log → sanele.log), so a
+#     migrated v6 config would silently point the whole system at the old directories.
+#     The bump forces install.sh to replace it (yours is kept at config.sh.bak).
+WF_CONFIG_VERSION=7
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -24,7 +28,7 @@ WF_CONFIG_VERSION=6
 WF_MODELS_DIR="$HOME/.local/share/whisper-models"
 WF_MODEL_ACCURATE="$WF_MODELS_DIR/ggml-large-v3-turbo-q5_0.bin"
 WF_MODEL_FAST="$WF_MODELS_DIR/ggml-base.en.bin"
-WF_MODEL_PREF="$HOME/.cache/senti/model.pref"
+WF_MODEL_PREF="$HOME/.cache/sanele/model.pref"
 if [ -z "${WF_MODEL:-}" ]; then
   case "$(cat "$WF_MODEL_PREF" 2>/dev/null)" in
     fast) WF_MODEL="$WF_MODEL_FAST" ;;
@@ -49,13 +53,13 @@ WF_URL="http://${WF_HOST}:${WF_PORT}"
 WF_LANG="${WF_LANG:-en}"
 
 # --- Custom dictionary (fixes mistranscriptions like "cloud md" → CLAUDE.md) ---
-WF_REPLACEMENTS="${WF_REPLACEMENTS:-$HOME/.config/senti/replacements.txt}"
+WF_REPLACEMENTS="${WF_REPLACEMENTS:-$HOME/.config/sanele/replacements.txt}"
 
 # --- Runtime files ---
-WF_RUN="${WF_RUN:-$HOME/.cache/senti}"
+WF_RUN="${WF_RUN:-$HOME/.cache/sanele}"
 WF_AUDIO="$WF_RUN/capture.wav"
 WF_PIDFILE="$WF_RUN/sox.pid"
-WF_LOG="$HOME/Library/Logs/senti.log"
+WF_LOG="$HOME/Library/Logs/sanele.log"
 
 # --- AI modes (prompt / command / context) ---
 # One provider, one key, one model: OpenAI gpt-5.6-luna ($0.20/$1.20 per 1M).
@@ -67,8 +71,8 @@ WF_LOG="$HOME/Library/Logs/senti.log"
 #   gpt-5.6-terra 8.25   text  $0.00568   (+0.25 eval for ~12x luna's cost — not worth it)
 # Eval granularity is integer scores over 8 cases, so ±0.25 is noise; luna is chosen
 # because it is newer and 3-4.5x cheaper at indistinguishable quality, not because 8.12>8.00.
-# For a one-off quality push: WF_TEXT_MODEL=gpt-5.6-sol bash senti-prompt.sh ...
-WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
+# For a one-off quality push: WF_TEXT_MODEL=gpt-5.6-sol bash sanele-prompt.sh ...
+WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/sanele/openai-key}"
 # Reasoning depth: none | low | medium | high | xhigh   ('minimal' is REJECTED by gpt-5.x)
 # Measured on the prompt-rewrite task (2 runs each): none 2.05s/$0.00115 ·
 # low 3.68s/$0.00254 · medium 8.43s/$0.00597. Rewriting a prompt is a transformation,
@@ -100,20 +104,20 @@ WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
 # WF_TEXT_MODEL="gpt-5.6-luna"
 # WF_VISION_MODEL="gpt-5.6-luna"
 
-WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
+WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/sanele/prompts/operating.md}"
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for
 # whichever model you're actually about to paste into. See prompts/models/.
-WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
+WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/sanele/prompts/models}"
 # Optional manual pin for the target-model family (no UI writes this — it's an
-# escape hatch): `echo anthropic > ~/.cache/senti/target.pref`. Absent/"auto" =
+# escape hatch): `echo anthropic > ~/.cache/sanele/target.pref`. Absent/"auto" =
 # detect from the frontmost app / browser tab title.
-WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
+WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/sanele/target.pref}"
 
 # --- Second brain (Obsidian) ---
 # Prompt mode injects a capped digest of YOUR vault note for the current project.
 # The digest rides the API call — that's the point and the risk. Only allowlisted
-# dirs are searched, size is capped, every injection is logged to senti.log.
-# Defaults live in senti-brain.sh; override here if needed:
+# dirs are searched, size is capped, every injection is logged to sanele.log.
+# Defaults live in sanele-brain.sh; override here if needed:
 # WF_BRAIN=0                                  # kill switch
 # WF_VAULT="$HOME/Documents/Obsidian Vault"
 # WF_BRAIN_MAX=700                            # digest cap, chars

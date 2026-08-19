@@ -1,13 +1,13 @@
 #!/bin/bash
 # Offline eval harness — scores prompt-mode output across fixed rough-idea cases so
 # prompt-strategy changes are MEASURABLE. A/B by env, e.g.:
-#   bash senti-eval.sh baseline
-#   WF_TEXT_MODEL=gpt-5.6-terra bash senti-eval.sh terra   # A/B a different model
+#   bash sanele-eval.sh baseline
+#   WF_TEXT_MODEL=gpt-5.6-terra bash sanele-eval.sh terra   # A/B a different model
 # Averages accumulate in eval/history.csv for before/after comparison.
 set -uo pipefail
-source "$HOME/.config/senti/config.sh"
+source "$HOME/.config/sanele/config.sh"
 LABEL="${1:-run}"
-DIR="$HOME/.config/senti/eval"
+DIR="$HOME/.config/sanele/eval"
 CASES="$DIR/cases.txt"
 [ -f "$CASES" ] || { echo "no cases file at $CASES" >&2; exit 1; }
 
@@ -16,8 +16,8 @@ total=0; n=0
 while IFS= read -r idea; do
   [ -z "${idea// /}" ] && continue
   case "$idea" in \#*) continue ;; esac
-  prompt="$(bash "$HOME/.config/senti/senti-prompt.sh" "$idea" 2>/dev/null)"
-  score="$(bash "$HOME/.config/senti/senti-judge.sh" score "$idea" "$prompt" 2>/dev/null)"
+  prompt="$(bash "$HOME/.config/sanele/sanele-prompt.sh" "$idea" 2>/dev/null)"
+  score="$(bash "$HOME/.config/sanele/sanele-judge.sh" score "$idea" "$prompt" 2>/dev/null)"
   score="${score:-0}"
   printf '%-46.46s | %2s\n' "$idea" "$score"
   total=$((total + score)); n=$((n + 1))

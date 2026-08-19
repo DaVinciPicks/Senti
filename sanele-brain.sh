@@ -2,7 +2,7 @@
 # Second-brain bridge: pull a SMALL digest of the user's own notes for the project
 # they're working in, so prompt mode knows what the project actually is.
 #
-#   senti-brain.sh <project-hint>     # e.g. "senti", "davincibets_main"
+#   sanele-brain.sh <project-hint>     # e.g. "sanele", "davincibets_main"
 #
 # Prints a capped digest, or nothing. Sources, in order:
 #   1. an explicit mapping in brain-map.txt (project|path/to/note.md, vault-relative)
@@ -15,23 +15,23 @@
 #   - So: only allowlisted dirs are ever searched (default: Efforts/Active and
 #     Atlas/DaVinci Bets — never People/, never Calendar/, never the vault root).
 #   - Digest is hard-capped (WF_BRAIN_MAX chars). A note can control exactly what
-#     Senti sees by adding a "## Senti" section — then ONLY that section is used.
-#   - Every injection is logged to senti.log by note name, so there's a record of
+#     Sanele sees by adding a "## Sanele" section — then ONLY that section is used.
+#   - Every injection is logged to sanele.log by note name, so there's a record of
 #     what left the machine. Kill switch: WF_BRAIN=0.
 #   - Verbatim dictation never touches this script.
 set -uo pipefail
-source "$HOME/.config/senti/config.sh"
+source "$HOME/.config/sanele/config.sh"
 
 [ "${WF_BRAIN:-1}" = "1" ] || exit 0
 VAULT="${WF_VAULT:-$HOME/Documents/Obsidian Vault}"
 [ -d "$VAULT" ] || exit 0
 MAX="${WF_BRAIN_MAX:-700}"
-MAP="${WF_BRAIN_MAP:-$HOME/.config/senti/brain-map.txt}"
-CACHEDIR="$HOME/.cache/senti/brain"
+MAP="${WF_BRAIN_MAP:-$HOME/.config/sanele/brain-map.txt}"
+CACHEDIR="$HOME/.cache/sanele/brain"
 mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 
 # Extract the shippable digest from a note, in order of preference:
-#   "## Senti" section       → the note author's explicit choice of what Senti may see
+#   "## Sanele" section       → the note author's explicit choice of what Sanele may see
 #   "## For future Claude"   → already written for AI consumption
 #   else                     → first body lines after the frontmatter
 # Wiki-link noise stripped, hard-capped at WF_BRAIN_MAX. This is the ONE gate that keeps
@@ -40,7 +40,7 @@ mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 # every control this function enforces).
 brain_digest() {
   local f="$1" d
-  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## Senti\s*\n(.*?)(?=^## |\z)/ms' "$f")"
+  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## Sanele\s*\n(.*?)(?=^## |\z)/ms' "$f")"
   [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
   [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
   printf '%s' "$d" \
@@ -49,21 +49,21 @@ brain_digest() {
 }
 
 # ── refresh mode (background worker) ─────────────────────────────────────
-#   senti-brain.sh refresh <abs-note-path> <cache-key>
+#   sanele-brain.sh refresh <abs-note-path> <cache-key>
 # One cheap luna call (~$0.001) compresses the note into a digest for NEXT time.
 # Runs lazily: only when a stale project is actually used — no cron, no scheduler,
 # and projects you never touch are never sent anywhere.
 if [ "${1:-}" = "refresh" ]; then
-  RNOTE="${SENTI_RNOTE:-${2:-}}"; RKEY="${3:-}"
+  RNOTE="${SANELE_RNOTE:-${2:-}}"; RKEY="${3:-}"
   [ -f "$RNOTE" ] && [ -n "$RKEY" ] || exit 0
   # Feed the LLM the SAME gated digest the read path would inject — not the raw note.
-  # This respects the ## Senti section choice and the WF_BRAIN_MAX cap; a note without
+  # This respects the ## Sanele section choice and the WF_BRAIN_MAX cap; a note without
   # an allowed section still only exposes its capped first lines.
   BODY="$(brain_digest "$RNOTE")"
   [ -z "${BODY// /}" ] && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
   SYS="Compress this project note into at most 120 words of plain text: what the project IS, the stack, the current focus, hard constraints, and any naming conventions. Facts only, no headings, no preamble — this becomes standing context for an assistant writing prompts about the project."
-  OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" \
-         bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
+  OUT="$(WF_OPERATING_LAYER=0 SANELE_IN="$BODY" \
+         bash "$HOME/.config/sanele/sanele-ai.sh" "$SYS" 2>>"$WF_LOG")"
   if [ -n "${OUT// /}" ]; then
     T="$(mktemp "$CACHEDIR/.tmp.XXXXXX")" && printf '%s' "$OUT" > "$T" \
       && chmod 600 "$T" && mv "$T" "$CACHEDIR/$RKEY.md"
@@ -74,7 +74,7 @@ if [ "${1:-}" = "refresh" ]; then
 fi
 
 # Identity via env first (window titles stay off argv); argv is a manual fallback.
-HINT="${1:-${SENTI_SLABEL:-}}"
+HINT="${1:-${SANELE_SLABEL:-}}"
 [ -z "${HINT// /}" ] && exit 0
 # The window title's first field is the project.
 HINT="${HINT%% — *}"
@@ -146,7 +146,7 @@ if [ "${WF_BRAIN_REFRESH:-1}" = "1" ]; then
     : > "$LOCK"
     # Note PATH via env, not argv: filenames in other vault dirs are people's names,
     # and argv is same-uid readable via `ps` for the call's duration.
-    ( SENTI_RNOTE="$NOTE" bash "$HOME/.config/senti/senti-brain.sh" refresh "" "$KEY" >/dev/null 2>&1 & )
+    ( SANELE_RNOTE="$NOTE" bash "$HOME/.config/sanele/sanele-brain.sh" refresh "" "$KEY" >/dev/null 2>&1 & )
   fi
 fi
 

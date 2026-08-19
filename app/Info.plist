@@ -2,13 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>            <string>Senti</string>
-    <key>CFBundleDisplayName</key>     <string>Senti</string>
-    <key>CFBundleIdentifier</key>      <string>com.leo.senti.launcher</string>
+    <key>CFBundleName</key>            <string>Sanele</string>
+    <key>CFBundleDisplayName</key>     <string>Sanele</string>
+    <key>CFBundleIdentifier</key>      <string>io.sanele.server.launcher</string>
     <key>CFBundleVersion</key>         <string>1.0</string>
     <key>CFBundleShortVersionString</key><string>1.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
-    <key>CFBundleExecutable</key>      <string>senti</string>
+    <key>CFBundleExecutable</key>      <string>sanele</string>
     <key>CFBundleIconFile</key>        <string>appicon</string>
     <key>LSUIElement</key>             <true/>
     <key>LSMinimumSystemVersion</key>  <string>12.0</string>
