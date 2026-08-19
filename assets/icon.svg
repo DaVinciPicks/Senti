@@ -1,52 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Sanele app icon — "waveform mic".
-       One focal object: a mic capsule with the waveform cut into it as negative
-       space, so it reads as a solid mic silhouette at 16px and reveals the
-       sound metaphor at 512px+. Real gradients (not stacked flat rects, which
-       is what made the old PIL icon look like it had a seam). Hard edges only —
-       no feathering, no baked drop shadows. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0"   stop-color="#4C1D95"/>
-      <stop offset="0.55" stop-color="#312E81"/>
-      <stop offset="1"   stop-color="#1E1B4B"/>
-    </linearGradient>
-    <!-- Top sheen: a real soft falloff, kept inside the tile. -->
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0"    stop-color="#FFFFFF" stop-opacity="0.20"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
-      <stop offset="1"    stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="mic" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#C7D2FE"/>
-    </linearGradient>
-
-    <!-- Waveform cut into the capsule. Bars are sized so they vanish gracefully
-         below ~64px rather than turning to mush. -->
-    <mask id="wave">
-      <rect x="0" y="0" width="1024" height="1024" fill="#fff"/>
-      <g fill="#000">
-        <rect x="440" y="356" width="20" height="118" rx="10"/>
-        <rect x="478" y="320" width="20" height="190" rx="10"/>
-        <rect x="516" y="296" width="20" height="238" rx="10"/>
-        <rect x="554" y="336" width="20" height="158" rx="10"/>
-      </g>
-    </mask>
-  </defs>
-
-  <!-- Tile. Legacy .icns is unmasked, so the rounded rect is ours to draw.
-       824x824 art area on a 1024 canvas is the standard macOS proportion. -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
-
-  <!-- Mic: capsule + stand + stem + foot, one consistent light direction. -->
-  <g fill="url(#mic)">
-    <rect x="422" y="266" width="180" height="298" rx="90" mask="url(#wave)"/>
-    <rect x="495" y="646" width="34" height="104" rx="17"/>
-    <rect x="410" y="752" width="204" height="34" rx="17"/>
-  </g>
-  <!-- Stand: open U, drawn as a stroked arc so it stays optically even. -->
-  <path d="M 356 486 A 156 156 0 0 0 668 486"
-        fill="none" stroke="url(#mic)" stroke-width="36" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Sanele app icon: the blue mark on a near-black tile.
+       The tile is the same #0E0E12 as the HUD pill, so icon, overlay and toast
+       read as one product.
+       Geometry follows Apple's grid: an 824px rounded square inside 1024, corner
+       radius 185 (about 22.4%, macOS's squircle proportion). A bare transparent
+       mark reads as unfinished in the Dock beside tiled system icons.
+       The mark is a raster master (logo-mark.png, 2000px). The supplied "SVG"
+       was a base64 bitmap wrapped in filter and mask elements, 261KB carrying no
+       paths, so nothing was gained by keeping it. resvg resolves the relative
+       href via its resources-dir flag (set in app/make-icon.sh).
+       NB: XML comments may not contain a double hyphen; writing the flag with
+       its leading dashes here makes resvg fail to parse the whole file. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#0E0E12"/>
+  <image x="232" y="232" width="560" height="560"
+         xlink:href="logo-mark.png" preserveAspectRatio="xMidYMid meet"/>
 </svg>

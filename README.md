@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-wave.png" width="150" alt="Sanele logo">
+  <img src="assets/logo-mark.png" width="140" alt="Sanele logo">
 </p>
 
 <h1 align="center">Sanele 🎤</h1>
