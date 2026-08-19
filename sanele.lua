@@ -711,6 +711,13 @@ function wf.diagToLog() wf.log("diag: " .. wf.diag()) end
 -- ── Launch/appearance ──────────────────────────────────────────────────
 hs.autoLaunch(true)
 hs.dockIcon(false)
+-- Hide Hammerspoon's OWN menu bar icon. Sanele runs inside Hammerspoon, so by
+-- default the user sees two icons — Hammerspoon's hammer next to Sanele's — and
+-- the hammer opens a console that has nothing to do with this product. Only
+-- MJShowDockIconKey was ever set, which is why the hammer survived. Setting it
+-- here rather than via `defaults write` keeps it declarative: a fresh install on
+-- another Mac gets the same result without a manual step.
+hs.menuIcon(false)
 wf.setState("idle")
 wf.diagToLog()    -- diagnostics without an open ipc port
 wf.sweepCache()   -- clear anything a previous session left behind (e.g. after a crash)
