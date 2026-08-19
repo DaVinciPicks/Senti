@@ -113,6 +113,22 @@ cp "$HERE/app/launcher.sh" "$APP/Contents/MacOS/sanele"; chmod +x "$APP/Contents
 # Nudge Finder/Dock to drop the cached old icon.
 touch "$APP" 2>/dev/null || true
 
+# Keep a Desktop copy in sync IF one exists. Deliberately not created here — an
+# installer that writes to someone's Desktop uninvited is rude — but once it is
+# there it must track the real app, or it keeps launching an old build with a
+# stale icon. Create it with:  cp -R ~/Applications/Sanele.app ~/Desktop/
+DESKAPP="$HOME/Desktop/Sanele.app"
+if [ -d "$DESKAPP" ]; then
+  rm -rf "$DESKAPP"; cp -R "$APP" "$DESKAPP"; touch "$DESKAPP" 2>/dev/null || true
+  echo "  ✓ Desktop copy refreshed"
+fi
+# A pre-rename Desktop launcher points at a launchd label that no longer exists,
+# so double-clicking it quits Hammerspoon and cannot bring it back.
+if [ -d "$HOME/Desktop/Senti.app" ]; then
+  rm -rf "$HOME/Desktop/Senti.app"
+  echo "  ✓ removed stale Desktop Senti.app"
+fi
+
 echo ""
 echo "✅ Sanele installed."
 echo "   1) Open Hammerspoon (or run: open -a Hammerspoon) — grant Accessibility if asked."
