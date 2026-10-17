@@ -1,6 +1,6 @@
-# sanele-kb — private knowledge base
+# senti-kb — private knowledge base
 
-The prompting knowledge that makes Sanele worth paying for. **Private. Never make public.**
+The prompting knowledge that makes Senti worth paying for. **Private. Never make public.**
 
 - `prompts/models/*.md` — per-model prompting guidance. Frontmatter carries `family`,
   `match` (regex against the frontmost app / window title), `display_name`, `frontier`,

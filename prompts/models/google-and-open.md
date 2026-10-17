@@ -39,7 +39,7 @@ updated: 2026-08-09
 
 ## Anti-patterns
 
-- **Calling `deepseek-chat` or `deepseek-reasoner`** — both retired 2026-07-24 with a hard cutoff (no fallback, no grace period); calls now error outright rather than silently routing anywhere. Sanele's `sanele-ai.sh` currently targets `deepseek-chat` — verify live before relying on it, and migrate to `deepseek-v4-flash` (non-thinking, was `deepseek-chat`) or `deepseek-v4-pro` (thinking-first, was `deepseek-reasoner`-class).
+- **Calling `deepseek-chat` or `deepseek-reasoner`** — both retired 2026-07-24 with a hard cutoff (no fallback, no grace period); calls now error outright rather than silently routing anywhere. Senti's `senti-ai.sh` currently targets `deepseek-chat` — verify live before relying on it, and migrate to `deepseek-v4-flash` (non-thinking, was `deepseek-chat`) or `deepseek-v4-pro` (thinking-first, was `deepseek-reasoner`-class).
 - **Generic "helpful assistant" system prompt on a reasoning-mode call** — confirmed to measurably hurt DeepSeek V3.2/V4 thinking-mode output; also wastes tokens by inviting chattier non-answer preamble on Qwen3 thinking mode.
 - **Mixing XML and Markdown delimiters in one Gemini 3 prompt** — pick one convention per prompt; mixing them undermines the exact structural signal Gemini 3 was trained to parse.
 - **Assuming Gemma has a system role** — Gemma 3 and 4 both silently ignore or reject it; instructions must be in the first user turn or they're dropped.
