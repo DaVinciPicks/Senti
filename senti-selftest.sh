@@ -23,7 +23,9 @@ done
 [ -f "$WF_MODEL" ] && ok "model present ($(basename "$WF_MODEL"))" || bad "model file missing: $WF_MODEL"
 
 echo "── config ──"
-[ "${WF_CONFIG_VERSION:-0}" -ge 2 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
+# Bump with WF_CONFIG_VERSION in config.sh: a restored config.sh.bak from before the
+# rename points every path at the old directories, and ">= 2" let that pass.
+[ "${WF_CONFIG_VERSION:-0}" -ge 8 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
                                                  || bad "config schema stale (v${WF_CONFIG_VERSION:-0}) — re-run install.sh"
 # Every var a script dereferences must survive `set -u` even with an old config.
 MISSING=""
@@ -39,13 +41,41 @@ echo "── unbound-variable regression (stale config must not crash scripts) �
 # pre-upgrade config crashes that script under set -u at runtime. NB: this comment
 # must not spell the literal pattern, because the scan includes this file.
 MISS=""
-BARE="$(/usr/bin/grep -ohE '\$\{WF_[A-Z_0-9]+\}' "$CFG"/senti-*.sh 2>/dev/null \
+# Both forms: braced with no default, and the plain $NAME form (the braced-only scan
+# covered 1 of ~80 derefs and missed e.g. the sound toggle every dictation reads).
+BARE="$(/usr/bin/grep -ohE '\$\{WF_[A-Z_0-9]+\}|\$WF_[A-Z_0-9]+' "$CFG"/senti-*.sh 2>/dev/null \
         | /usr/bin/sort -u | /usr/bin/tr -d '${}')"
 for v in $BARE; do
-  /usr/bin/grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "$CFG/config.sh" || MISS="$MISS $v"
+  # Defined anywhere in config.sh (including inside a case branch), or guarded with a
+  # :- default in the scripts before its bare use.
+  /usr/bin/grep -v "^[[:space:]]*#" "$CFG/config.sh" | /usr/bin/grep -qE "(^|[[:space:];)])(export[[:space:]]+)?${v}=" && continue
+  /usr/bin/grep -qF "\${${v}:-" "$CFG"/senti-*.sh && continue
+  MISS="$MISS $v"
 done
 [ -z "$MISS" ] && ok "every bare \${WF_*} deref is unconditionally defined in config.sh" \
                || bad "bare deref with no config.sh definition:$MISS"
+
+echo "── install integrity & process hygiene ──"
+# The failures that actually happened (2026-10-17) and the ones a partial install leaves.
+launchctl print "gui/$(id -u)/io.senti.server" >/dev/null 2>&1 \
+  && ok "launchd io.senti.server loaded" || bad "launchd io.senti.server not loaded — re-run install.sh"
+for old in io.sanele.server com.leo.senti; do
+  launchctl print "gui/$(id -u)/$old" >/dev/null 2>&1 \
+    && bad "old launchd label $old still loaded (two servers race for one port)"
+done
+/usr/bin/grep -q '/.config/senti/' "$HOME/.hammerspoon/init.lua" 2>/dev/null \
+  && ok "Hammerspoon init.lua is the Senti build" || bad "init.lua missing or stale — re-run install.sh"
+[ -x "$CFG/senti-mic-auth" ] && ok "mic permission helper built" \
+  || bad "mic helper missing — permission prompts cannot appear (install Xcode CLT, re-run install.sh)"
+RPERM="$(/usr/bin/stat -f '%Lp' "$WF_RUN" 2>/dev/null || echo '')"
+[ "$RPERM" = "700" ] && ok "cache dir mode 700" || bad "cache dir mode ${RPERM:-unknown}, expected 700"
+# A sox still writing the capture file while no recording is live is the 8-day leak.
+LIVE="$(cat "${WF_PIDFILE:-/nonexistent}" 2>/dev/null)"
+ORPH=0
+for p in $(/usr/bin/pgrep -u "$(id -u)" -f "sox -d .*${WF_AUDIO}\$"); do
+  [ "$p" = "$LIVE" ] || ORPH=$((ORPH+1))
+done
+[ "$ORPH" -eq 0 ] && ok "no orphaned sox recorders" || bad "$ORPH orphaned sox recorder(s) holding the mic"
 
 echo "── secrets ──"
 [ -f "$CFG/openai-key" ] && ok "OpenAI key present" || bad "no OpenAI key at $CFG/openai-key"
@@ -71,7 +101,7 @@ else
   esac
 
   # Screenshot lives OUTSIDE ~/.cache/senti: Hammerspoon's 60s idle sweeper deletes
-  # wf.SWEEPABLE files there, and an external selftest run races it (flapping failure).
+  # files matching wf.sweepSensitive there, and an external selftest run races it (flapping failure).
   SHOT="$(mktemp -d)/selftest-shot.png"
   /usr/sbin/screencapture -x -m "$SHOT" 2>/dev/null
   if [ -s "$SHOT" ]; then

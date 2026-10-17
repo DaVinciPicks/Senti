@@ -35,6 +35,10 @@ wf.MODELSH = wf.HOME .. "/.config/senti/senti-model.sh"
 wf.LOG     = wf.HOME .. "/Library/Logs/senti.log"
 wf.BASH    = "/bin/bash"
 wf.micOK   = false   -- cached once macOS authorizes the mic
+-- Without the helper (swiftc missing or its build failed at install) the probe can never
+-- answer and hold-to-talk did nothing at all. Record anyway: a denied mic still shows up
+-- as an all-zero clip, which the silence gate reports.
+if not hs.fs.attributes(wf.AUTH) then wf.micOK = true end
 
 -- ── Tunables ───────────────────────────────────────────────────────────
 wf.TRAILING_SPACE = true   -- add a space after inserted text
@@ -57,7 +61,7 @@ wf.sessLabel  = ""   -- that window's title → carries project + current task f
 -- ── Logging (so one test press reveals exactly where it breaks) ─────────
 function wf.log(msg)
   local f = io.open(wf.LOG, "a")
-  if f then f:write(os.date("%H:%M:%S") .. " [hs] " .. msg .. "\n"); f:close() end
+  if f then f:write(os.date("%Y-%m-%d %H:%M:%S") .. " [hs] " .. msg .. "\n"); f:close() end
 end
 
 -- ── UI ─────────────────────────────────────────────────────────────────
@@ -279,14 +283,23 @@ function wf.setState(s)
   if wf.stuckTimer then wf.stuckTimer:stop(); wf.stuckTimer = nil end
   if s == "working" then
     wf.stuckTimer = hs.timer.doAfter(75, function()
-      if wf.state == "working" then wf.log("watchdog: 'working' stuck 75s → reset idle"); wf.setState("idle") end
+      if wf.state == "working" then
+        -- Abandon the turn: bumping the id makes its late callback drop its result
+        -- instead of pasting into whatever app is focused by then.
+        wf.turn = (wf.turn or 0) + 1
+        wf.log("watchdog: 'working' stuck 75s → turn abandoned, reset idle")
+        wf.notify("That took too long and was cancelled.\nTry again.", 4, wf.TONE.warn)
+        wf.setState("idle")
+      end
     end)
   elseif s == "recording" then
     wf.stuckTimer = hs.timer.doAfter(150, function()  -- no real dictation runs 2.5 min
       if wf.state == "recording" then
-        wf.log("watchdog: 'recording' stuck 150s → cancel + reset")
-        hs.task.new(wf.BASH, nil, {wf.DICTATE, "cancel"}):start()
-        wf.held = nil; wf.setState("idle")
+        -- A lost key-up or a very long hold. Transcribe what was recorded instead of
+        -- deleting up to 2.5 minutes of speech with no signal.
+        wf.log("watchdog: 'recording' stuck 150s → transcribing what was recorded")
+        wf.notify("Recording stopped at 2.5 minutes.\nTranscribing what was recorded.", 4, wf.TONE.warn)
+        wf.held = nil; wf.endCapture()
       end
     end)
   end
@@ -298,21 +311,36 @@ function wf.paste(text)   -- low-level: put text on the clipboard and ⌘V it
   hs.eventtap.keyStroke({"cmd"}, "v", 0)
 end
 
+-- Snapshot every flavour on the clipboard, not just its text: getContents() is nil for
+-- an image and flattens a file or rich text, so the old restore lost them.
+function wf.saveClipboard()
+  local ok, all = pcall(hs.pasteboard.readAllData)
+  return { all = (ok and all and next(all)) and all or nil, text = hs.pasteboard.getContents() }
+end
+
+-- Restore after our paste, unless the user copied something new in the meantime.
+function wf.restoreClipboard(saved, ourCount)
+  if not saved or hs.pasteboard.changeCount() ~= ourCount then return end
+  if saved.all and pcall(hs.pasteboard.writeAllData, saved.all) then return end
+  if saved.text then hs.pasteboard.setContents(saved.text) end
+end
+
 function wf.insert(text)  -- dictation insert: trailing space + clipboard restore
   if not text or text:gsub("%s+","") == "" then wf.log("insert: empty, nothing to paste"); return end
   if wf.TRAILING_SPACE then text = text .. " " end
-  local prev = hs.pasteboard.getContents()
+  local prev = wf.saveClipboard()
   wf.paste(text)
+  local ours = hs.pasteboard.changeCount()
   wf.log("insert: pasted " .. #text .. " chars")
   hs.timer.doAfter(0.5, function()   -- give slow apps time to read the clipboard before restoring
-    if prev then hs.pasteboard.setContents(prev) end
+    wf.restoreClipboard(prev, ours)
   end)
 end
 
 -- Command Mode: transform the current selection (or generate at cursor) by voice.
-function wf.runCommand(command)
+function wf.runCommand(command, turn)
   wf.hud.show("thinking")
-  local prevClip = hs.pasteboard.getContents()
+  local prevClip = wf.saveClipboard()
   hs.pasteboard.clearContents()
   hs.eventtap.keyStroke({"cmd"}, "c", 0)      -- copy the current selection
   hs.timer.doAfter(0.18, function()
@@ -320,12 +348,20 @@ function wf.runCommand(command)
     local f = io.open(wf.SELFILE, "w"); if f then f:write(sel); f:close() end
     wf.log("command: " .. #command .. " chars on " .. #sel .. " selected chars")  -- not the text itself
     wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(_, out)
+      os.remove(wf.SELFILE)                    -- selected text is the user's content; don't leave it on disk
+      if wf.staleTurn(turn) then return end
       wf.setState("idle")
       out = (out or ""):gsub("%s+$", "")
-      if out ~= "" then wf.paste(out) end      -- replaces the selection, or inserts at cursor
+      if out == "" then
+        wf.log("command: produced nothing")
+        wf.notify("The command produced nothing.\nCheck your network or OpenAI key.", 4, wf.TONE.warn)
+        hs.timer.doAfter(0.5, function() wf.restoreClipboard(prevClip, hs.pasteboard.changeCount()) end)
+        return
+      end
+      wf.paste(out)                            -- replaces the selection, or inserts at cursor
+      local ours = hs.pasteboard.changeCount()
       wf.log("command: applied " .. #out .. " chars")
-      os.remove(wf.SELFILE)                    -- selected text is the user's content; don't leave it on disk
-      hs.timer.doAfter(0.5, function() if prevClip then hs.pasteboard.setContents(prevClip) end end)
+      hs.timer.doAfter(0.5, function() wf.restoreClipboard(prevClip, ours) end)
     end)
   end)
 end
@@ -396,14 +432,17 @@ function wf.awaitShot(tries, cb)
 end
 
 -- Run the vision engine; surface failures instead of silently inserting nothing.
-function wf.runVision(raw, kind)
+function wf.runVision(raw, kind, turn)
   wf.hud.show("thinking")
   -- Target hint + session identity ride the env via runScript; argv carries only paths/kind.
   wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
+    if wf.staleTurn(turn) then wf.sweepCache(); return end
     wf.setState("idle")
     if exitCode ~= 0 then
-      wf.log("vision failed (exit " .. tostring(exitCode) .. ")")
-      wf.notify("Request failed — check your network or OpenAI key", 4, wf.TONE.warn)
+      -- Don't throw the user's words away with the failed request.
+      wf.log("vision failed (exit " .. tostring(exitCode) .. ") — words left on the clipboard")
+      hs.pasteboard.setContents(raw)
+      wf.notify("Request failed — check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
     else
       wf.insert((out or ""):gsub("%s+$", ""))
     end
@@ -411,11 +450,24 @@ function wf.runVision(raw, kind)
   end)
 end
 
-function wf.handleTranscript(raw)
+-- A result belongs to the turn that started it. The 'working' watchdog abandons a turn
+-- by bumping wf.turn, and its late callback must then do nothing: no paste into whatever
+-- app is focused now, and no setState that would wreck a newer recording.
+function wf.staleTurn(turn)
+  if turn ~= nil and turn ~= wf.turn then
+    wf.log("dropped a late result from an abandoned turn")
+    return true
+  end
+  return false
+end
+
+function wf.handleTranscript(raw, turn)
   raw = (raw or ""):gsub("^%s+",""):gsub("%s+$","")
+  if wf.staleTurn(turn) then return end
   -- Record the turn against this window's session before acting on it, so the next
   -- dictation in the SAME window can resolve back-references. Fire-and-forget.
-  if raw ~= "" and raw ~= "__WF_SERVER_DOWN__" and wf.sessKey ~= "" then
+  -- Sentinels (__WF_*__) are status, not speech — never store them as a turn.
+  if raw ~= "" and not raw:match("^__WF_[%u_]+__$") and wf.sessKey ~= "" then
     -- key/label ride the env (runScript sets SENTI_SKEY/SENTI_SLABEL); argv carries
     -- only the subcommand and mode — window titles stay out of `ps`.
     wf.runScript({wf.SESSION, "note", "", "", tostring(wf.mode or "dictate")}, raw, nil)
@@ -436,6 +488,18 @@ function wf.handleTranscript(raw)
     wf.notify("Whisper engine is not running.\nMenu bar → Restart engine", 4, wf.TONE.warn)
     return
   end
+  if raw == "__WF_TAP__" then   -- a brushed key, not a dictation: nothing to report
+    wf.setState("idle")
+    return
+  end
+  if raw == "__WF_TRANSCRIBE_FAILED__" then
+    -- The engine errored or timed out. Not a muted mic: say so, or people go re-grant
+    -- a permission that was fine.
+    wf.setState("idle")
+    pcall(function() hs.sound.getByName("Basso"):play() end)
+    wf.notify("Transcription failed — the whisper engine errored or timed out.\nTry again, or menu bar → Restart engine", 5, wf.TONE.warn)
+    return
+  end
   if raw == "" then
     -- NEVER fail silently here. The log shows real turns where the user held the key
     -- for 50s and 78s, waited ~30s for transcription, and got NOTHING back — no sound,
@@ -452,7 +516,8 @@ function wf.handleTranscript(raw)
 
   if wf.mode == "context" then
     wf.awaitShot(4, function(has)
-      if has then wf.runVision(raw, "context")
+      if wf.staleTurn(turn) then return end
+      if has then wf.runVision(raw, "context", turn)
       else
         wf.setState("idle")
         wf.log("context: no screenshot — Screen Recording not granted")
@@ -461,13 +526,15 @@ function wf.handleTranscript(raw)
       end
     end)
   elseif wf.mode == "command" then
-    wf.runCommand(raw)                 -- raw = the spoken instruction
+    wf.runCommand(raw, turn)           -- raw = the spoken instruction
   elseif wf.mode == "prompt" then
     wf.awaitShot(4, function(has)
-      if has then wf.runVision(raw, "prompt")   -- screen context → context-aware prompt
+      if wf.staleTurn(turn) then return end
+      if has then wf.runVision(raw, "prompt", turn)   -- screen context → context-aware prompt
       else                                       -- no screen → text-only prompt path
         wf.hud.show("thinking")
         wf.runScript({wf.PROMPTS}, raw, function(_, stdout)
+          if wf.staleTurn(turn) then wf.sweepCache(); return end
           wf.setState("idle"); wf.insert(stdout); wf.sweepCache()
         end)
       end
@@ -527,11 +594,19 @@ function wf.beginCapture(m)
   if m == "prompt" then wf.runScript({wf.CTXPRE}, "", nil) end
   if wf.micOK then wf.record(); return end
   -- First use: check permission without prompting; act on the result.
+  -- The probe is async. If a hold key started this and is released before the probe
+  -- answers, recording now would start a capture no key can end — so don't.
+  local heldAtStart = wf.held
   hs.task.new(wf.AUTH, function(_, out)
     out = (out or ""):gsub("%s+","")
     wf.log("mic probe: "..out)
     if out == "AUTHORIZED" then
-      wf.micOK = true; wf.record()
+      wf.micOK = true
+      if heldAtStart ~= nil and wf.held ~= heldAtStart then
+        wf.log("mic probe answered after key-up — not recording")
+      elseif wf.state == "idle" then
+        wf.record()
+      end
     elseif out == "NOTDETERMINED" then
       wf.notify("Allow the microphone prompt,\nthen hold ⌥ again to dictate", 4)
       wf.grantMic(false)   -- triggers the macOS prompt
@@ -543,12 +618,14 @@ end
 
 function wf.endCapture()
   if wf.state ~= "recording" then wf.log("endCapture ignored: state="..wf.state); return end
+  wf.turn = (wf.turn or 0) + 1
+  local turn = wf.turn
   wf.setState("working")
   wf.log("endCapture: transcribing")
   -- MUST go through runScript: senti-dictate.sh reads SENTI_SLABEL to build the
   -- whisper vocabulary hint (project name → correct identifier transcription). A bare
   -- hs.task.new carries no Senti env, so the hint silently loses its best term.
-  wf.runScript({wf.DICTATE, "stop"}, "", function(_, stdout) wf.handleTranscript(stdout) end)
+  wf.runScript({wf.DICTATE, "stop"}, "", function(_, stdout) wf.handleTranscript(stdout, turn) end)
 end
 
 -- Snapshot the screen now (for prompt + context modes), then start capturing.
@@ -630,26 +707,22 @@ function wf.armTap()
   wf.flagWatcher = hs.eventtap.new({hs.eventtap.event.types.flagsChanged}, function(e)
     local ok, err = pcall(function()
       local code, flags = e:getKeyCode(), e:getFlags()
-      if code == wf.HOLD_VERBATIM then
-        local down = flags.alt == true
-        if down and wf.held == nil and wf.state == "idle" then
+      -- The next flagsChanged for the held key IS its release. Don't read the flag for
+      -- it: flags.alt / flags.cmd are the left+right union, so with the other-side key
+      -- down the release looked like "still down" and the capture never ended.
+      if wf.held ~= nil and code == wf.held then
+        wf.held = nil; wf.log("tap: key " .. code .. " up"); wf.endCapture()
+      elseif code == wf.HOLD_VERBATIM then
+        if flags.alt == true and wf.held == nil and wf.state == "idle" then
           wf.held = code; wf.log("tap: right⌥ down"); wf.beginCapture("verbatim")
-        elseif not down and wf.held == wf.HOLD_VERBATIM then
-          wf.held = nil; wf.log("tap: right⌥ up"); wf.endCapture()
         end
       elseif code == wf.HOLD_PROMPT then
-        local down = flags.cmd == true
-        if down and wf.held == nil and wf.state == "idle" then
+        if flags.cmd == true and wf.held == nil and wf.state == "idle" then
           wf.held = code; wf.log("tap: right⌘ down"); wf.snapAndCapture("prompt")
-        elseif not down and wf.held == wf.HOLD_PROMPT then
-          wf.held = nil; wf.log("tap: right⌘ up"); wf.endCapture()
         end
       elseif code == wf.HOLD_COMMAND then
-        local down = flags.fn == true
-        if down and wf.held == nil and wf.state == "idle" then
+        if flags.fn == true and wf.held == nil and wf.state == "idle" then
           wf.held = code; wf.log("tap: Fn down"); wf.beginCapture("command")
-        elseif not down and wf.held == wf.HOLD_COMMAND then
-          wf.held = nil; wf.log("tap: Fn up"); wf.endCapture()
         end
       end
     end)

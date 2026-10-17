@@ -10,7 +10,8 @@ leaves the Mac (whisper.cpp server bound to `127.0.0.1`). Optional AI modes
 (prompt / command / context) send text — and, with screen context on, a downscaled
 screenshot — to cheap cloud APIs.
 
-- **Repo is PUBLIC. The code is source-available, not open source** — proprietary,
+- **Repo is PRIVATE today (GitHub, verified 2026-10-17) but written as if public: the code is
+  source-available, not open source** — proprietary,
   "all rights reserved", see `LICENSE`. The owner's name and Mac username were
   scrubbed from files *and* git history — **do not reintroduce them**
   (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` / `__HOME__`).
@@ -61,7 +62,7 @@ Scripts and `senti.lua` are code — always overwritten.)
 - **Cache is sensitive:** `~/.cache/senti/` holds the raw audio of what was just said, a
   full-res screenshot, and any selected text. `wf.sweepCache()` clears it at the end of every
   turn, on a 60s backstop, and at launch. Don't add a new cache artefact without adding it to
-  `wf.SWEEPABLE`.
+  the patterns in `wf.sweepSensitive`.
 - **Session memory:** keyed on the focused **window id**, not the app — several Claude Code
   terminals are all "Terminal" but are different work. The window title already carries the
   project and current task (`senti — ⠐ Evaluate software… — claude`), so working context is

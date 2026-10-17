@@ -41,8 +41,12 @@ SMALL="$WF_RUN/screen-small.jpg"; MIME="image/jpeg"
 if ! /usr/bin/sips -Z "${WF_SHOT_PX:-1536}" -s format jpeg "$SHOT" --out "$SMALL" >/dev/null 2>&1; then
   SMALL="$SHOT"; MIME="image/png"   # sips failed → send original PNG, labeled correctly
 fi
+# The downscaled copy is a picture of the screen too. Only Hammerspoon's sweep removed
+# it, so a run from the CLI or the self-test left it on disk.
+[ "$SMALL" != "$SHOT" ] && trap 'rm -f "$SMALL"' EXIT
 
 # Everything sensitive rides env (see senti-ai.sh). Trailing whitespace trimmed here
-# because the caller pastes this verbatim at the cursor.
+# because the caller pastes this verbatim at the cursor. stderr goes to the log: it
+# carries the API's status (a retired model, a bad key), which was being thrown away.
 SENTI_SYS="$SYS" SENTI_IN="$UTEXT" SENTI_IMG="$SMALL" SENTI_MIME="$MIME" \
-  bash "$HOME/.config/senti/senti-ai.sh" | /usr/bin/perl -0777 -pe 's/\s+$//'
+  bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG" | /usr/bin/perl -0777 -pe 's/\s+$//'

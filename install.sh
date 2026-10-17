@@ -32,9 +32,13 @@ for old in io.sanele.server com.leo.senti; do
   fi
 done
 rm -rf "$HOME/Applications/Sanele.app"
+# A first-generation Senti install left its own senti*.log behind, so the new name can
+# already be taken. Keep that older log under another name rather than skipping the move.
 for suffix in "" "-server"; do
-  if [ -f "$HOME/Library/Logs/sanele$suffix.log" ] && [ ! -f "$HOME/Library/Logs/senti$suffix.log" ]; then
-    mv "$HOME/Library/Logs/sanele$suffix.log" "$HOME/Library/Logs/senti$suffix.log"
+  OLDLOG="$HOME/Library/Logs/sanele$suffix.log"; NEWLOG="$HOME/Library/Logs/senti$suffix.log"
+  if [ -f "$OLDLOG" ]; then
+    [ -f "$NEWLOG" ] && mv "$NEWLOG" "$HOME/Library/Logs/senti$suffix.pre-sanele.log"
+    mv "$OLDLOG" "$NEWLOG"
   fi
 done
 # --------------------------------------------------------------------------------
@@ -56,7 +60,9 @@ mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/mod
 # prompts/ at all. Both copies above are `|| true`, which means that failure is silent —
 # AI modes would then run with no craft layer and no model guidance and still look fine.
 # Say so loudly instead.
-if [ ! -f "$CFG/prompts/models/_techniques.md" ]; then
+# Check the SOURCE, not the deployed copy: a dangling prompts/ link copies nothing, and
+# the previous install's files would keep this check quiet while KB updates stop.
+if [ ! -f "$HERE/prompts/models/_techniques.md" ]; then
   echo "  ! no prompting knowledge base found — AI modes will run WITHOUT model guidance."
   echo "    The KB lives in the private repo DaVinciPicks/senti-kb. Put it beside this one:"
   echo "      git clone git@github.com:DaVinciPicks/senti-kb.git ../senti-kb"
@@ -91,16 +97,27 @@ else
 fi
 
 echo "→ microphone-permission helper (Swift/AVFoundation)"
+# Never let this abort the install: under set -e a failed build (an SDK mismatch after a
+# macOS update) used to stop here with new scripts deployed and the old init.lua still
+# pointing at them. senti.lua copes with a missing helper.
 if command -v swiftc >/dev/null 2>&1; then
   swiftc -O "$HERE/senti-mic-auth.swift" -o "$CFG/senti-mic-auth" \
-    -framework AVFoundation -framework Foundation
+    -framework AVFoundation -framework Foundation \
+    || echo "  warning: mic helper failed to build — permission prompts will not appear"
 else
   echo "  warning: swiftc not found (install Xcode CLT) — mic helper not built"
 fi
 
 echo "→ Hammerspoon config"
 mkdir -p "$HOME/.hammerspoon"
-cp "$HERE/senti.lua" "$HOME/.hammerspoon/init.lua"
+# init.lua is the whole Hammerspoon config. If it is someone's own (no Senti marker),
+# keep a copy instead of silently replacing it.
+HSINIT="$HOME/.hammerspoon/init.lua"
+if [ -f "$HSINIT" ] && ! /usr/bin/grep -q 'wf.armTap' "$HSINIT"; then
+  cp "$HSINIT" "$HSINIT.pre-senti"
+  echo "  ! your existing init.lua was saved as init.lua.pre-senti"
+fi
+cp "$HERE/senti.lua" "$HSINIT"
 
 echo "→ warm-whisper launchd service"
 launchctl unload "$LA/io.senti.server.plist" 2>/dev/null || true

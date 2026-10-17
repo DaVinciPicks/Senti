@@ -133,7 +133,7 @@ senti_intent() {
 # the split is measurable rather than a matter of belief.
 senti_ctx_for_intent() {
   local mode; mode="$(senti_intent "${1:-}")"
-  echo "$(date +%H:%M:%S) intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+  echo "$(date '+%F %T') intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   [ "$mode" = heavy ] || return 0
   senti_untrusted_ctx
 }

@@ -20,6 +20,8 @@
 #     what left the machine. Kill switch: WF_BRAIN=0.
 #   - Verbatim dictation never touches this script.
 set -uo pipefail
+# Blank test that stays O(n) on bash 3.2 (${VAR// /} is quadratic there: 8 KB took 4.8s).
+blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 source "$HOME/.config/senti/config.sh"
 
 [ "${WF_BRAIN:-1}" = "1" ] || exit 0
@@ -44,8 +46,8 @@ mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 brain_digest() {
   local f="$1" d
   d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## (?:Senti|Sanele)\s*\n(.*?)(?=^## |\z)/ms' "$f")"
-  [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
-  [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
+  blank "$d" && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
+  blank "$d" && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
   printf '%s' "$d" \
     | /usr/bin/perl -pe 's/\[\[[^\]|]*\|([^\]]*)\]\]/$1/g; s/\[\[([^\]]*)\]\]/$1/g' \
     | cut -c1-100000 | head -c "$MAX"
@@ -63,14 +65,14 @@ if [ "${1:-}" = "refresh" ]; then
   # This respects the ## Senti section choice and the WF_BRAIN_MAX cap; a note without
   # an allowed section still only exposes its capped first lines.
   BODY="$(brain_digest "$RNOTE")"
-  [ -z "${BODY// /}" ] && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
+  blank "$BODY" && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
   SYS="Compress this project note into at most 120 words of plain text: what the project IS, the stack, the current focus, hard constraints, and any naming conventions. Facts only, no headings, no preamble — this becomes standing context for an assistant writing prompts about the project."
   OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" \
          bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
-  if [ -n "${OUT// /}" ]; then
+  if ! blank "$OUT"; then
     T="$(mktemp "$CACHEDIR/.tmp.XXXXXX")" && printf '%s' "$OUT" > "$T" \
       && chmod 600 "$T" && mv "$T" "$CACHEDIR/$RKEY.md"
-    echo "$(date '+%H:%M:%S') brain: refreshed digest '$RKEY' ($(printf '%s' "$OUT" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"
+    echo "$(date '+%F %T') brain: refreshed digest '$RKEY' ($(printf '%s' "$OUT" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"
   fi
   rm -f "$CACHEDIR/.refreshing.$RKEY"
   exit 0
@@ -135,7 +137,7 @@ KEY="$(norm "$(basename "$NOTE" .md)")"
 CACHE="$CACHEDIR/$KEY.md"
 if [ -s "$CACHE" ] && [ -n "$(/usr/bin/find "$CACHE" -mmin -1440 -newer "$NOTE" 2>/dev/null)" ]; then
   DIGEST="$(head -c "$MAX" "$CACHE")"
-  echo "$(date '+%H:%M:%S') brain: injected cached digest '$KEY' for hint '$HINT'" >> "$WF_LOG"
+  echo "$(date '+%F %T') brain: injected cached digest '$KEY' for hint '$HINT'" >> "$WF_LOG"
   printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"
   exit 0
 fi
@@ -154,7 +156,7 @@ if [ "${WF_BRAIN_REFRESH:-1}" = "1" ]; then
 fi
 
 DIGEST="$(brain_digest "$NOTE")"
-[ -z "${DIGEST// /}" ] && exit 0
+blank "$DIGEST" && exit 0
 
-echo "$(date '+%H:%M:%S') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars) for hint '$HINT'" >> "$WF_LOG"
+echo "$(date '+%F %T') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars) for hint '$HINT'" >> "$WF_LOG"
 printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"

@@ -135,4 +135,6 @@ WF_SOUNDS="${WF_SOUNDS:-1}"
 WF_SOUND_START="${WF_SOUND_START:-/System/Library/Sounds/Tink.aiff}"
 WF_SOUND_STOP="${WF_SOUND_STOP:-/System/Library/Sounds/Pop.aiff}"
 
-mkdir -p "$WF_RUN"
+# 700 every time, not only at install: a cache wiped by a disk cleanup was recreated 755
+# here, and it holds audio, screenshots and selected text while a turn runs.
+{ mkdir -p "$WF_RUN" && chmod 700 "$WF_RUN"; } 2>/dev/null || true

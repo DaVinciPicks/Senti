@@ -70,7 +70,7 @@ git clone <this-repo> ~/code/senti && cd ~/code/senti && ./install.sh
 Requirements (Homebrew / Xcode CLT):
 
 ```bash
-brew install whisper-cpp sox
+brew install whisper-cpp sox resvg   # resvg renders the app icon
 brew install --cask hammerspoon
 # a model, e.g.:
 mkdir -p ~/.local/share/whisper-models

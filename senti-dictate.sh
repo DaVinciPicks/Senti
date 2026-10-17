@@ -13,7 +13,7 @@ umask 077   # audio/screenshot/selection files created here are uid-private
 
 # The log lives alongside speech-derived data; keep it uid-only, not the umask default.
 [ -f "$WF_LOG" ] || : >> "$WF_LOG"; chmod 600 "$WF_LOG" 2>/dev/null || true
-log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$WF_LOG"; }
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$WF_LOG"; }
 # The redirect MUST wrap the whole group, not just afplay. `cmd >/dev/null &` backgrounds
 # the entire && chain as one subshell, and that subshell inherits this script's stdout —
 # which is a PIPE (senti.lua reads it via hs.task; a shell reads it via $( )). The reader
@@ -24,8 +24,19 @@ cue() { { [ "$WF_SOUNDS" = "1" ] && [ -f "$1" ] && afplay "$1"; } >/dev/null 2>&
 
 server_up() { "$WF_CURL" -s -o /dev/null -m 1 "$WF_URL/" 2>/dev/null; }
 
+# A pid only counts if it is still a sox writing our capture path. sox can exit on its
+# own and leave the pidfile behind (a full disk did, 2026-10-17), and after a reboot that
+# PID can belong to anything — stop_sox ends in SIGKILL, so never trust the file alone.
+is_capture_pid() {
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  case "$(ps -ww -p "$1" -o command= 2>/dev/null)" in
+    *"sox -d "*"$WF_AUDIO") return 0 ;;
+  esac
+  return 1
+}
+
 is_recording() {
-  [ -f "$WF_PIDFILE" ] && kill -0 "$(cat "$WF_PIDFILE" 2>/dev/null)" 2>/dev/null
+  is_capture_pid "$(cat "$WF_PIDFILE" 2>/dev/null)"
 }
 
 # Stop one sox with SIGINT so it rewrites the WAV header. A sox that this non-interactive
@@ -61,7 +72,11 @@ reap_orphans() {
 }
 
 start() {
-  if is_recording; then log "start ignored: already recording"; return 0; fi
+  # senti.lua only calls start when it believes it is idle, so a recording still running
+  # here is a leftover (a lost key-up, a reload mid-recording, or key-up's stop racing
+  # key-down's start). Ignoring this press used to lose the next dictation; finish the
+  # leftover instead and record fresh.
+  if is_recording; then log "start: finishing a leftover recording first"; finish_recording; fi
   reap_orphans
   rm -f "$WF_AUDIO"
   cue "$WF_SOUND_START"
@@ -76,7 +91,7 @@ finish_recording() {
   local pid
   pid="$(cat "$WF_PIDFILE" 2>/dev/null)"
   rm -f "$WF_PIDFILE"
-  stop_sox "$pid"
+  if is_capture_pid "$pid"; then stop_sox "$pid"; fi
 }
 
 # Build the whisper vocabulary hint from context that costs nothing to obtain.
@@ -132,7 +147,14 @@ transcribe() {
     # signature: macOS silently mutes sox's CoreAudio-HAL input when Hammerspoon lacks
     # Microphone permission, with no prompt. Distinguishing the two turns a mystery
     # ("I spoke for a minute and nothing happened") into one actionable instruction.
-    if /usr/bin/awk -v p="$peak" 'BEGIN{exit !(p+0 == 0)}'; then
+    # But a quick tap is all-zero too (a bare header, or a few ms while CoreAudio starts),
+    # and raising the permission alarm for it reset micOK and sent people to re-grant a
+    # mic that worked. A gated clip under 0.5s is a brushed key, not a dictation: say
+    # __WF_TAP__ so senti.lua goes quietly idle instead of alerting.
+    if /usr/bin/awk -v d="${dur:-0}" 'BEGIN{exit !(d+0 < 0.5)}'; then
+      log "silence gate: ${dur:-0}s quiet clip — a tap, ignored"
+      echo "__WF_TAP__"
+    elif /usr/bin/awk -v p="$peak" 'BEGIN{exit !(p+0 == 0)}'; then
       log "silence gate: peak 0.000000 — mic captured NO audio (permission/muted input)"
       echo "__WF_MIC_DEAD__"
     else
@@ -167,33 +189,24 @@ transcribe() {
     ctx_arg="${WF_AUDIO_CTX:-768}"
   fi
 
-  local raw
-  if [ -n "$ctx_arg" ] && [ -n "${bias// /}" ]; then
-    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
-          -F file=@"$WF_AUDIO" \
-          -F temperature=0.0 \
-          -F audio_ctx="$ctx_arg" \
-          --form-string "prompt=$bias" \
-          -F response_format=text 2>>"$WF_LOG")"
-  elif [ -n "$ctx_arg" ]; then
-    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
-          -F file=@"$WF_AUDIO" \
-          -F temperature=0.0 \
-          -F audio_ctx="$ctx_arg" \
-          -F response_format=text 2>>"$WF_LOG")"
-  elif [ -n "${bias// /}" ]; then
-    # --form-string, not -F: -F parses ';' in the value as a multipart attribute
-    # separator and silently truncates the hint (branch names can contain ';').
-    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
-          -F file=@"$WF_AUDIO" \
-          -F temperature=0.0 \
-          --form-string "prompt=$bias" \
-          -F response_format=text 2>>"$WF_LOG")"
-  else
-    raw="$("$WF_CURL" -s -m 30 "$WF_URL/inference" \
-          -F file=@"$WF_AUDIO" \
-          -F temperature=0.0 \
-          -F response_format=text 2>>"$WF_LOG")"
+  local raw rc args
+  args=(-F file=@"$WF_AUDIO" -F temperature=0.0 -F response_format=text)
+  [ -n "$ctx_arg" ] && args+=(-F audio_ctx="$ctx_arg")
+  # --form-string, not -F: -F parses ';' in the value as a multipart attribute
+  # separator and silently truncates the hint (branch names can contain ';').
+  [ -n "${bias// /}" ] && args+=(--form-string "prompt=$bias")
+  # --fail + the exit code: a timeout or a server error used to come back as empty text
+  # (reported as "mic may be muted") or as the server's error JSON, typed into the app.
+  # The budget grows with the clip so a long dictation on the Accurate model can finish,
+  # capped under senti.lua's 75s 'working' watchdog.
+  local budget
+  budget="$(/usr/bin/awk -v d="${dur:-0}" 'BEGIN{b = 30 + d/2; if (b > 60) b = 60; printf "%d", b}')"
+  raw="$("$WF_CURL" -sS --fail -m "$budget" "$WF_URL/inference" "${args[@]}" 2>>"$WF_LOG")"
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "transcription failed (curl exit $rc, ${dur:-?}s clip)"
+    echo "__WF_TRANSCRIBE_FAILED__"
+    return 0
   fi
   clean_text "$raw"
 }
@@ -209,12 +222,18 @@ clean_text() {
   fi
   # Smart Formatting: drop filler tokens (um/uh/erm/hmm) anywhere, and one leading
   # discourse marker (so/okay/well/like), then re-capitalise the first letter.
+  # The marker goes only when whisper wrote it with a comma ("So, ..."): unconditionally
+  # it turned "Well done" into "Done" and "So far so good" into "Far so good". A dropped
+  # filler hands its sentence-ending punctuation back ("We should, uh." → "We should.").
   if [ "${WF_REMOVE_FILLERS:-1}" = "1" ]; then
     t="$(printf '%s' "$t" | /usr/bin/awk '{
       n=split($0,w," "); out="";
-      for(i=1;i<=n;i++){ tok=w[i]; base=tolower(tok); sub(/[.,!?;:]+$/,"",base);
-        if(base ~ /^(um+|uh+|uhm+|erm+|hmm+)$/) continue;
-        if(i==1 && n>2 && base ~ /^(so|okay|ok|well|like)$/) continue;
+      for(i=1;i<=n;i++){ tok=w[i]; base=tolower(tok); p="";
+        if(match(base,/[.,!?;:]+$/)) p=substr(base,RSTART); sub(/[.,!?;:]+$/,"",base);
+        if(base ~ /^(um+|uh+|uhm+|erm+|hmm+)$/){
+          if(p ~ /[.!?]/ && out != "" && out !~ /[.!?]$/){ sub(/[,;:]+$/,"",out); out=out substr(p,length(p)) }
+          continue }
+        if(i==1 && n>2 && p=="," && base ~ /^(so|okay|ok|well|like)$/) continue;
         out=(out==""?tok:out" "tok); }
       if(length(out)>0) out=toupper(substr(out,1,1)) substr(out,2);
       print out; }')"
@@ -225,10 +244,13 @@ clean_text() {
       my $rf = shift; my @rules;
       if (open(my $fh, "<", $rf)) {
         while (<$fh>) { chomp; next if /^\s*#/ || !/\|/;
-          my ($p,$r) = split(/\|/, $_, 2); push @rules, [$p,$r]; }
+          my ($p,$r) = split(/\|/, $_, 2); s/^\s+|\s+$//g for $p, $r;
+          next if $p eq "";   # an empty pattern re-uses the last match in perl
+          push @rules, [$p,$r]; }
       }
       local $/; my $x = <STDIN>;
-      for my $ru (@rules) { my ($p,$r)=@$ru; $x =~ s/\Q$p\E/$r/gi; }
+      # Whole words only: "centi|Senti" was turning incentive into inSentive.
+      for my $ru (@rules) { my ($p,$r)=@$ru; $x =~ s/(?<![[:alnum:]])\Q$p\E(?![[:alnum:]])/$r/gi; }
       print $x;' "$WF_REPLACEMENTS")"
   fi
   printf '%s' "$t"

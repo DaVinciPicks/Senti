@@ -115,7 +115,7 @@ if [ -n "$CHOSEN" ]; then
   [ -n "$MODEL" ] && DELTA="$(model_section "$CHOSEN" "$MODEL")"
   if [ -n "${DELTA// /}" ]; then
     NAME="$MODEL"
-    echo "$(date +%H:%M:%S) target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
+    echo "$(date '+%F %T') target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
   fi
   OUT="$OUT
 

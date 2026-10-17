@@ -13,6 +13,8 @@
 # so we get the working context for free — no screenshots, no API call, nothing leaves
 # the Mac. Everything here is local text under ~/.cache/senti/sessions.
 set -uo pipefail
+# Blank test that stays O(n) on bash 3.2 (${VAR// /} is quadratic there: 8 KB took 4.8s).
+blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 source "$HOME/.config/senti/config.sh"
 
 DIR="${WF_SESSION_DIR:-$HOME/.cache/senti/sessions}"
@@ -39,7 +41,7 @@ FILE="$DIR/$(safe_key "$KEY").tsv"
 case "$CMD" in
   note)
     TEXT="${SENTI_IN:-}"
-    [ -z "${TEXT// /}" ] && exit 0
+    blank "$TEXT" && exit 0
     # One line per turn: time, mode, and the utterance flattened + clipped.
     FLAT="$(printf '%s' "$TEXT" | /usr/bin/tr '\n\t' '  ' | cut -c1-200)"
     printf '%s\t%s\t%s\n' "$(date '+%H:%M')" "${MODE:-dictate}" "$FLAT" >> "$FILE"
@@ -61,7 +63,7 @@ What this session is currently doing: $T"
 Recent turns in THIS session (most recent last) — use them to resolve references like \"that\", \"the same\", \"the other one\":
 $(/usr/bin/awk -F '\t' '{printf "  [%s %s] %s\n", $1, $2, $3}' "$FILE")"
     fi
-    [ -n "${OUT// /}" ] && printf 'Session context (local, never left this Mac):\n%s\n' "$OUT"
+    ! blank "$OUT" && printf 'Session context (local, never left this Mac):\n%s\n' "$OUT"
     ;;
 
   sweep)
