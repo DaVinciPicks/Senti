@@ -96,7 +96,7 @@ else
   OUT="$(bash "$CFG/senti-ai.sh" 'Reply with exactly the word: PONG. Nothing else.' 'ping' 2>/dev/null)"
   T1=$(date +%s)
   case "$OUT" in
-    *PONG*) ok "text path answered in $((T1-T0))s (${WF_TEXT_MODEL:-gpt-5.6-luna})" ;;
+    *PONG*) ok "text path answered in $((T1-T0))s (${WF_TEXT_MODEL:-gpt-6-luna})" ;;
     *)      bad "text path returned: '${OUT:0:60}'" ;;
   esac
 

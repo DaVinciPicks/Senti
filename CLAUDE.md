@@ -80,8 +80,8 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
+   prompt/command ─▶ senti-ai.sh   ─▶ gpt-6-luna   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-6-luna (reads a downscaled screenshot)
    prompt mode also ─▶ senti-target.sh ─▶ prompts/models/*.md (tailor to the destination model)
                    └─▶ senti-session.sh ─▶ ~/.cache/senti/sessions/<window-id>.tsv  (per-window memory)
 ```
@@ -109,12 +109,16 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   (`senti-serve.sh`). base.en (Fast ~0.2s) / large-v3-turbo-q5 (Accurate). Model choice
   in `~/.cache/senti/model.pref` via `senti-model.sh`.
 - **Recording:** `sox -d` → 16 kHz mono WAV, stopped with **SIGINT** (finalizes the header).
-- **AI text + vision:** both go to **`gpt-5.6-luna`** (`senti-ai.sh` / `senti-vision.sh`).
+- **AI text + vision:** both go to **`gpt-6-luna`** (`senti-ai.sh` / `senti-vision.sh`) since
+  2026-10-17: $0.10/$0.50 per 1M vs gpt-5.6-luna's $0.20/$1.20, and it beat 5.6-luna 5-0-3
+  pairwise on the 8 eval cases while costing ~1/3 per text call at the same latency.
   One provider, one key, no fallback chain. Text runs at `reasoning_effort: none`, vision
-  and the judge at `low`. Measured on this Mac (see `config.sh` for the full table):
-  luna text ≈ $0.0005/call, vision ≈ $0.0004 — vs gpt-4o-mini vision at 3.3s, **37k tokens**
-  and $0.0056 (it tokenizes images far more expensively).
-  - `minimal` effort is **rejected** by gpt-5.x — valid values are `none|low|medium|high|xhigh`.
+  and the judge at `low`. Earlier measurements (5.6-luna, with the KB layer): text ≈
+  $0.0005/call, vision ≈ $0.0004 — gpt-6-luna should be roughly a third to a half of that
+  (estimated from price and the A/B, not yet measured with the KB layer); vs gpt-4o-mini
+  vision at 3.3s, **37k tokens** and $0.0056 (it tokenizes images far more expensively).
+  - `minimal` effort is **rejected** by gpt-5.x and gpt-6 — gpt-6-luna takes
+    `none|low|medium|high|xhigh|max` (default `medium`, so always pass one).
   - `none` measured 2.2x cheaper and 1.8x faster than `low` at an identical eval score on the
     prompt-rewrite task: rewriting is transformation, not reasoning. Judging candidates *is*
     reasoning, so `senti-judge.sh` overrides to `low`.
