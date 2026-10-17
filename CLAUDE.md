@@ -236,10 +236,16 @@ menu bar → **Write diagnostics to log**, or read the `diag:` line senti.lua wr
 (never `hs -c 'hs.reload()'` — it tears down the ipc socket mid-call and blocks forever). For
 live `hs -c` debugging, `touch ~/.cache/senti/allow-ipc` first, and remove it when done.
 `hs -c` also hangs if Hammerspoon isn't running at all — check `pgrep -x Hammerspoon` and
-`luac -p ~/.hammerspoon/init.lua` before blaming the Lua.
+`luac -p ~/.hammerspoon/init.lua` before blaming the Lua. On 2026-10-17 it hung even with
+ipc on (`diag: ipc=ON(dev)`). What worked for checking Hammerspoon APIs live: temporarily
+append a `hs.timer.doAfter(2, …)` block to `init.lua` that writes its results to a file,
+open Hammerspoon, read the file, then restore `init.lua` from the repo and quit it.
 
-State machine has a watchdog: `working` stuck 75s → idle; `recording` stuck 150s → cancel
-sox + reset. If hold-to-talk feels dead, check `wf.diag()` for the eventtap first.
+State machine has a watchdog. `recording` stuck 150s (a lost key-up or a forgotten toggle)
+stops sox and puts the transcript on the CLIPBOARD, never pasting, because focus may be anywhere
+by then. `working` stuck 75s abandons the turn (`wf.turn` bumps, so the late callback drops
+its result) and hands back the user's words, or in command mode their own clipboard. If
+hold-to-talk feels dead, check `wf.diag()` for the eventtap first.
 
 ## Commit conventions
 
