@@ -56,17 +56,13 @@ chmod +x "$CFG"/senti-*.sh
 mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
 # Model-aware prompting knowledge base — code, always update.
 mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/models/" 2>/dev/null || true
-# The KB is PRIVATE and gitignored here, so a fresh clone of the public repo has no
-# prompts/ at all. Both copies above are `|| true`, which means that failure is silent —
-# AI modes would then run with no craft layer and no model guidance and still look fine.
-# Say so loudly instead.
-# Check the SOURCE, not the deployed copy: a dangling prompts/ link copies nothing, and
-# the previous install's files would keep this check quiet while KB updates stop.
+# Both copies above are `|| true`, so a missing prompts/ (a copy of the repo with the KB
+# split out, see CLAUDE.md) would fail silently and the AI modes would run with no craft
+# layer and no model guidance while still looking fine. Say so loudly instead.
+# Check the SOURCE, not the deployed copy: the previous install's files would keep
+# this check quiet while KB updates stop.
 if [ ! -f "$HERE/prompts/models/_techniques.md" ]; then
-  echo "  ! no prompting knowledge base found — AI modes will run WITHOUT model guidance."
-  echo "    The KB lives in the private repo DaVinciPicks/senti-kb. Put it beside this one:"
-  echo "      git clone git@github.com:DaVinciPicks/senti-kb.git ../senti-kb"
-  echo "      ln -s ../senti-kb/prompts \"$HERE/prompts\""
+  echo "  ! no prompting knowledge base in $HERE/prompts — AI modes will run WITHOUT model guidance."
 fi
 # Eval cases are user-tunable — install only if missing.
 mkdir -p "$CFG/eval"; [ -f "$CFG/eval/cases.txt" ] || cp "$HERE/eval/cases.txt" "$CFG/eval/" 2>/dev/null || true

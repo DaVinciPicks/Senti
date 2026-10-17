@@ -10,20 +10,19 @@ leaves the Mac (whisper.cpp server bound to `127.0.0.1`). Optional AI modes
 (prompt / command / context) send text — and, with screen context on, a downscaled
 screenshot — to cheap cloud APIs.
 
-- **Repo is PRIVATE today (GitHub, verified 2026-10-17) but written as if public: the code is
-  source-available, not open source** — proprietary,
+- **Repo is PRIVATE (GitHub, verified 2026-10-17). The code is source-available, not open
+  source** — proprietary,
   "all rights reserved", see `LICENSE`. The owner's name and Mac username were
   scrubbed from files *and* git history — **do not reintroduce them**
   (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` / `__HOME__`).
-- Treat everything committed here as world-readable. No roadmap, pricing, or
-  business-entity detail in this repo.
-- **The prompting knowledge base is NOT in this repo.** `prompts/` is gitignored and
-  lives in a separate private repo (named in `CLAUDE.local.md`). It is the paid artifact — the app
-  is the free on-ramp, the knowledge is what people subscribe to. Clone it beside this
-  repo (or symlink) so `install.sh` can deploy it; without it the AI modes run with no
-  craft layer and no model guidance, and install.sh says so. **Never commit `prompts/`
-  back into this repo** — it was purged from history on 2026-08-19, and re-adding it
-  would republish the asset.
+- No roadmap, pricing, or business-entity detail in this repo.
+- **The prompting knowledge base lives in `prompts/`** — merged back in on 2026-10-17 from
+  the separate `senti-kb` repo, with its history, so there is ONE Senti repo. It is the paid
+  artifact: the app is the free on-ramp, the knowledge is what people subscribe to.
+  **Before this repo is ever made public, split `prompts/` out of it and out of its
+  history** (`git filter-repo --path prompts --invert-paths` on a public copy) — a public
+  repo with `prompts/` in its history gives the product away. That is why it was a
+  separate repo from 2026-08-19 to 2026-10-17.
 
 ## Repo → live system (the mental model that matters most)
 
