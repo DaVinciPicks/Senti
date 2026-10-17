@@ -1,14 +1,14 @@
 <p align="center">
-  <img src="assets/logo-wave.png" width="150" alt="Sanele logo">
+  <img src="assets/logo-wave.png" width="150" alt="Senti logo">
 </p>
 
-<h1 align="center">Sanele 🎤</h1>
+<h1 align="center">Senti 🎤</h1>
 
 **Free, 100% local speech-to-text for macOS** — a Wispr Flow alternative. Hold a
 key, speak, and your words are typed into whatever app you're in. Audio never
 leaves your Mac.
 
-*Sanele* — Italian for "listen / hear."
+*Senti* — Italian for "listen / hear."
 
 ---
 
@@ -38,12 +38,12 @@ Speed (Fast/Accurate), permissions, and engine restart.
 > downscaled **screenshot** — to the configured API. Those modes are opt-in, fire only
 > when you press their key, and never run in the background.
 >
-> Sanele never puts your speech on a command line: text moves between components via the
+> Senti never puts your speech on a command line: text moves between components via the
 > environment, because `ps` is readable by every process on the machine. The self-test
 > asserts this with a canary on every run.
 >
 > **Security posture** (audited): the `hs` command-line bridge, which would let any process
-> on your Mac run code inside Sanele, is **off by default**. Untrusted text — including a
+> on your Mac run code inside Senti, is **off by default**. Untrusted text — including a
 > web page's browser-tab title — is fed to the AI as fenced *data it must never obey*, and
 > the AI's output is only ever *typed*, never run. Your notes leave the Mac only as a capped,
 > section-limited digest, logged each time. The log stores no transcripts, and audio and
@@ -54,23 +54,23 @@ Speed (Fast/Accurate), permissions, and engine restart.
 - **Smart Formatting** — strips filler words (um/uh), re-capitalizes, and applies a **custom dictionary** (`replacements.txt`, e.g. "cloud md" → `CLAUDE.md`).
 - **Fast / Accurate model toggle** — base.en (~0.3s) vs large-v3-turbo (best proper-noun accuracy).
 - **Reusable operating-prompt layer** (`prompts/operating.md`) — a behavior layer prepended to every AI mode so output stays high-signal and concise.
-- **Second brain (Obsidian)** — if you keep an Obsidian vault, prompt mode reads a small digest of *your own note* for the project you're in, so prompts are grounded in what the project actually is. Scoped hard: only allowlisted folders (never `People/`), capped size, every injection logged, `WF_BRAIN=0` to kill. A cheap background call (~$0.001) keeps a compressed digest fresh per project, refreshed lazily only when you actually work on it. Add a `## Sanele` section to any note to control exactly what Sanele may see.
-- **Model-aware prompting** — Sanele notices which app you're in and writes the prompt *for the model you're about to paste into*. Ask for the same thing in Claude and in ChatGPT and you get two different prompts: the Claude one uses XML tags and states scope explicitly; the ChatGPT one stays lean and tells the model to assume-and-proceed rather than ask. The guidance lives in `prompts/models/*.md` (distilled from ~90 sources across OpenAI, Anthropic, Google, open-weight models, and prompting research) — edit those files and the behavior changes. Detection reads the frontmost app name locally, so it costs no extra API call.
-- **Per-window session memory** — if you run several terminals at once, Sanele keeps them apart. Session identity is the *window*, not the app, so four Claude Code terminals are four separate contexts. It reads the project and current task straight off the window title, so saying **"now do the same for the download one"** resolves correctly — and differently — in each terminal. No screenshots, no extra API call, nothing leaves the Mac.
-- **Cache hygiene** — `~/.cache/sanele` holds the raw audio of what you just said and a full-resolution picture of your screen. Both are deleted the moment a turn finishes, with a 60-second backstop and a sweep at launch. Session notes are mode 600 and expire after 24h.
-- **Self-test** — `bash ~/.config/sanele/sanele-selftest.sh` runs its full check suite end to end: engine, config schema, key permissions, icon build, live API latency, session isolation, and a canary proving your dictated text never reaches the process table.
-- **Offline eval harness** — `sanele-eval.sh` scores prompt-mode output across fixed cases so prompt-strategy changes are *measurable* (A/B via env, history in `eval/history.csv`).
+- **Second brain (Obsidian)** — if you keep an Obsidian vault, prompt mode reads a small digest of *your own note* for the project you're in, so prompts are grounded in what the project actually is. Scoped hard: only allowlisted folders (never `People/`), capped size, every injection logged, `WF_BRAIN=0` to kill. A cheap background call (~$0.001) keeps a compressed digest fresh per project, refreshed lazily only when you actually work on it. Add a `## Senti` section to any note to control exactly what Senti may see.
+- **Model-aware prompting** — Senti notices which app you're in and writes the prompt *for the model you're about to paste into*. Ask for the same thing in Claude and in ChatGPT and you get two different prompts: the Claude one uses XML tags and states scope explicitly; the ChatGPT one stays lean and tells the model to assume-and-proceed rather than ask. The guidance lives in `prompts/models/*.md` (distilled from ~90 sources across OpenAI, Anthropic, Google, open-weight models, and prompting research) — edit those files and the behavior changes. Detection reads the frontmost app name locally, so it costs no extra API call.
+- **Per-window session memory** — if you run several terminals at once, Senti keeps them apart. Session identity is the *window*, not the app, so four Claude Code terminals are four separate contexts. It reads the project and current task straight off the window title, so saying **"now do the same for the download one"** resolves correctly — and differently — in each terminal. No screenshots, no extra API call, nothing leaves the Mac.
+- **Cache hygiene** — `~/.cache/senti` holds the raw audio of what you just said and a full-resolution picture of your screen. Both are deleted the moment a turn finishes, with a 60-second backstop and a sweep at launch. Session notes are mode 600 and expire after 24h.
+- **Self-test** — `bash ~/.config/senti/senti-selftest.sh` runs its full check suite end to end: engine, config schema, key permissions, icon build, live API latency, session isolation, and a canary proving your dictated text never reaches the process table.
+- **Offline eval harness** — `senti-eval.sh` scores prompt-mode output across fixed cases so prompt-strategy changes are *measurable* (A/B via env, history in `eval/history.csv`).
 
 ## Install
 
 ```bash
-git clone <this-repo> ~/code/sanele && cd ~/code/sanele && ./install.sh
+git clone <this-repo> ~/code/senti && cd ~/code/senti && ./install.sh
 ```
 
 Requirements (Homebrew / Xcode CLT):
 
 ```bash
-brew install whisper-cpp sox
+brew install whisper-cpp sox resvg   # resvg renders the app icon
 brew install --cask hammerspoon
 # a model, e.g.:
 mkdir -p ~/.local/share/whisper-models
@@ -90,35 +90,35 @@ Grant **Hammerspoon** the macOS permissions it needs:
 For the AI modes, one key (optional — verbatim dictation needs nothing):
 
 ```bash
-echo "sk-..." > ~/.config/sanele/openai-key && chmod 600 ~/.config/sanele/openai-key
+echo "sk-..." > ~/.config/senti/openai-key && chmod 600 ~/.config/senti/openai-key
 ```
 
 ## Architecture
 
 ```
-hold key ─▶ Hammerspoon (sanele.lua) ─▶ sox records mic ─▶ SIGINT finalizes WAV
+hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT finalizes WAV
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ sanele-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
-   context/prompt+screen ─▶ sanele-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
-   prompt mode also ─▶ sanele-target.sh (which model you're pasting into)
-                   ├─▶ sanele-session.sh (this window's recent turns)
-                   └─▶ sanele-brain.sh  (your Obsidian note for this project)
+   prompt/command ─▶ senti-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
+   prompt mode also ─▶ senti-target.sh (which model you're pasting into)
+                   ├─▶ senti-session.sh (this window's recent turns)
+                   └─▶ senti-brain.sh  (your Obsidian note for this project)
 ```
 
-- `sanele-serve.sh` — warm whisper.cpp server (launchd `io.sanele.server`).
-- `sanele-dictate.sh` — record / stop / transcribe / clean / silence-gate / dictionary.
-- `sanele-ai.sh` — the single shared OpenAI text call, prepends the operating layer.
-- `sanele-target.sh` / `sanele-session.sh` / `sanele-brain.sh` — model guidance, per-window memory, vault bridge.
-- `sanele-selftest.sh` — the full end-to-end check suite.
-- `sanele-prompt.sh` — prompt mode (one call; craft + vault + session + target-model guidance).
-- `sanele-command.sh` — transform selected text.
-- `sanele-vision.sh` — OpenAI vision for context + screen-aware prompt.
-- `sanele-judge.sh` / `sanele-eval.sh` — prompt-quality judge + offline eval harness.
-- `sanele-model.sh` — Fast/Accurate model switch.
-- `sanele-mic-auth.swift` — triggers the macOS mic-permission prompt.
-- `sanele.lua` — Hammerspoon hotkeys, HUD, menu bar, state machine + watchdog.
+- `senti-serve.sh` — warm whisper.cpp server (launchd `io.senti.server`).
+- `senti-dictate.sh` — record / stop / transcribe / clean / silence-gate / dictionary.
+- `senti-ai.sh` — the single shared OpenAI text call, prepends the operating layer.
+- `senti-target.sh` / `senti-session.sh` / `senti-brain.sh` — model guidance, per-window memory, vault bridge.
+- `senti-selftest.sh` — the full end-to-end check suite.
+- `senti-prompt.sh` — prompt mode (one call; craft + vault + session + target-model guidance).
+- `senti-command.sh` — transform selected text.
+- `senti-vision.sh` — OpenAI vision for context + screen-aware prompt.
+- `senti-judge.sh` / `senti-eval.sh` — prompt-quality judge + offline eval harness.
+- `senti-model.sh` — Fast/Accurate model switch.
+- `senti-mic-auth.swift` — triggers the macOS mic-permission prompt.
+- `senti.lua` — Hammerspoon hotkeys, HUD, menu bar, state machine + watchdog.
 
 ## Config
 

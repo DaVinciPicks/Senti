@@ -3,12 +3,12 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>io.sanele.server</string>
+    <string>io.senti.server</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>__HOME__/.config/sanele/sanele-serve.sh</string>
+        <string>__HOME__/.config/senti/senti-serve.sh</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -21,9 +21,9 @@
     <string>Interactive</string>
 
     <key>StandardOutPath</key>
-    <string>__HOME__/Library/Logs/sanele-server.log</string>
+    <string>__HOME__/Library/Logs/senti-server.log</string>
     <key>StandardErrorPath</key>
-    <string>__HOME__/Library/Logs/sanele-server.log</string>
+    <string>__HOME__/Library/Logs/senti-server.log</string>
 
     <key>EnvironmentVariables</key>
     <dict>

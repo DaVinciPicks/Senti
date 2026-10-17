@@ -1,4 +1,4 @@
-# Sanele prompt-mode eval cases — diverse rough spoken ideas. Lines starting with # are skipped.
+# Senti prompt-mode eval cases — diverse rough spoken ideas. Lines starting with # are skipped.
 help me write a cover letter for a software engineering job
 make a python script to rename photos by the date they were taken
 i need to email my team that the deadline is slipping a week

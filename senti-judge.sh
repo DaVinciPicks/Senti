@@ -1,8 +1,8 @@
 #!/bin/bash
 # Prompt-quality judge. Two modes:
 #
-#   sanele-judge.sh score   <idea> <prompt>            → integer 0-10   (legacy, saturating)
-#   sanele-judge.sh compare <idea> <fileA> <fileB>     → A | B | TIE    (discriminating)
+#   senti-judge.sh score   <idea> <prompt>            → integer 0-10   (legacy, saturating)
+#   senti-judge.sh compare <idea> <fileA> <fileB>     → A | B | TIE    (discriminating)
 #
 # WHY COMPARE EXISTS: absolute 0-10 scoring saturates. Measured here — gpt-5.4-mini,
 # gpt-5.6-luna, gpt-5.6-terra and every reasoning_effort level all scored 8.00-8.25 on
@@ -17,12 +17,12 @@
 #      without it you mostly measure "the judge likes whichever came first");
 #   3. named dimensions instead of one holistic "quality", so real differences surface.
 #
-# Candidates are passed as FILE PATHS and the spoken idea via SANELE_IN — never argv.
+# Candidates are passed as FILE PATHS and the spoken idea via SENTI_IN — never argv.
 set -uo pipefail
-source "$HOME/.config/sanele/config.sh"
+source "$HOME/.config/senti/config.sh"
 
 MODE="${1:-score}"
-AI="$HOME/.config/sanele/sanele-ai.sh"
+AI="$HOME/.config/senti/senti-ai.sh"
 
 DIMS='Judge on: (1) faithfulness — every specific in the rough idea survives, nothing invented;
 (2) task clarity — an unambiguous instruction and end goal;
@@ -32,12 +32,12 @@ DIMS='Judge on: (1) faithfulness — every specific in the rough idea survives, 
 
 case "$MODE" in
   score)
-    IDEA="${SANELE_IN:-${2:-}}"
+    IDEA="${SENTI_IN:-${2:-}}"
     PROMPT="${3:-}"
     [ -z "${PROMPT// /}" ] && { echo 0; exit 0; }
     SYS="You are a strict prompt-quality judge. Score the CANDIDATE prompt (generated from the ROUGH IDEA) from 0 to 10. $DIMS Grade on a demanding curve: reserve 9-10 ONLY for a prompt with nothing meaningful to improve; a solid, usable prompt with a minor gap is 7-8; missing role/task/format or noticeably vague is 4-6; broken or off-intent is 0-3. Output ONLY the integer 0-10 — no words, no punctuation."
     OUT="$(WF_OPERATING_LAYER=0 WF_EFFORT="${WF_JUDGE_EFFORT:-low}" \
-           SANELE_IN="ROUGH IDEA: $IDEA
+           SENTI_IN="ROUGH IDEA: $IDEA
 
 CANDIDATE PROMPT:
 $PROMPT" bash "$AI" "$SYS" 2>>"$WF_LOG")"
@@ -45,7 +45,7 @@ $PROMPT" bash "$AI" "$SYS" 2>>"$WF_LOG")"
     ;;
 
   compare)
-    IDEA="${SANELE_IN:-${2:-}}"
+    IDEA="${SENTI_IN:-${2:-}}"
     FA="${3:-}"; FB="${4:-}"
     [ -f "$FA" ] && [ -f "$FB" ] || { echo TIE; exit 0; }
     A="$(cat "$FA")"; B="$(cat "$FB")"
@@ -59,7 +59,7 @@ Answer with exactly one character inside the tags: <r>A</r> or <r>B</r> or <r>TI
     ask() {  # ask <first> <second> ; returns which LABEL won, mapped back to A/B
       local first="$1" second="$2" firstlabel="$3" secondlabel="$4" out v
       out="$(WF_OPERATING_LAYER=0 WF_EFFORT="${WF_JUDGE_EFFORT:-low}" \
-             SANELE_IN="ROUGH IDEA: $IDEA
+             SENTI_IN="ROUGH IDEA: $IDEA
 
 CANDIDATE A:
 $first
@@ -80,5 +80,5 @@ $second" bash "$AI" "$SYS" 2>>"$WF_LOG")"
     if [ "$R1" = "$R2" ]; then echo "$R1"; else echo TIE; fi
     ;;
 
-  *) echo "usage: sanele-judge.sh {score|compare} ..." >&2; exit 1 ;;
+  *) echo "usage: senti-judge.sh {score|compare} ..." >&2; exit 1 ;;
 esac

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Sanele's .icns and the menu-bar template image from vector source.
+# Build Senti's .icns and the menu-bar template image from vector source.
 #
 # Every size is re-rasterised from the SVG rather than downsampled from one
 # bitmap — that's what keeps 16px crisp instead of blurry. Sizes 16-64 use
@@ -9,7 +9,7 @@
 # Deps: resvg (brew) + iconutil (Apple). No Python, no Pillow.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
-CFG="$HOME/.config/sanele"
+CFG="$HOME/.config/senti"
 ICONSET="$CFG/appicon.iconset"
 
 RESVG="${RESVG:-/opt/homebrew/bin/resvg}"
@@ -42,7 +42,7 @@ else
 fi
 
 # Menu-bar template image (1x + 2x). macOS uses only the alpha channel and
-# tints it per light/dark/active — see sanele.lua's wf.bar:setIcon.
+# tints it per light/dark/active — see senti.lua's wf.bar:setIcon.
 mkdir -p "$CFG/menubar"
 "$RESVG" --width 22 --height 22 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic.png"    2>/dev/null
 "$RESVG" --width 44 --height 44 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic@2x.png" 2>/dev/null

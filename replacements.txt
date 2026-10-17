@@ -1,4 +1,4 @@
-# Sanele custom dictionary — fixes common mistranscriptions.
+# Senti custom dictionary — fixes common mistranscriptions.
 # Format:  what whisper hears | what to write     (case-insensitive, literal match)
 # Add your own lines below. Applied to every dictation.
 cloud dot md|CLAUDE.md
@@ -9,4 +9,4 @@ cloudmd|CLAUDE.md
 cloud.md|CLAUDE.md
 claudemd|CLAUDE.md
 cloud code|Claude Code
-centi|Sanele
+centi|Senti

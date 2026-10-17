@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Sanele app icon — "waveform mic".
+  <!-- Senti app icon — "waveform mic".
        One focal object: a mic capsule with the waveform cut into it as negative
        space, so it reads as a solid mic silhouette at 16px and reveals the
        sound metaphor at 512px+. Real gradients (not stacked flat rects, which
