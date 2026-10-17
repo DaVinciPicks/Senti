@@ -32,6 +32,9 @@ mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 
 # Extract the shippable digest from a note, in order of preference:
 #   "## Senti" section       → the note author's explicit choice of what Senti may see
+#                              (legacy "## Sanele" too: the heading is a privacy control,
+#                              and a rename that misses one note must not fall through
+#                              to the broader fallbacks below — it did once, 2026-08-19)
 #   "## For future Claude"   → already written for AI consumption
 #   else                     → first body lines after the frontmatter
 # Wiki-link noise stripped, hard-capped at WF_BRAIN_MAX. This is the ONE gate that keeps
@@ -40,7 +43,7 @@ mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 # every control this function enforces).
 brain_digest() {
   local f="$1" d
-  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## Senti\s*\n(.*?)(?=^## |\z)/ms' "$f")"
+  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## (?:Senti|Sanele)\s*\n(.*?)(?=^## |\z)/ms' "$f")"
   [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
   [ -z "${d// /}" ] && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
   printf '%s' "$d" \
