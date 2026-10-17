@@ -1,5 +1,5 @@
 -- ═══════════════════════════════════════════════════════════════════════
---  Sanele — free, 100% local speech-to-text (a Wispr Flow clone)
+--  Senti — free, 100% local speech-to-text (a Wispr Flow clone)
 --  Audio is recorded locally, transcribed by a local whisper.cpp server on
 --  127.0.0.1, and never leaves this Mac.
 --
@@ -14,25 +14,25 @@
 -- borrow those TCC grants prompt-free (keylog, screen/mic capture, read the API key).
 -- It is therefore OFF by default. Diagnostics run through the log instead
 -- (menu bar → "Write diagnostics to log", and a line at startup) — no open port needed.
--- Opt back in for live `hs -c` debugging with:  touch ~/.cache/sanele/allow-ipc
-if io.open(os.getenv("HOME") .. "/.cache/sanele/allow-ipc") then
+-- Opt back in for live `hs -c` debugging with:  touch ~/.cache/senti/allow-ipc
+if io.open(os.getenv("HOME") .. "/.cache/senti/allow-ipc") then
   require("hs.ipc")   -- developer opt-in: restores the `hs` command-line bridge
 end
 
 wf = wf or {}
 wf.HOME    = os.getenv("HOME")
-wf.DICTATE = wf.HOME .. "/.config/sanele/sanele-dictate.sh"
-wf.PROMPTS = wf.HOME .. "/.config/sanele/sanele-prompt.sh"
-wf.SESSION  = wf.HOME .. "/.config/sanele/sanele-session.sh"
-wf.MENUICON = wf.HOME .. "/.config/sanele/menubar/mic.png"
-wf.COMMAND = wf.HOME .. "/.config/sanele/sanele-command.sh"
-wf.VISION  = wf.HOME .. "/.config/sanele/sanele-vision.sh"
-wf.CTXPRE  = wf.HOME .. "/.config/sanele/sanele-lib.sh"   -- run directly = prefetch context
-wf.SELFILE = wf.HOME .. "/.cache/sanele/selection.txt"
-wf.SHOT    = wf.HOME .. "/.cache/sanele/screen.png"
-wf.AUTH    = wf.HOME .. "/.config/sanele/sanele-mic-auth"  -- AVFoundation mic-permission helper
-wf.MODELSH = wf.HOME .. "/.config/sanele/sanele-model.sh"
-wf.LOG     = wf.HOME .. "/Library/Logs/sanele.log"
+wf.DICTATE = wf.HOME .. "/.config/senti/senti-dictate.sh"
+wf.PROMPTS = wf.HOME .. "/.config/senti/senti-prompt.sh"
+wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
+wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic.png"
+wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
+wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
+wf.CTXPRE  = wf.HOME .. "/.config/senti/senti-lib.sh"   -- run directly = prefetch context
+wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
+wf.SHOT    = wf.HOME .. "/.cache/senti/screen.png"
+wf.AUTH    = wf.HOME .. "/.config/senti/senti-mic-auth"  -- AVFoundation mic-permission helper
+wf.MODELSH = wf.HOME .. "/.config/senti/senti-model.sh"
+wf.LOG     = wf.HOME .. "/Library/Logs/senti.log"
 wf.BASH    = "/bin/bash"
 wf.micOK   = false   -- cached once macOS authorizes the mic
 
@@ -71,7 +71,7 @@ local function menuIcon()
   return img
 end
 
--- ── Floating HUD pill: bottom-center overlay, Sanele mark + live waveform ─
+-- ── Floating HUD pill: bottom-center overlay, Senti mark + live waveform ─
 -- Brand-aligned: the violet is the app icon's gradient top (#A78BFA on dark),
 -- so the HUD reads as part of the product rather than a generic system alert.
 -- The mark on the left is the SAME geometry as assets/icon-menubar.svg, drawn
@@ -87,7 +87,7 @@ wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
 -- loop appends after them — inserting an element silently shifts every access.
 local I_CAP, I_STEM, I_BASE, I_ARC, I_LABEL = 3, 4, 5, 6, 7
 
--- Sanele mark, scaled from the 44px source viewBox onto the pill.
+-- Senti mark, scaled from the 44px source viewBox onto the pill.
 local S, OX, OY = 0.62, 12.36, 12.36   -- scale + offset: centres the glyph at (26, 26)
 local function gx(v) return v * S + OX end
 local function gy(v) return v * S + OY end
@@ -202,7 +202,7 @@ function wf.hud.hide()
   if wf.hud.canvas then wf.hud.canvas:hide() end
 end
 
--- ── Toast: messages in the HUD's visual language, carrying the Sanele mark ──
+-- ── Toast: messages in the HUD's visual language, carrying the Senti mark ──
 -- hs.alert's style table is text-only — no image key — so the brand was being
 -- stood in for by a 🎤 emoji. This draws the real mark, same geometry as the
 -- HUD and the app icon, and tints it to carry severity.
@@ -331,12 +331,12 @@ function wf.runCommand(command)
 end
 
 -- ── Cache hygiene ──────────────────────────────────────────────────────
--- ~/.cache/sanele accumulates the most sensitive artefacts this app touches: the raw
+-- ~/.cache/senti accumulates the most sensitive artefacts this app touches: the raw
 -- audio of what you just said, a full-resolution PNG of your screen, and whatever text
 -- you had selected. None of it is needed once the result has been inserted. Sweep it the
 -- moment a turn finishes rather than leaving it on disk until the next dictation
 -- overwrites it (which, for screen.png, could be days).
-wf.CACHE = wf.HOME .. "/.cache/sanele"
+wf.CACHE = wf.HOME .. "/.cache/senti"
 -- Sweep by PATTERN, not a hardcoded filename list: a stale full-res screenshot from
 -- July survived on disk for weeks precisely because it wasn't on the old list. Any
 -- top-level audio / screenshot / selection artefact is sensitive and gets removed;
@@ -345,7 +345,7 @@ wf.CACHE = wf.HOME .. "/.cache/sanele"
 -- is a short on-disk life — this runs at the end of every turn, at startup, and on a
 -- 60s backstop.
 -- "ctx-*" are the prefetched prompt-context files (vault digest + session transcript,
--- written at key-down by sanele-lib.sh). They're turn artefacts like the rest — the
+-- written at key-down by senti-lib.sh). They're turn artefacts like the rest — the
 -- self-test asserts this pattern still covers them.
 function wf.sweepSensitive(name)
   return name:match("%.wav$") or name:match("%.png$") or name:match("%.jpg$")
@@ -366,7 +366,7 @@ function wf.sweepCache()
   return n
 end
 
--- Run a Sanele script with the user's spoken text in the ENVIRONMENT, never argv.
+-- Run a Senti script with the user's spoken text in the ENVIRONMENT, never argv.
 -- `ps -Ao args` is readable by every process on the machine, so anything on a command
 -- line is effectively public — and the speech is the one thing this app protects.
 -- setEnvironment replaces the environment wholesale, so re-supply what the scripts need.
@@ -376,10 +376,10 @@ function wf.runScript(args, spoken, cb)
   t:setEnvironment({
     HOME = wf.HOME,
     PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-    SANELE_IN = spoken or "",
-    SANELE_SKEY = wf.sessKey or "",
-    SANELE_SLABEL = wf.sessLabel or "",
-    SANELE_HINT = wf.targetHint or "",
+    SENTI_IN = spoken or "",
+    SENTI_SKEY = wf.sessKey or "",
+    SENTI_SLABEL = wf.sessLabel or "",
+    SENTI_HINT = wf.targetHint or "",
   })
   t:start()
   return t
@@ -416,7 +416,7 @@ function wf.handleTranscript(raw)
   -- Record the turn against this window's session before acting on it, so the next
   -- dictation in the SAME window can resolve back-references. Fire-and-forget.
   if raw ~= "" and raw ~= "__WF_SERVER_DOWN__" and wf.sessKey ~= "" then
-    -- key/label ride the env (runScript sets SANELE_SKEY/SANELE_SLABEL); argv carries
+    -- key/label ride the env (runScript sets SENTI_SKEY/SENTI_SLABEL); argv carries
     -- only the subcommand and mode — window titles stay out of `ps`.
     wf.runScript({wf.SESSION, "note", "", "", tostring(wf.mode or "dictate")}, raw, nil)
   end
@@ -545,9 +545,9 @@ function wf.endCapture()
   if wf.state ~= "recording" then wf.log("endCapture ignored: state="..wf.state); return end
   wf.setState("working")
   wf.log("endCapture: transcribing")
-  -- MUST go through runScript: sanele-dictate.sh reads SANELE_SLABEL to build the
+  -- MUST go through runScript: senti-dictate.sh reads SENTI_SLABEL to build the
   -- whisper vocabulary hint (project name → correct identifier transcription). A bare
-  -- hs.task.new carries no Sanele env, so the hint silently loses its best term.
+  -- hs.task.new carries no Senti env, so the hint silently loses its best term.
   wf.runScript({wf.DICTATE, "stop"}, "", function(_, stdout) wf.handleTranscript(stdout) end)
 end
 
@@ -566,7 +566,7 @@ local function menu()
   local tapOn = wf.flagWatcher and wf.flagWatcher:isEnabled()
   local curModel = hs.execute(wf.BASH .. " '" .. wf.MODELSH .. "' current"):gsub("%s+","")
   return {
-    { title = "Sanele — local dictation", disabled = true },
+    { title = "Senti — local dictation", disabled = true },
     { title = serverUp and "● engine: running" or "○ engine: STOPPED", disabled = true },
     { title = tapOn and "● hold-to-talk: armed" or "○ hold-to-talk: OFF", disabled = true },
     { title = "-" },
@@ -611,15 +611,15 @@ local function menu()
     { title = "Re-arm hotkeys", fn = function() wf.armTap(); wf.notify("Hotkeys re-armed", 2, wf.TONE.ok) end },
     { title = "-" },
     { title = "Restart engine", fn = function()
-        hs.execute("/bin/launchctl kickstart -k gui/$(id -u)/io.sanele.server")
+        hs.execute("/bin/launchctl kickstart -k gui/$(id -u)/io.senti.server")
         wf.notify("Whisper engine restarting…")
       end },
     { title = "Write diagnostics to log", fn = function()
-        wf.diagToLog(); wf.notify("Diagnostics written to sanele.log", 3, wf.TONE.ok)
+        wf.diagToLog(); wf.notify("Diagnostics written to senti.log", 3, wf.TONE.ok)
       end },
     { title = "Open log", fn = function() hs.execute("/usr/bin/open '" .. wf.LOG .. "'") end },
     { title = "-" },
-    { title = "Quit Sanele", fn = function() hs.application.get("Hammerspoon"):kill() end },
+    { title = "Quit Senti", fn = function() hs.application.get("Hammerspoon"):kill() end },
   }
 end
 if wf.bar then wf.bar:setMenu(menu) end
@@ -704,15 +704,15 @@ function wf.diag()
     tostring(hs.accessibilityState()),
     #hs.hotkey.getHotkeys(),
     hs.execute(wf.BASH.." '"..wf.DICTATE.."' server"):gsub("%s+",""),
-    io.open(wf.HOME .. "/.cache/sanele/allow-ipc") and "ON(dev)" or "off")
+    io.open(wf.HOME .. "/.cache/senti/allow-ipc") and "ON(dev)" or "off")
 end
 function wf.diagToLog() wf.log("diag: " .. wf.diag()) end
 
 -- ── Launch/appearance ──────────────────────────────────────────────────
 hs.autoLaunch(true)
 hs.dockIcon(false)
--- Hide Hammerspoon's OWN menu bar icon. Sanele runs inside Hammerspoon, so by
--- default the user sees two icons — Hammerspoon's hammer next to Sanele's — and
+-- Hide Hammerspoon's OWN menu bar icon. Senti runs inside Hammerspoon, so by
+-- default the user sees two icons — Hammerspoon's hammer next to Senti's — and
 -- the hammer opens a console that has nothing to do with this product. Only
 -- MJShowDockIconKey was ever set, which is why the hammer survived. Setting it
 -- here rather than via `defaults write` keeps it declarative: a fresh install on
@@ -743,7 +743,7 @@ hs.task.new(wf.AUTH, function(_, out)
   wf.log("startup mic probe: "..out)
   if out == "AUTHORIZED" then
     wf.micOK = true
-    wf.notify("Sanele ready — hold right ⌥ to dictate", 3, wf.TONE.ok)
+    wf.notify("Senti ready — hold right ⌥ to dictate", 3, wf.TONE.ok)
   else
     wf.notify("One step left — menu bar → Grant / test microphone", 5, wf.TONE.warn)
   end

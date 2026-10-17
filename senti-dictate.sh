@@ -1,5 +1,5 @@
 #!/bin/bash
-# sanele dictation engine.
+# senti dictation engine.
 #   start   — begin recording the mic (backgrounds sox, writes a pidfile)
 #   stop    — finish recording, transcribe, print cleaned text to stdout
 #   toggle  — stop if recording, else start  (used by hands-free hotkey)
@@ -8,7 +8,7 @@
 #   server  — "up" | "down"
 # Hold-to-talk = start on key-down, stop on key-up. Toggle = tap to start/stop.
 set -uo pipefail
-source "$HOME/.config/sanele/config.sh"
+source "$HOME/.config/senti/config.sh"
 umask 077   # audio/screenshot/selection files created here are uid-private
 
 # The log lives alongside speech-derived data; keep it uid-only, not the umask default.
@@ -16,7 +16,7 @@ umask 077   # audio/screenshot/selection files created here are uid-private
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >>"$WF_LOG"; }
 # The redirect MUST wrap the whole group, not just afplay. `cmd >/dev/null &` backgrounds
 # the entire && chain as one subshell, and that subshell inherits this script's stdout —
-# which is a PIPE (sanele.lua reads it via hs.task; a shell reads it via $( )). The reader
+# which is a PIPE (senti.lua reads it via hs.task; a shell reads it via $( )). The reader
 # waits for EOF on that pipe, so it waited for afplay to finish playing: MEASURED 2392ms
 # with sound vs 539ms without, i.e. every single dictation paid ~1.85s waiting for the
 # stop chime. Redirecting the group detaches the subshell's stdout before it forks.
@@ -85,8 +85,8 @@ finish_recording() {
 build_bias() {
   [ "${WF_BIAS:-1}" = "1" ] || return 0
   local terms="" proj branch
-  # Project name from the focused window title (sanele.lua passes it through).
-  proj="$(printf '%s' "${SANELE_SLABEL:-}" | /usr/bin/awk -F ' — ' '{print $1}' \
+  # Project name from the focused window title (senti.lua passes it through).
+  proj="$(printf '%s' "${SENTI_SLABEL:-}" | /usr/bin/awk -F ' — ' '{print $1}' \
           | /usr/bin/tr -cd '[:alnum:]._ -' | cut -c1-40)"
   # A window title is attacker-controllable (a web page sets its own browser-tab
   # title), and proj is later used as a path component under ~/code. tr already
@@ -238,7 +238,7 @@ stop() {
   finish_recording
   cue "$WF_SOUND_STOP"
   local text; text="$(transcribe)"
-  # Don't archive the transcript. sanele.log is never rotated, so logging the text made
+  # Don't archive the transcript. senti.log is never rotated, so logging the text made
   # it a permanent plaintext record of everything ever said — outliving the 24h session
   # expiry the rest of the app enforces. Log length only; full text behind WF_DEBUG=1.
   if [ "${WF_DEBUG:-0}" = "1" ]; then
@@ -270,5 +270,5 @@ case "${1:-}" in
   cancel) finish_recording; reap_orphans; rm -f "$WF_AUDIO"; log "cancelled" ;;
   status) is_recording && echo recording || echo idle ;;
   server) server_up && echo up || echo down ;;
-  *) echo "usage: sanele-dictate.sh {start|stop|toggle|cancel|status|server}" >&2; exit 1 ;;
+  *) echo "usage: senti-dictate.sh {start|stop|toggle|cancel|status|server}" >&2; exit 1 ;;
 esac

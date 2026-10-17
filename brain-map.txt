@@ -1,4 +1,4 @@
-# sanele-brain.sh explicit mappings — project hint | vault-relative note path.
+# senti-brain.sh explicit mappings — project hint | vault-relative note path.
 # Used when a repo name doesn't match its vault dir by name. First match wins.
 # This file is user-tunable: install.sh copies it only if missing, so your own
 # mappings survive every upgrade. The lines below are EXAMPLES — replace them.

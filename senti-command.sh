@@ -1,11 +1,11 @@
 #!/bin/bash
 # Command Mode: apply a spoken instruction to the currently-selected text (or, if
-# nothing is selected, generate text for the cursor) via sanele-ai.sh (gpt-5.6-luna).
+# nothing is selected, generate text for the cursor) via senti-ai.sh (gpt-5.6-luna).
 #   $1 = the spoken command (transcribed)
 #   $2 = path to a file containing the selected text (may be empty/absent)
 # Prints ONLY the text to insert. Falls back to the original selection on failure.
 set -uo pipefail
-source "$HOME/.config/sanele/config.sh"
+source "$HOME/.config/senti/config.sh"
 
 # PERF: never use ${VAR// /} to test for blankness here. macOS ships bash 3.2, where
 # that substitution is O(n^2) on strings containing spaces — MEASURED 1K:17ms, 2K:72ms,
@@ -18,8 +18,8 @@ source "$HOME/.config/sanele/config.sh"
 # "did the user select anything meaningful".
 blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 
-# Spoken command arrives in SANELE_IN, never argv (see sanele-ai.sh).
-CMD="${SANELE_IN:-${1:-}}"
+# Spoken command arrives in SENTI_IN, never argv (see senti-ai.sh).
+CMD="${SENTI_IN:-${1:-}}"
 SELFILE="${2:-}"
 SEL=""
 [ -n "$SELFILE" ] && [ -f "$SELFILE" ] && SEL="$(cat "$SELFILE")"
@@ -37,7 +37,7 @@ else
   INPUT="REQUEST: $CMD"
 fi
 
-OUT="$(SANELE_IN="$INPUT" bash "$HOME/.config/sanele/sanele-ai.sh" "$SYS" 2>>"$WF_LOG")"
+OUT="$(SENTI_IN="$INPUT" bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
 
 # Extract only what's between the sentinel tags (discards any stray preamble).
 RESULT="$(printf '%s' "$OUT" | /usr/bin/perl -0777 -ne 'print $1 if /<r>(.*?)<\/r>/s')"
