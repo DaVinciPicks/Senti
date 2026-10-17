@@ -1,6 +1,6 @@
 #!/bin/bash
 # Command Mode: apply a spoken instruction to the currently-selected text (or, if
-# nothing is selected, generate text for the cursor) via senti-ai.sh (gpt-5.6-luna).
+# nothing is selected, generate text for the cursor) via senti-ai.sh (gpt-6-luna).
 #   $1 = the spoken command (transcribed)
 #   $2 = path to a file containing the selected text (may be empty/absent)
 # Prints ONLY the text to insert. Falls back to the original selection on failure.

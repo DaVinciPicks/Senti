@@ -64,12 +64,17 @@ WF_PIDFILE="$WF_RUN/sox.pid"
 WF_LOG="$HOME/Library/Logs/senti.log"
 
 # --- AI modes (prompt / command / context) ---
-# One provider, one key, one model: OpenAI gpt-5.6-luna ($0.20/$1.20 per 1M).
+# One provider, one key, one model: OpenAI gpt-6-luna ($0.10/$0.50 per 1M).
 # Measured on this Mac (8-case eval + per-call cost):
 #   gpt-4o-mini   vision 3.30s  37k tok  $0.00560   (the old vision model)
 #   deepseek-chat text   1.37s           $0.00003   (the old text model — still cheapest)
 #   gpt-5.4-mini  8.00   text  $0.00155  vision $0.00177
-#   gpt-5.6-luna  8.12   text  $0.00049  vision $0.00039   ← default
+#   gpt-5.6-luna  8.12   text  $0.00049  vision $0.00039   (default until 2026-10-17)
+#   gpt-6-luna    2026-10-17 A/B vs gpt-5.6-luna, 8 cases, no KB layer: pairwise 5-0-3 for
+#                 gpt-6-luna (judged BY 5.6-luna), median 2.00s vs 2.08s, $0.000054 vs
+#                 $0.000165 per text call (~3x cheaper, shorter prompts)   ← default
+#   deepseek-flash 2026-10-17: same speed, not cheaper per call (2.2x the output), and
+#                 4 of 8 outputs leaked its 'silent deconstruction' notes — not adopted
 #   gpt-5.6-terra 8.25   text  $0.00568   (+0.25 eval for ~12x luna's cost — not worth it)
 # Eval granularity is integer scores over 8 cases, so ±0.25 is noise; luna is chosen
 # because it is newer and 3-4.5x cheaper at indistinguishable quality, not because 8.12>8.00.
@@ -103,8 +108,8 @@ WF_AUDIO_CTX="${WF_AUDIO_CTX:-768}"
 WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
 # Uncomment to pin a model; otherwise each script's built-in default is used
 # (so upgrades take effect without editing this file).
-# WF_TEXT_MODEL="gpt-5.6-luna"
-# WF_VISION_MODEL="gpt-5.6-luna"
+# WF_TEXT_MODEL="gpt-6-luna"
+# WF_VISION_MODEL="gpt-6-luna"
 
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for

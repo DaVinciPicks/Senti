@@ -17,7 +17,7 @@ leaves your Mac.
 - **Private & free** — transcription runs on a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server bound to `127.0.0.1`. Your voice never touches the network.
 - **Fast** — the model stays warm in Apple-Silicon Metal memory; dictation lands in ~0.2–0.8s.
 - **CPU-light** — near-zero idle CPU; the optional AI transforms offload to the cloud, so no local LLM burns your battery.
-- **Cheap** — the AI modes run on `gpt-5.6-luna`: a screen-context call is ~1.5s and ~$0.0004; a prompt rewrite ~$0.0005.
+- **Cheap** — the AI modes run on `gpt-6-luna` ($0.10 / $0.50 per million tokens): a prompt rewrite is ~2s and a fraction of a cent.
 
 ## Modes
 
@@ -100,8 +100,8 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ gpt-5.6-luna   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-5.6-luna (reads a downscaled screenshot)
+   prompt/command ─▶ senti-ai.sh   ─▶ gpt-6-luna   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-6-luna (reads a downscaled screenshot)
    prompt mode also ─▶ senti-target.sh (which model you're pasting into)
                    ├─▶ senti-session.sh (this window's recent turns)
                    └─▶ senti-brain.sh  (your Obsidian note for this project)

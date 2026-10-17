@@ -38,10 +38,10 @@ KEY=""
 IMG="${SENTI_IMG:-}"
 if [ -n "$IMG" ]; then
   [ -f "$IMG" ] || { echo "image missing: $IMG" >>"$WF_LOG"; printf ''; exit 1; }
-  MODEL="${SENTI_MODEL:-${WF_VISION_MODEL:-gpt-5.6-luna}}"
+  MODEL="${SENTI_MODEL:-${WF_VISION_MODEL:-gpt-6-luna}}"
   EFFORT="${SENTI_EFFORT:-${WF_VISION_EFFORT:-low}}"
 else
-  MODEL="${SENTI_MODEL:-${WF_TEXT_MODEL:-gpt-5.6-luna}}"
+  MODEL="${SENTI_MODEL:-${WF_TEXT_MODEL:-gpt-6-luna}}"
   EFFORT="${SENTI_EFFORT:-${WF_EFFORT:-none}}"
 fi
 
