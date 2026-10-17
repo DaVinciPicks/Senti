@@ -22,8 +22,6 @@ openai-key
 *-key
 eval/history.csv
 
-# Prompting knowledge base — PRIVATE (DaVinciPicks/senti-kb). The paid artifact.
-prompts
 
 # Private operator notes (never commit — names the private KB repo + real vault paths)
 CLAUDE.local.md
