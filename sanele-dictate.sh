@@ -28,8 +28,41 @@ is_recording() {
   [ -f "$WF_PIDFILE" ] && kill -0 "$(cat "$WF_PIDFILE" 2>/dev/null)" 2>/dev/null
 }
 
+# Stop one sox with SIGINT so it rewrites the WAV header. A sox that this non-interactive
+# script backgrounds starts with SIGINT ignored until sox installs its own handler, so a
+# quick tap (key-up within ms of key-down) lands the INT in that window and sox records on
+# forever, into a capture.wav the sweep has already unlinked (2026-10-17: three such
+# orphans, 8 days old, ~35 GB of disk du can't see, mic held open). A second INT lands
+# after the handler is up and still finalizes cleanly; KILL is only for a sox that is stuck.
+stop_sox() {
+  local pid="$1" try
+  [ -n "$pid" ] || return 0
+  for try in 1 2; do
+    kill -INT "$pid" 2>/dev/null || return 0
+    # Poll fast (20ms) so we proceed the instant sox finalizes the WAV header.
+    for _ in $(seq 1 40); do
+      kill -0 "$pid" 2>/dev/null || return 0
+      /bin/sleep 0.02
+    done
+    log "sox $pid still running after SIGINT #$try"
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Any sox still writing $WF_AUDIO when the pidfile names no live recording is an orphan
+# (e.g. key-up's stop ran before key-down's start wrote the pidfile). Keyed on the WAV
+# path, not the pidfile, so the next keypress always clears a leak.
+reap_orphans() {
+  local p
+  for p in $(/usr/bin/pgrep -u "$(id -u)" -f "sox -d .*${WF_AUDIO}\$"); do
+    log "reaping orphaned sox (pid $p)"
+    stop_sox "$p"
+  done
+}
+
 start() {
   if is_recording; then log "start ignored: already recording"; return 0; fi
+  reap_orphans
   rm -f "$WF_AUDIO"
   cue "$WF_SOUND_START"
   # -d default input, quiet, 16kHz mono 16-bit signed PCM (Whisper's native format).
@@ -43,12 +76,7 @@ finish_recording() {
   local pid
   pid="$(cat "$WF_PIDFILE" 2>/dev/null)"
   rm -f "$WF_PIDFILE"
-  [ -n "$pid" ] && kill -INT "$pid" 2>/dev/null
-  # Poll fast (20ms) so we proceed the instant sox finalizes the WAV header.
-  for _ in $(seq 1 40); do
-    kill -0 "$pid" 2>/dev/null || break
-    /bin/sleep 0.02
-  done
+  stop_sox "$pid"
 }
 
 # Build the whisper vocabulary hint from context that costs nothing to obtain.
@@ -239,7 +267,7 @@ case "${1:-}" in
   stop)   stop ;;
   mictest) mictest ;;
   toggle) if is_recording; then stop; else start; fi ;;
-  cancel) finish_recording; rm -f "$WF_AUDIO"; log "cancelled" ;;
+  cancel) finish_recording; reap_orphans; rm -f "$WF_AUDIO"; log "cancelled" ;;
   status) is_recording && echo recording || echo idle ;;
   server) server_up && echo up || echo down ;;
   *) echo "usage: sanele-dictate.sh {start|stop|toggle|cancel|status|server}" >&2; exit 1 ;;

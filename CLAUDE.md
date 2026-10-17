@@ -196,6 +196,12 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
 - **Silence gate fails open:** only skip a clip when the peak is *confidently* below threshold;
   an empty/unparsed peak must transcribe, not drop. (Kills Whisper's "Thank you." hallucination
   without eating real speech.)
+- **A quick tap can orphan sox:** a backgrounded sox starts with SIGINT *ignored* until it
+  installs its handler, so key-up landing within ms of key-down loses the INT. sox then records
+  forever into a `capture.wav` the sweep has unlinked (2026-10-17: three 8-day orphans, ~35 GB
+  invisible to `du`, mic held open). `stop_sox` re-sends INT then KILLs; `reap_orphans` (keyed
+  on the WAV path, not the pidfile) clears leftovers on every `start`/`cancel`. Census hidden
+  disk with `lsof +L1`.
 - **Image downscale uses `sips`**, not PIL — `/usr/bin/python3` has no Pillow.
 - **`$HOME` may contain a space:** quote every path in `hs.execute(...)`; the plist uses a
   `__HOME__` placeholder that `install.sh` substitutes (never hard-code a home path).
