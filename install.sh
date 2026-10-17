@@ -89,9 +89,11 @@ else
   is_num "$HAVE" || HAVE=0
   is_num "$WANT" || WANT=0
   if [ "$HAVE" -lt "$WANT" ]; then
-    cp "$CFG/config.sh" "$CFG/config.sh.bak"
+    # One backup per version: a single .bak slot was overwritten by the next bump, so
+    # tuning never re-applied from an older backup was lost for good.
+    cp "$CFG/config.sh" "$CFG/config.sh.v$HAVE.bak"
     cp "$HERE/config.sh" "$CFG/config.sh"
-    echo "  ! config.sh schema v$HAVE → v$WANT: yours saved to config.sh.bak"
+    echo "  ! config.sh schema v$HAVE → v$WANT: yours saved to config.sh.v$HAVE.bak"
     echo "    (re-apply any personal tuning from the .bak — model IDs are no longer set there)"
   fi
 fi
@@ -122,7 +124,8 @@ cp "$HERE/senti.lua" "$HSINIT"
 echo "→ warm-whisper launchd service"
 launchctl unload "$LA/io.senti.server.plist" 2>/dev/null || true
 sed "s|__HOME__|$HOME|g" "$HERE/io.senti.server.plist" > "$LA/io.senti.server.plist"
-launchctl load "$LA/io.senti.server.plist"
+launchctl load "$LA/io.senti.server.plist" \
+  || echo "  ! launchctl load failed — run: launchctl bootstrap gui/$(id -u) $LA/io.senti.server.plist"
 
 echo "→ icons (vector → resvg → iconutil)"
 bash "$HERE/app/make-icon.sh"

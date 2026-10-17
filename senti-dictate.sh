@@ -27,12 +27,13 @@ server_up() { "$WF_CURL" -s -o /dev/null -m 1 "$WF_URL/" 2>/dev/null; }
 # A pid only counts if it is still a sox writing our capture path. sox can exit on its
 # own and leave the pidfile behind (a full disk did, 2026-10-17), and after a reboot that
 # PID can belong to anything — stop_sox ends in SIGKILL, so never trust the file alone.
+is_capture_cmd() {   # matched in shell, not a regex: $HOME may hold regex metacharacters
+  case "$1" in *"$WF_SOX -d "*"$WF_AUDIO") return 0 ;; esac
+  return 1
+}
 is_capture_pid() {
   case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
-  case "$(ps -ww -p "$1" -o command= 2>/dev/null)" in
-    *"sox -d "*"$WF_AUDIO") return 0 ;;
-  esac
-  return 1
+  is_capture_cmd "$(ps -ww -p "$1" -o command= 2>/dev/null)"
 }
 
 is_recording() {
@@ -64,8 +65,11 @@ stop_sox() {
 # (e.g. key-up's stop ran before key-down's start wrote the pidfile). Keyed on the WAV
 # path, not the pidfile, so the next keypress always clears a leak.
 reap_orphans() {
-  local p
-  for p in $(/usr/bin/pgrep -u "$(id -u)" -f "sox -d .*${WF_AUDIO}\$"); do
+  local live p cmd
+  live="$(cat "$WF_PIDFILE" 2>/dev/null)"
+  ps -ww -U "$(id -u)" -o pid=,command= 2>/dev/null | while read -r p cmd; do
+    is_capture_cmd "$cmd" || continue
+    [ "$p" = "$live" ] && continue   # the live recording, if one started meanwhile
     log "reaping orphaned sox (pid $p)"
     stop_sox "$p"
   done
@@ -91,7 +95,8 @@ finish_recording() {
   local pid
   pid="$(cat "$WF_PIDFILE" 2>/dev/null)"
   rm -f "$WF_PIDFILE"
-  if is_capture_pid "$pid"; then stop_sox "$pid"; fi
+  if is_capture_pid "$pid"; then stop_sox "$pid"; return 0; fi
+  return 1   # nothing was recording
 }
 
 # Build the whisper vocabulary hint from context that costs nothing to obtain.
@@ -231,7 +236,7 @@ clean_text() {
       for(i=1;i<=n;i++){ tok=w[i]; base=tolower(tok); p="";
         if(match(base,/[.,!?;:]+$/)) p=substr(base,RSTART); sub(/[.,!?;:]+$/,"",base);
         if(base ~ /^(um+|uh+|uhm+|erm+|hmm+)$/){
-          if(p ~ /[.!?]/ && out != "" && out !~ /[.!?]$/){ sub(/[,;:]+$/,"",out); out=out substr(p,length(p)) }
+          if(p ~ /\./ && out != "" && out !~ /[.!?]$/){ sub(/[,;:]+$/,"",out); out=out "." }
           continue }
         if(i==1 && n>2 && p=="," && base ~ /^(so|okay|ok|well|like)$/) continue;
         out=(out==""?tok:out" "tok); }
@@ -257,7 +262,10 @@ clean_text() {
 }
 
 stop() {
-  finish_recording
+  # Nothing to stop means key-up beat key-down's start, and the sox that start launches a
+  # moment later would record until the next keypress. Sweep for it shortly, detached
+  # (stdout too: senti.lua waits for EOF on this script's stdout).
+  finish_recording || { { /bin/sleep 1; reap_orphans; } >/dev/null 2>&1 & }
   cue "$WF_SOUND_STOP"
   local text; text="$(transcribe)"
   # Don't archive the transcript. senti.log is never rotated, so logging the text made

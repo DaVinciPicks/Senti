@@ -41,7 +41,7 @@ This repo is the **source**. It is not where the app runs. `./install.sh` deploy
 install targets and get overwritten. (Exception: `replacements.txt`, `eval/cases.txt`, `brain-map.txt` are user-tunable and
 install **only if missing**, so a re-run never clobbers the user's local tuning.
 `config.sh` is only-if-missing **plus version-gated**: when `WF_CONFIG_VERSION` bumps,
-install.sh backs the old file up to `config.sh.bak` and installs the new schema — a
+install.sh backs the old file up to `config.sh.v<old>.bak` and installs the new schema — a
 stale config once silently pinned a retired model and made an upgrade a no-op.
 Scripts and `senti.lua` are code — always overwritten.)
 
