@@ -132,7 +132,9 @@ build_bias() {
   fi
   [ -z "${terms// /}" ] && return 0
   # Logged so a mistranscription can be debugged against what the hint actually was.
-  log "bias: $terms"
+  # The terms include window-title text, and this log is never rotated: count only.
+  if [ "${WF_DEBUG:-0}" = "1" ]; then log "bias: $terms"
+  else log "bias: $(printf '%s' "$terms" | /usr/bin/awk -F ', ' '{print NF}') terms"; fi
   printf 'Vocabulary: %s.' "$(printf '%s' "$terms" | cut -c1-220)"
 }
 
@@ -197,9 +199,16 @@ transcribe() {
   local raw rc args
   args=(-F file=@"$WF_AUDIO" -F temperature=0.0 -F response_format=text)
   [ -n "$ctx_arg" ] && args+=(-F audio_ctx="$ctx_arg")
-  # --form-string, not -F: -F parses ';' in the value as a multipart attribute
-  # separator and silently truncates the hint (branch names can contain ';').
-  [ -n "${bias// /}" ] && args+=(--form-string "prompt=$bias")
+  # The hint goes in from a file (-F name=<file sends the content as the field value,
+  # unparsed, so ';' in a branch name is safe): on argv, its window-title text was
+  # readable by every process via ps for the length of the call. The ctx- prefix puts
+  # it under the cache sweep if this script dies before the rm below.
+  local biasf=""
+  if [ -n "${bias// /}" ]; then
+    biasf="$WF_RUN/ctx-bias.txt"
+    printf '%s' "$bias" > "$biasf"
+    args+=(-F "prompt=<$biasf")
+  fi
   # --fail + the exit code: a timeout or a server error used to come back as empty text
   # (reported as "mic may be muted") or as the server's error JSON, typed into the app.
   # The budget grows with the clip so a long dictation on the Accurate model can finish,
@@ -208,6 +217,7 @@ transcribe() {
   budget="$(/usr/bin/awk -v d="${dur:-0}" 'BEGIN{b = 30 + d/2; if (b > 60) b = 60; printf "%d", b}')"
   raw="$("$WF_CURL" -sS --fail -m "$budget" "$WF_URL/inference" "${args[@]}" 2>>"$WF_LOG")"
   rc=$?
+  [ -n "$biasf" ] && rm -f "$biasf"
   if [ "$rc" -ne 0 ]; then
     log "transcription failed (curl exit $rc, ${dur:-?}s clip)"
     echo "__WF_TRANSCRIBE_FAILED__"

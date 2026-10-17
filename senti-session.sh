@@ -40,6 +40,9 @@ FILE="$DIR/$(safe_key "$KEY").tsv"
 
 case "$CMD" in
   note)
+    # Verbatim dictation is the 100%-local mode. Recall feeds prompt-mode API calls, so a
+    # stored verbatim turn would leave the Mac on the next heavy prompt in this window.
+    [ "$MODE" = "verbatim" ] && exit 0
     TEXT="${SENTI_IN:-}"
     blank "$TEXT" && exit 0
     # One line per turn: time, mode, and the utterance flattened + clipped.
@@ -61,9 +64,10 @@ What this session is currently doing: $T"
     if [ -s "$FILE" ]; then
       OUT="$OUT
 Recent turns in THIS session (most recent last) — use them to resolve references like \"that\", \"the same\", \"the other one\":
-$(/usr/bin/awk -F '\t' '{printf "  [%s %s] %s\n", $1, $2, $3}' "$FILE")"
+$(/usr/bin/awk -F '\t' '$2 != "verbatim" {printf "  [%s %s] %s\n", $1, $2, $3}' "$FILE")"
     fi
-    ! blank "$OUT" && printf 'Session context (local, never left this Mac):\n%s\n' "$OUT"
+    # This block rides the prompt-mode API call, so it must not claim to be local.
+    ! blank "$OUT" && printf 'Session context (earlier turns in this window):\n%s\n' "$OUT"
     ;;
 
   sweep)

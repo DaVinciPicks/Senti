@@ -318,7 +318,14 @@ end
 
 -- ── Insert text into whatever app is focused (clipboard paste) ──────────
 function wf.paste(text)   -- low-level: put text on the clipboard and ⌘V it
-  hs.pasteboard.setContents(text)
+  -- Marked transient + concealed (the nspasteboard.org convention) so clipboard managers
+  -- don't keep every transcript in their history. Plain setContents if that fails.
+  local ok, wrote = pcall(hs.pasteboard.writeAllData, {
+    ["public.utf8-plain-text"] = text,
+    ["org.nspasteboard.TransientType"] = "",
+    ["org.nspasteboard.ConcealedType"] = "",
+  })
+  if not (ok and wrote) then hs.pasteboard.setContents(text) end
   hs.eventtap.keyStroke({"cmd"}, "v", 0)
 end
 

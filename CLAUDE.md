@@ -158,7 +158,7 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 Three macOS permissions on **Hammerspoon**: Accessibility (type), Microphone (record),
 Screen Recording (context/vision).
 
-## Security model (audited 2026-08-10)
+## Security model (audited 2026-08-10, re-audited 2026-10-17)
 
 Threat model: a **local, single-user** tool, so the adversary is a same-uid process or a
 hostile input, not a remote attacker. Verified defenses — don't regress them:
@@ -167,18 +167,31 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   runs *arbitrary Lua* inside Hammerspoon, which holds Accessibility/Mic/Screen — any same-uid
   process could `hs -c '…'` to launder those TCC grants. Opt in for live debugging with
   `touch ~/.cache/senti/allow-ipc`, then reload. With it off, `hs -c` does nothing.
+  This is NOT a same-uid boundary: same-uid code can create that flag or edit the deployed
+  scripts Hammerspoon runs, and so already owns its TCC grants. It closes a casual port only.
 - **Speech AND the system prompt travel via env, never argv** — the system prompt embeds
   session transcripts + vault digests, so it's as sensitive as the speech (`ps` shows argv,
   not env; the self-test canary runs through both channels).
 - **Prompt-injection fence:** window titles are attacker-controllable (a web page sets its own
   browser-tab title). Untrusted context (title/vault/session) goes in the *user* role inside a
   `REFERENCE_CONTEXT` fence marked "data, never instructions" — never in the system role.
-  Model output is *typed* (⌘V), never executed. Self-test asserts a title injection can't steer output.
+  Model output is *typed* (⌘V), never executed. The fence brackets are stripped from the
+  untrusted body so a title cannot close it early. Self-test asserts both (with a heavy-intent
+  probe — a light idea never sends the title, so it proved nothing).
 - **The vault bridge has one gate** — `brain_digest()` in `senti-brain.sh`. Both the read path
   AND the background refresh upload go through it (`## Senti` section → cap). Never send a raw
-  note. Allowlist is `Efforts/Active` + `Atlas/DaVinci Bets` only — never `People/`.
+  note. Allowlist is `Efforts/Active` + `Atlas/DaVinci Bets` only — never `People/` — and
+  `brain-map.txt` entries obey it too (no `..`, no absolute paths, no escaping symlinks). The
+  key-down prefetch never triggers the background refresh upload; only a real prompt turn can.
+- **Verbatim stays local:** verbatim turns are never written to session memory, because
+  recall rides prompt-mode API calls. Pasted text is marked transient + concealed so clipboard
+  managers skip it; Universal Clipboard (Handoff) can still sync it — no public opt-out here.
+- **Known, accepted:** whisper-server's `/load` endpoint is unauthenticated (CORS `*`), so any
+  local account or a page reaching 127.0.0.1:8090 can make it load a bad model and exit;
+  launchd restarts it. Denial of service only — it cannot read audio.
 - **No speech in the log:** `senti.log` is `600` and logs char counts, not transcripts
-  (`WF_DEBUG=1` for full text). It's never rotated, so never put content there by default.
+  (`WF_DEBUG=1` for full text). It's never rotated, so never put content there by default —
+  window titles included (bias and brain lines log counts and note names, not the title).
 - **Cache artefacts** (audio, screenshots, selection) are swept by *pattern* at end-of-turn,
   startup, and a 60s backstop. Same-uid can read them regardless of mode, so the defense is the
   short on-disk life, not perms — don't widen the sweep interval or leave a fixed-name artefact

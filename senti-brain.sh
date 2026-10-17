@@ -89,11 +89,28 @@ NH="$(norm "$HINT")"
 [ "${#NH}" -lt 3 ] && exit 0   # too short to match anything safely
 
 NOTE=""
+# Newline-separated because the vault path contains spaces.
+DIRS="${WF_BRAIN_DIRS:-Efforts/Active
+Atlas/DaVinci Bets}"
+in_allowlist() {   # vault-relative path inside an allowlisted dir, no escape hatches
+  case "$1" in /*|*..*) return 1 ;; esac
+  [ -L "$VAULT/$1" ] && return 1
+  local rel
+  while IFS= read -r rel; do
+    case "$1" in "$rel"/*) return 0 ;; esac
+  done <<EOF
+$DIRS
+EOF
+  return 1
+}
 
 # 1. Explicit map wins (format: project|vault-relative/path.md ; # comments allowed).
+# Map entries obey the same allowlist as the scan below; they were a way around it
+# (People/ notes, or ../ out of the vault entirely).
 if [ -f "$MAP" ]; then
   while IFS='|' read -r k v; do
     case "$k" in ''|\#*) continue ;; esac
+    in_allowlist "$v" || { echo "$(date '+%F %T') brain: map entry for '$k' ignored (outside the allowlist)" >> "$WF_LOG"; continue; }
     NK="$(norm "$k")"
     if [ -n "$NK" ] && { case "$NH" in *"$NK"*) true ;; *) case "$NK" in *"$NH"*) true ;; *) false ;; esac ;; esac }; then
       [ -f "$VAULT/$v" ] && NOTE="$VAULT/$v" && break
@@ -103,9 +120,6 @@ fi
 
 # 2. Allowlisted dirs, matched by normalized name (either contains the other).
 if [ -z "$NOTE" ]; then
-  # Newline-separated because the vault path contains spaces.
-  DIRS="${WF_BRAIN_DIRS:-Efforts/Active
-Atlas/DaVinci Bets}"
   while IFS= read -r rel; do
     [ -d "$VAULT/$rel" ] || continue
     for d in "$VAULT/$rel"/*/; do
@@ -137,7 +151,7 @@ KEY="$(norm "$(basename "$NOTE" .md)")"
 CACHE="$CACHEDIR/$KEY.md"
 if [ -s "$CACHE" ] && [ -n "$(/usr/bin/find "$CACHE" -mmin -1440 -newer "$NOTE" 2>/dev/null)" ]; then
   DIGEST="$(head -c "$MAX" "$CACHE")"
-  echo "$(date '+%F %T') brain: injected cached digest '$KEY' for hint '$HINT'" >> "$WF_LOG"
+  echo "$(date '+%F %T') brain: injected cached digest '$KEY'" >> "$WF_LOG"   # not the hint: it is window-title text
   printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"
   exit 0
 fi
@@ -158,5 +172,5 @@ fi
 DIGEST="$(brain_digest "$NOTE")"
 blank "$DIGEST" && exit 0
 
-echo "$(date '+%F %T') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars) for hint '$HINT'" >> "$WF_LOG"
+echo "$(date '+%F %T') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"   # not the hint: it is window-title text
 printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"
