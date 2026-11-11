@@ -209,7 +209,7 @@ Models and prices change. To see what your key can use right now:
 
 ```bash
 curl -s https://api.openai.com/v1/models \
-  -H "Authorization: Bearer $(cat ~/.config/senti/openai-key)" | grep '"id"'
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/senti/openai-key)") | grep '"id"'
 ```
 
 ## Config
