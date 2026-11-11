@@ -14,10 +14,13 @@ and work inside the applications I already use. I also wanted to avoid another s
 
 ## Why
 
-- **Private.** Transcription runs on a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server bound to `127.0.0.1`. Your voice never touches the network.
-- **Fast.** The model stays warm in Apple Silicon Metal memory, so dictation lands in about 0.2 to 0.8 seconds.
-- **Light.** Idle CPU is close to zero. The optional AI modes call a cloud model, so no local LLM drains your battery.
-- **Cheap.** Dictation is free. The AI modes run on `gpt-6-luna` ($0.10 / $0.50 per million tokens), so a prompt rewrite takes about 2 seconds and costs a fraction of a cent.
+Transcription runs on a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server bound to
+`127.0.0.1`, so your voice never touches the network. The model stays loaded in memory, which is why
+dictation comes back in about 0.2 to 0.8 seconds. While you aren't speaking, Senti uses almost no
+CPU.
+
+Dictation is free. The optional AI modes call `gpt-6-luna` ($0.10 / $0.50 per million tokens) with
+your own key. A prompt rewrite takes about 2 seconds and costs a fraction of a cent.
 
 ## Modes
 
@@ -56,15 +59,53 @@ with a canary on every run.
 
 ## Features
 
-- **Smart Formatting.** Strips filler words (um/uh), re-capitalizes, and applies a **custom dictionary** (`replacements.txt`, e.g. "cloud md" → `CLAUDE.md`).
-- **Fast / Accurate model toggle.** Base.en (~0.3s) vs large-v3-turbo (best proper-noun accuracy).
-- **Reusable operating-prompt layer** (`prompts/operating.md`). A behavior layer prepended to every AI mode so output stays high-signal and concise.
-- **Second brain (Obsidian).** If you keep an Obsidian vault, prompt mode reads a small digest of *your own note* for the project you're in, so prompts are grounded in what the project actually is. Scoped hard: only allowlisted folders (never `People/`), capped size, every injection logged, `WF_BRAIN=0` to kill. A cheap background call (~$0.001) keeps a compressed digest fresh per project, refreshed lazily only when you actually work on it. Add a `## Senti` section to any note to control exactly what Senti may see.
-- **Model-aware prompting.** Senti notices which app you're in and writes the prompt *for the model you're about to paste into*. Ask for the same thing in Claude and in ChatGPT and you get two different prompts: the Claude one uses XML tags and states scope explicitly; the ChatGPT one stays lean and tells the model to assume-and-proceed rather than ask. The guidance lives in `prompts/models/*.md` (distilled from ~90 sources across OpenAI, Anthropic, Google, open-weight models, and prompting research). Edit those files and the behavior changes. Detection reads the frontmost app name locally, so it costs no extra API call.
-- **Per-window session memory.** If you run several terminals at once, Senti keeps them apart. Session identity is the *window*, not the app, so four Claude Code terminals are four separate contexts. It reads the project and current task straight off the window title, so saying **"now do the same for the download one"** resolves correctly, and differently, in each terminal. No screenshots, no extra API call, nothing leaves the Mac.
-- **Cache hygiene.** `~/.cache/senti` holds the raw audio of what you just said and a full-resolution picture of your screen. Both are deleted the moment a turn finishes, with a 60-second backstop and a sweep at launch. Session notes are mode 600 and expire after 24h.
-- **Self-test.** `bash ~/.config/senti/senti-selftest.sh` runs its full check suite end to end: engine, config schema, key permissions, icon build, live API latency, session isolation, and a canary proving your dictated text never reaches the process table.
-- **Offline eval harness.** `senti-eval.sh` scores prompt-mode output across fixed cases so prompt-strategy changes are *measurable* (A/B via env, history in `eval/history.csv`).
+### Formatting
+
+Senti strips filler words (um, uh), fixes capitalization, and applies your own dictionary from
+`replacements.txt`. Mine turns "cloud md" into `CLAUDE.md`. You can switch between two speech
+models from the menu bar: base.en answers in about 0.3 seconds, and large-v3-turbo is slower but
+better with proper nouns.
+
+### Prompts written for the model you're using
+
+Senti notices which app is in front and writes the prompt for the model you're about to paste into.
+Ask for the same thing in Claude and in ChatGPT and you get two different prompts. The Claude one
+uses XML tags and states scope explicitly. The ChatGPT one is shorter and tells the model to make
+its own assumptions and keep going. The guidance lives in `prompts/models/*.md`, which I distilled
+from about 90 sources across OpenAI, Anthropic, Google, open-weight models and prompting research.
+Edit those files and the behavior changes. Detection reads the frontmost app's name on your Mac, so
+it costs no extra API call.
+
+Every AI mode also gets `prompts/operating.md` prepended, a short set of rules that keeps the
+output brief.
+
+### Memory per window
+
+If you run several terminals at once, Senti keeps them apart. A session is a window, so four Claude
+Code terminals are four separate contexts. It reads the project and the current task from the window
+title. Say "now do the same for the download one" in two terminals and each resolves it against its
+own history. This uses no screenshots and no extra API call.
+
+### Your notes, if you want them
+
+If you keep an Obsidian vault, Prompt mode can read a short digest of your note for the project
+you're in, so the prompt reflects what the project is. It only reads folders you allow (never
+`People/`), the digest has a size cap, and every use is logged. A background call of about $0.001
+refreshes the digest for a project when you work on it. Add a `## Senti` section to a note to
+control exactly what Senti sees, or set `WF_BRAIN=0` to turn the feature off.
+
+### Housekeeping
+
+`~/.cache/senti` holds the audio of what you just said and a full-resolution picture of your screen.
+Both are deleted when the turn finishes, with a 60-second backstop and a sweep at launch. Session
+notes are readable only by you and expire after 24 hours.
+
+`bash ~/.config/senti/senti-selftest.sh` checks the whole install: the speech engine, the config
+version, key permissions, the icon build, live API latency, session isolation, and a canary that
+proves your dictated text never appears in the process table.
+
+`senti-eval.sh` scores Prompt mode against a fixed set of cases, so a change to the prompt strategy
+can be measured. Results go to `eval/history.csv`.
 
 ## Install
 
@@ -131,8 +172,6 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 Everything is tunable in `config.sh`: models, language, silence threshold, vision
 model, vault bridge (`WF_BRAIN`) and operating layer (`WF_OPERATING_LAYER`).
 Edit `replacements.txt` for vocabulary fixes and `eval/cases.txt` for eval cases.
-
----
 
 Working on the code? [`CLAUDE.md`](CLAUDE.md) maps the repo to the installed system and lists the
 macOS gotchas that will otherwise cost you an afternoon.
