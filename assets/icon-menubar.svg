@@ -1,11 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
-  <!-- Menu-bar template image. macOS discards the colour and uses ONLY the alpha
-       channel as a silhouette, then tints it for light/dark/active automatically,
-       so this is deliberately solid black on transparent, no background tile.
-       Drawn at 44px (22pt @2x). This is the full Senti logo from icon.svg, the
-       S with its waveform, scaled down. At this size the bars read as a soft
-       fringe above and below the S, which is how the logo looks small. -->
-  <g transform="translate(22 22) scale(0.03788) translate(-512 -512)">
-<g fill="#000000"><path d="M 340.0 234.3 L 340.0 147.4 A 19.0 19.0 0 0 1 378.0 147.4 L 378.0 234.3 Z"/><path d="M 391.0 186.1 L 391.0 67.8 A 19.0 19.0 0 0 1 429.0 67.8 L 429.0 186.1 Z"/><path d="M 442.0 160.7 L 442.0 19.4 A 19.0 19.0 0 0 1 480.0 19.4 L 480.0 160.7 Z"/><path d="M 493.0 149.8 L 493.0 3.0 A 19.0 19.0 0 0 1 531.0 3.0 L 531.0 149.8 Z"/><path d="M 544.0 160.7 L 544.0 19.4 A 19.0 19.0 0 0 1 582.0 19.4 L 582.0 160.7 Z"/><path d="M 595.0 186.1 L 595.0 67.8 A 19.0 19.0 0 0 1 633.0 67.8 L 633.0 186.1 Z"/><path d="M 646.0 234.3 L 646.0 147.4 A 19.0 19.0 0 0 1 684.0 147.4 L 684.0 234.3 Z"/><rect x="226.0" y="266.0" width="36" height="96" rx="18"/><rect x="762.0" y="266.0" width="36" height="96" rx="18"/><g transform="rotate(180 512 512)"><path d="M 340.0 234.3 L 340.0 147.4 A 19.0 19.0 0 0 1 378.0 147.4 L 378.0 234.3 Z"/><path d="M 391.0 186.1 L 391.0 67.8 A 19.0 19.0 0 0 1 429.0 67.8 L 429.0 186.1 Z"/><path d="M 442.0 160.7 L 442.0 19.4 A 19.0 19.0 0 0 1 480.0 19.4 L 480.0 160.7 Z"/><path d="M 493.0 149.8 L 493.0 3.0 A 19.0 19.0 0 0 1 531.0 3.0 L 531.0 149.8 Z"/><path d="M 544.0 160.7 L 544.0 19.4 A 19.0 19.0 0 0 1 582.0 19.4 L 582.0 160.7 Z"/><path d="M 595.0 186.1 L 595.0 67.8 A 19.0 19.0 0 0 1 633.0 67.8 L 633.0 186.1 Z"/><path d="M 646.0 234.3 L 646.0 147.4 A 19.0 19.0 0 0 1 684.0 147.4 L 684.0 234.3 Z"/><rect x="226.0" y="266.0" width="36" height="96" rx="18"/><rect x="762.0" y="266.0" width="36" height="96" rx="18"/></g></g>
-<path d="M 646.8 296.2 A 150 150 0 1 0 512 512 A 150 150 0 1 1 377.2 727.8" fill="none" stroke="#000000" stroke-width="132" stroke-linecap="round"/>
-</g></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="36" viewBox="0 0 44 36">
+  <!-- Menu-bar template image, 22x18pt (drawn at 2x). macOS uses ONLY the alpha
+       channel as a silhouette and tints it for light/dark/active, so this is solid
+       black on transparent.
+       The full logo (S with a waveform above and below) cannot survive at 18pt:
+       the bars blur, and an S with vertical strokes through it reads as a dollar
+       sign. So the small mark keeps the S and moves the waveform to its sides:
+       two bars each side, 2px wide, every edge on a whole pixel so it stays crisp.
+       make-icon.sh must render this at exactly 22x18 and 44x36, never resized. -->
+  <g fill="#000000"><rect x="3" y="14" width="2" height="8" rx="1"/><rect x="7" y="9" width="2" height="18" rx="1"/><rect x="35" y="9" width="2" height="18" rx="1"/><rect x="39" y="14" width="2" height="8" rx="1"/></g>
+  <path d="M 26.67 10.52 A 5.2 5.2 0 1 0 22 18 A 5.2 5.2 0 1 1 17.33 25.48" fill="none" stroke="#000000" stroke-width="4.8" stroke-linecap="round"/>
+</svg>

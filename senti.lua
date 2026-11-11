@@ -24,7 +24,9 @@ wf.HOME    = os.getenv("HOME")
 wf.DICTATE = wf.HOME .. "/.config/senti/senti-dictate.sh"
 wf.PROMPTS = wf.HOME .. "/.config/senti/senti-prompt.sh"
 wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
-wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic.png"
+-- Load the 2x bitmap and size it in points below. Loading the 1x file gave a
+-- 22px image that Retina displays scaled up, which is why the icon looked blurry.
+wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic@2x.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
 wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
 wf.CTXPRE  = wf.HOME .. "/.config/senti/senti-lib.sh"   -- run directly = prefetch context
@@ -71,7 +73,9 @@ end
 -- floating HUD (which is only ever visible in the non-idle states anyway).
 local function menuIcon()
   local img = hs.image.imageFromPath(wf.MENUICON)
-  if img then img:setSize({ w = 18, h = 18 }); img:template(true) end
+  -- 22x18pt, the size make-icon.sh renders at. Any other size makes macOS
+  -- resample the bitmap, which is what blurred the old icon.
+  if img then img:setSize({ w = 22, h = 18 }); img:template(true) end
   return img
 end
 
@@ -93,62 +97,6 @@ wf.hud = { canvas = nil, timer = nil, phase = 0, tone = VOICE, barX = HUD_PAD }
 -- Element indices. Named because a bare c[3] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
 local I_LABEL = 3
-
--- The Senti logo as canvas elements centred on (cx, cy); k scales it from the
--- 44px viewBox of assets/icon-menubar.svg, which holds the same shapes. The S is
--- two stacked circles (canvas has no arc-in-path, so each arc is three cubic
--- Béziers) and the waveform is one small rounded rect per bar: {x, y, w, h}.
--- Used by the toast, so messages carry the real logo and can tint it.
-local MARK_BARS = {
-  { 15.48, 7.47, 1.44, 4.01 },
-  { 17.42, 4.45, 1.44, 5.20 },
-  { 19.35, 2.62, 1.44, 6.07 },
-  { 21.28, 2.00, 1.44, 6.28 },
-  { 23.21, 2.62, 1.44, 6.07 },
-  { 25.14, 4.45, 1.44, 5.20 },
-  { 27.08, 7.47, 1.44, 4.01 },
-  { 11.17, 12.68, 1.36, 3.64 },
-  { 31.47, 12.68, 1.36, 3.64 },
-  { 27.08, 32.52, 1.44, 4.01 },
-  { 25.14, 34.35, 1.44, 5.20 },
-  { 23.21, 35.31, 1.44, 6.07 },
-  { 21.28, 35.72, 1.44, 6.28 },
-  { 19.35, 35.31, 1.44, 6.07 },
-  { 17.42, 34.35, 1.44, 5.20 },
-  { 15.48, 32.52, 1.44, 4.01 },
-  { 31.47, 27.68, 1.36, 3.64 },
-  { 11.17, 27.68, 1.36, 3.64 },
-}
-local function markElements(cx, cy, k, col)
-  local function pt(x, y, c1x, c1y, c2x, c2y)
-    local q = { x = (x - 22) * k + cx, y = (y - 22) * k + cy }
-    if c1x then
-      q.c1x, q.c1y = (c1x - 22) * k + cx, (c1y - 22) * k + cy
-      q.c2x, q.c2y = (c2x - 22) * k + cx, (c2y - 22) * k + cy
-    end
-    return q
-  end
-  local els = {}
-  for _, b in ipairs(MARK_BARS) do
-    els[#els + 1] = { type = "rectangle", action = "fill", fillColor = col,
-                      roundedRectRadii = { xRadius = b[3] * k / 2, yRadius = b[3] * k / 2 },
-                      frame = { x = (b[1] - 22) * k + cx, y = (b[2] - 22) * k + cy,
-                                w = b[3] * k, h = b[4] * k } }
-  end
-  els[#els + 1] = { type = "segments", action = "stroke", closed = false,
-                    strokeColor = col, strokeWidth = 5.00 * k,
-                    strokeCapStyle = "round", strokeJoinStyle = "round",
-                    coordinates = {
-    pt(27.11, 13.83),
-    pt(20.31, 10.89, 25.88, 11.30, 22.99, 10.06),
-    pt(16.38, 17.17, 17.63, 11.73, 15.96, 14.40),
-    pt(22.00, 22.00, 16.81, 19.95, 19.19, 22.00),
-    pt(27.62, 26.83, 24.81, 22.00, 27.19, 24.05),
-    pt(23.69, 33.11, 28.04, 29.60, 26.37, 32.27),
-    pt(16.89, 30.17, 21.01, 33.94, 18.12, 32.70),
-                    } }
-  return els
-end
 
 local function hudBuild()
   local c = hs.canvas.new({ x = 0, y = 0, w = BARS_SPAN + 2 * HUD_PAD, h = HUD_H })
@@ -246,10 +194,8 @@ function wf.hud.hide()
   if wf.hud.canvas then wf.hud.canvas:hide() end
 end
 
--- ── Toast: messages in the HUD's visual language, carrying the Senti mark ──
--- hs.alert's style table is text-only — no image key — so the brand was being
--- stood in for by an emoji. This draws the real logo, the same shapes as the
--- menu bar image, and tints it to carry severity.
+-- ── Toast: short messages in the same dark pill language as the HUD ──────
+-- Text only, with a small coloured bar for severity.
 wf.toast = { canvas = nil, timer = nil }
 local T_INFO = ACCENT
 local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
@@ -275,9 +221,13 @@ function wf.notify(msg, secs, tone)
   c[2] = { type = "rectangle", action = "stroke",
            roundedRectRadii = { xRadius = 16, yRadius = 16 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
-  for _, e in ipairs(markElements(32, H / 2, 0.62, tone)) do c[#c + 1] = e end
+  -- A thin accent bar on the left carries severity (info / warn / ok). No logo:
+  -- these messages appear on launch and during use, where a mark is just noise.
+  c[#c + 1] = { type = "rectangle", action = "fill", fillColor = tone,
+                roundedRectRadii = { xRadius = 1.5, yRadius = 1.5 },
+                frame = { x = 16, y = 14, w = 3, h = H - 28 } }
   c[#c + 1] = { type = "text", text = tostring(msg),
-                frame = { x = 58, y = 15, w = W - 74, h = H - 24 },
+                frame = { x = 30, y = 15, w = W - 46, h = H - 24 },
                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
                 textFont = "SF Pro Text" }
   c:show()

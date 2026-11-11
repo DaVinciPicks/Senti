@@ -10,5 +10,5 @@ else
   # --- Turn ON ---
   /bin/launchctl load "$PLIST" 2>/dev/null           # ensure warm whisper engine
   /usr/bin/open -a Hammerspoon                        # load dictation hotkeys
-  /usr/bin/osascript -e 'display notification "Hold right Option (⌥) to dictate · right Command (⌘) for prompt mode. Look for 🎤 in the menu bar." with title "Senti — On"'
+  /usr/bin/osascript -e 'display notification "Hold right Option (⌥) to dictate · right Command (⌘) for prompt mode. Look for Senti in the menu bar." with title "Senti — On"'
 fi
