@@ -195,41 +195,46 @@ function wf.hud.hide()
 end
 
 -- ── Toast: short messages in the same dark pill language as the HUD ──────
--- Text only, with a small coloured bar for severity.
+-- Centred text in a pill sized to fit it, sitting just above where the HUD
+-- appears. One brand colour: info and success look the same, because "it
+-- worked" needs no special colour. Only a warning changes anything, and it
+-- changes the outline, not the text.
 wf.toast = { canvas = nil, timer = nil }
 local T_INFO = ACCENT
-local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
-local T_OK   = { red = 0.36, green = 0.85, blue = 0.55, alpha = 1 }
+local T_OK   = ACCENT
+local T_WARN = { red = 0.98, green = 0.62, blue = 0.24, alpha = 1 }
+local TOAST_FONT = { name = "SF Pro Text", size = 13 }
 
 function wf.notify(msg, secs, tone)
   secs, tone = secs or 3, tone or T_INFO
-  local lines = 1
-  for _ in tostring(msg):gmatch("\n") do lines = lines + 1 end
-  local W, H = 400, 34 + 19 * lines
+  msg = tostring(msg)
+  local text = hs.styledtext.new(msg, {
+    font = TOAST_FONT, color = { white = 0.97, alpha = 1 },
+    paragraphStyle = { alignment = "center", lineSpacing = 3 } })
+  -- Measure the real text so the pill hugs it. A fixed-width pill with
+  -- left-aligned text is what made short messages look off-centre.
+  local size = hs.drawing.getTextDrawingSize(text) or { w = 320, h = 18 }
+  local padX, padY = 24, 12
+  local W = math.max(180, math.min(560, math.ceil(size.w) + 2 * padX))
+  local H = math.ceil(size.h) + 2 * padY
+  local radius = math.min(H / 2, 18)
   local scr = hs.screen.mainScreen():frame()
   if wf.toast.canvas then wf.toast.canvas:delete(); wf.toast.canvas = nil end
   local c = hs.canvas.new({ x = scr.x + (scr.w - W) / 2,
-                            y = scr.y + scr.h - H - 138, w = W, h = H })
+                            y = scr.y + scr.h - H - 76, w = W, h = H })
   c:level(hs.canvas.windowLevels.overlay)
   c:behavior({ "canJoinAllSpaces", "stationary" })
   c[1] = { type = "rectangle", action = "fill",
-           roundedRectRadii = { xRadius = 16, yRadius = 16 },
-           fillColor = { red = 0.055, green = 0.055, blue = 0.071, alpha = 0.96 },
-           withShadow = true,
-           shadow = { blurRadius = 18, offset = { h = -4, w = 0 },
-                      color = { alpha = 0.45, white = 0 } } }
+           roundedRectRadii = { xRadius = radius, yRadius = radius },
+           fillColor = { red = 0.043, green = 0.043, blue = 0.055, alpha = 0.94 } }
+  local warn = (tone == T_WARN)
   c[2] = { type = "rectangle", action = "stroke",
-           roundedRectRadii = { xRadius = 16, yRadius = 16 },
-           strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
-  -- A thin accent bar on the left carries severity (info / warn / ok). No logo:
-  -- these messages appear on launch and during use, where a mark is just noise.
-  c[#c + 1] = { type = "rectangle", action = "fill", fillColor = tone,
-                roundedRectRadii = { xRadius = 1.5, yRadius = 1.5 },
-                frame = { x = 16, y = 14, w = 3, h = H - 28 } }
-  c[#c + 1] = { type = "text", text = tostring(msg),
-                frame = { x = 30, y = 15, w = W - 46, h = H - 24 },
-                textColor = { white = 0.97, alpha = 1 }, textSize = 13,
-                textFont = "SF Pro Text" }
+           roundedRectRadii = { xRadius = radius, yRadius = radius },
+           strokeColor = warn and { red = 0.98, green = 0.62, blue = 0.24, alpha = 0.7 }
+                               or { white = 1, alpha = 0.12 },
+           strokeWidth = 1 }
+  c[3] = { type = "text", text = text,
+           frame = { x = padX, y = padY, w = W - 2 * padX, h = H - 2 * padY } }
   c:show()
   wf.toast.canvas = c
   if wf.toast.timer then wf.toast.timer:stop() end
