@@ -10,11 +10,14 @@ leaves the Mac (whisper.cpp server bound to `127.0.0.1`). Optional AI modes
 (prompt / command / context) send text — and, with screen context on, a downscaled
 screenshot — to cheap cloud APIs.
 
-- **Repo is PUBLIC (GitHub, since 2026-11-11, the owner's decision). The code is
-  source-available, not open source**: "all rights reserved", see `LICENSE`. The owner's
-  name and Mac username were scrubbed from files *and* git history. **Do not reintroduce
-  them** (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` /
-  `__HOME__`).
+- **Repo is PUBLIC (GitHub, since 2026-11-11) and MIT licensed**, both the owner's
+  decision, see `LICENSE`. The owner's name and Mac username were scrubbed from files *and*
+  git history. **Do not reintroduce them** (no real names, no `/Users/<name>/…` paths in
+  committed files; use `$HOME` / `__HOME__`).
+- **Speech engine: stay on whisper.cpp.** Parakeet was evaluated on 2026-11-11. It only
+  beats the warm whisper server if it also stays loaded, and no audited runtime does that
+  yet. Upstream whisper.cpp has a `parakeet-cli` on master that Homebrew's 1.9.5 does not
+  ship; revisit when a Homebrew release includes Parakeet in the server.
 - No roadmap, pricing, or business-entity detail in this repo.
 - **The prompting knowledge base lives in `prompts/`** and ships with the repo. It was a
   separate repo (`senti-kb`) from 2026-08-19 to 2026-10-17 and was merged back with its
