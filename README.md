@@ -176,4 +176,4 @@ Edit `replacements.txt` for vocabulary fixes and `eval/cases.txt` for eval cases
 Working on the code? [`CLAUDE.md`](CLAUDE.md) maps the repo to the installed system and lists the
 macOS gotchas that will otherwise cost you an afternoon.
 
-Source-available. See [`LICENSE`](LICENSE).
+MIT licensed. See [`LICENSE`](LICENSE).
