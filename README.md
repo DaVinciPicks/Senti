@@ -91,7 +91,8 @@ Grant **Hammerspoon** the macOS permissions it needs:
 - **Microphone**: menu-bar S → *Grant / test microphone* → Allow.
 - **Screen Recording** (only for the Context and screen-aware Prompt modes): menu-bar S → *Grant screen recording*, then relaunch Hammerspoon.
 
-For the AI modes, add one key. This is optional, and dictation works without it:
+The AI modes (Prompt, Command, Context) need your own OpenAI API key. This is optional, and
+dictation works without it:
 
 ```bash
 echo "sk-..." > ~/.config/senti/openai-key && chmod 600 ~/.config/senti/openai-key
