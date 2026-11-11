@@ -29,8 +29,9 @@ and work inside the applications I already use. I also wanted to avoid another s
 | **⌃⌥V** | **Context** | Takes a screenshot plus your instruction, then drafts a reply, edit or answer at the cursor. |
 | `⌃⌥D` / `⌃⌥P` / `⌃⌥C` | Toggles | Hands-free versions of Dictate, Prompt and Command. |
 
-A floating pill shows **Listening**, then **Transcribing** or **Thinking**, then disappears. The
-menu-bar S controls speed (Fast or Accurate), permissions and engine restart.
+A small pill at the bottom of the screen shows a live waveform while you speak, then disappears.
+The AI modes add their name to it. The menu-bar icon controls speed (Fast or Accurate),
+permissions and engine restart.
 
 ### Privacy
 
@@ -88,8 +89,8 @@ curl -L -o ~/.local/share/whisper-models/ggml-base.en.bin \
 
 Grant **Hammerspoon** the macOS permissions it needs:
 - **Accessibility** (to type): usually prompted on first use.
-- **Microphone**: menu-bar S → *Grant / test microphone* → Allow.
-- **Screen Recording** (only for the Context and screen-aware Prompt modes): menu-bar S → *Grant screen recording*, then relaunch Hammerspoon.
+- **Microphone**: menu-bar icon → *Grant / test microphone* → Allow.
+- **Screen Recording** (only for the Context and screen-aware Prompt modes): menu-bar icon → *Grant screen recording*, then relaunch Hammerspoon.
 
 The AI modes (Prompt, Command, Context) need your own OpenAI API key. This is optional, and
 dictation works without it:
