@@ -75,27 +75,51 @@ local function menuIcon()
   return img
 end
 
--- ── Floating HUD pill: bottom-center overlay, Senti mark + live waveform ─
--- Brand-aligned: the blue is the app icon's blue, lifted for a dark surface,
--- so the HUD reads as part of the product rather than a generic system alert.
--- The mark on the left is the SAME S as assets/icon-menubar.svg, drawn
--- natively in canvas rather than loaded as an image — a template PNG can only
--- be black, and this needs to change colour to carry state.
-local HUD_W, HUD_H, NBARS = 224, 54, 8
-local BAR_W, BAR_GAP, BAR_X = 4, 8, 142
-local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- blue, recording
-local WORKING = { red = 0.984, green = 0.749, blue = 0.141, alpha = 1 }  -- amber, transcribing
-wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
+-- ── Floating HUD pill: a small bottom-center overlay with a live waveform ─
+-- Deliberately quiet: no logo and, for plain dictation, no text. The pill is
+-- only on screen while you are speaking, so it should stay out of the way and
+-- say one thing: "I'm hearing you". The AI modes add a short label, because
+-- there the pill is the only place that says which mode a held key started.
+-- The brand mark lives in the menu bar, the app icon and the toasts instead.
+local HUD_H, NBARS = 34, 9
+local BAR_W, BAR_PITCH = 3, 7
+local BARS_SPAN = (NBARS - 1) * BAR_PITCH + BAR_W
+local HUD_PAD, LABEL_W, LABEL_GAP = 20, 62, 10
+local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- brand blue (toasts, working)
+local VOICE   = { white = 0.97, alpha = 1 }                               -- recording
+local WORKING = ACCENT                                                    -- transcribing / thinking
+wf.hud = { canvas = nil, timer = nil, phase = 0, tone = VOICE, barX = HUD_PAD }
 
 -- Element indices. Named because a bare c[3] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
-local I_MARK, I_LABEL = 3, 4
+local I_LABEL = 3
 
--- The Senti S as ONE canvas element centred on (cx, cy); k scales it from the
--- 44px viewBox of assets/icon-menubar.svg. That S is two stacked circles; canvas
--- has no arc-in-path, so each 244-degree arc is three cubic Béziers here.
--- Shared by the HUD and the toast so the two can never drift apart.
-local function markElement(cx, cy, k, col)
+-- The Senti logo as canvas elements centred on (cx, cy); k scales it from the
+-- 44px viewBox of assets/icon-menubar.svg, which holds the same shapes. The S is
+-- two stacked circles (canvas has no arc-in-path, so each arc is three cubic
+-- Béziers) and the waveform is one small rounded rect per bar: {x, y, w, h}.
+-- Used by the toast, so messages carry the real logo and can tint it.
+local MARK_BARS = {
+  { 15.48, 7.47, 1.44, 4.01 },
+  { 17.42, 4.45, 1.44, 5.20 },
+  { 19.35, 2.62, 1.44, 6.07 },
+  { 21.28, 2.00, 1.44, 6.28 },
+  { 23.21, 2.62, 1.44, 6.07 },
+  { 25.14, 4.45, 1.44, 5.20 },
+  { 27.08, 7.47, 1.44, 4.01 },
+  { 11.17, 12.68, 1.36, 3.64 },
+  { 31.47, 12.68, 1.36, 3.64 },
+  { 27.08, 32.52, 1.44, 4.01 },
+  { 25.14, 34.35, 1.44, 5.20 },
+  { 23.21, 35.31, 1.44, 6.07 },
+  { 21.28, 35.72, 1.44, 6.28 },
+  { 19.35, 35.31, 1.44, 6.07 },
+  { 17.42, 34.35, 1.44, 5.20 },
+  { 15.48, 32.52, 1.44, 4.01 },
+  { 31.47, 27.68, 1.36, 3.64 },
+  { 11.17, 27.68, 1.36, 3.64 },
+}
+local function markElements(cx, cy, k, col)
   local function pt(x, y, c1x, c1y, c2x, c2y)
     local q = { x = (x - 22) * k + cx, y = (y - 22) * k + cy }
     if c1x then
@@ -104,59 +128,76 @@ local function markElement(cx, cy, k, col)
     end
     return q
   end
-  return { type = "segments", action = "stroke", closed = false,
-           strokeColor = col, strokeWidth = 5.6 * k,
-           strokeCapStyle = "round", strokeJoinStyle = "round",
-           coordinates = {
-             pt(28.29, 11.93),
-             pt(19.91, 8.32, 26.78, 8.82, 23.22, 7.29),
-             pt(15.08, 16.05, 16.61, 9.35, 14.56, 12.64),
-             pt(22.00, 22.00, 15.60, 19.47, 18.54, 22.00),
-             pt(28.92, 27.95, 25.46, 22.00, 28.40, 24.53),
-             pt(24.09, 35.68, 29.44, 31.36, 27.39, 34.65),
-             pt(15.71, 32.07, 20.78, 36.71, 17.22, 35.18),
-           } }
+  local els = {}
+  for _, b in ipairs(MARK_BARS) do
+    els[#els + 1] = { type = "rectangle", action = "fill", fillColor = col,
+                      roundedRectRadii = { xRadius = b[3] * k / 2, yRadius = b[3] * k / 2 },
+                      frame = { x = (b[1] - 22) * k + cx, y = (b[2] - 22) * k + cy,
+                                w = b[3] * k, h = b[4] * k } }
+  end
+  els[#els + 1] = { type = "segments", action = "stroke", closed = false,
+                    strokeColor = col, strokeWidth = 5.00 * k,
+                    strokeCapStyle = "round", strokeJoinStyle = "round",
+                    coordinates = {
+    pt(27.11, 13.83),
+    pt(20.31, 10.89, 25.88, 11.30, 22.99, 10.06),
+    pt(16.38, 17.17, 17.63, 11.73, 15.96, 14.40),
+    pt(22.00, 22.00, 16.81, 19.95, 19.19, 22.00),
+    pt(27.62, 26.83, 24.81, 22.00, 27.19, 24.05),
+    pt(23.69, 33.11, 28.04, 29.60, 26.37, 32.27),
+    pt(16.89, 30.17, 21.01, 33.94, 18.12, 32.70),
+                    } }
+  return els
 end
 
 local function hudBuild()
-  local scr = hs.screen.mainScreen():frame()
-  local c = hs.canvas.new({ x = scr.x + (scr.w - HUD_W) / 2,
-                            y = scr.y + scr.h - HUD_H - 72, w = HUD_W, h = HUD_H })
+  local c = hs.canvas.new({ x = 0, y = 0, w = BARS_SPAN + 2 * HUD_PAD, h = HUD_H })
   c:level(hs.canvas.windowLevels.overlay)
   c:behavior({ "canJoinAllSpaces", "stationary" })
 
+  -- No frame on these two: they fill the canvas, so resizing the canvas in
+  -- hudLayout resizes the pill with it.
   c[1] = { type = "rectangle", action = "fill",
            roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
-           fillColor = { red = 0.055, green = 0.055, blue = 0.071, alpha = 0.96 },
-           withShadow = true,
-           shadow = { blurRadius = 18, offset = { h = -4, w = 0 },
-                      color = { alpha = 0.45, white = 0 } } }
+           fillColor = { red = 0.043, green = 0.043, blue = 0.055, alpha = 0.94 } }
   c[2] = { type = "rectangle", action = "stroke",
            roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
-           strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
+           strokeColor = { white = 1, alpha = 0.12 }, strokeWidth = 1 }
 
-  c[I_MARK] = markElement(26, HUD_H / 2, 0.62, ACCENT)
-
-  c[I_LABEL] = { type = "text", text = "Listening",
-                 frame = { x = 46, y = HUD_H / 2 - 10, w = 92, h = 20 },
-                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
+  c[I_LABEL] = { type = "text", text = "",
+                 frame = { x = HUD_PAD - 4, y = HUD_H / 2 - 9, w = LABEL_W, h = 18 },
+                 textColor = { white = 0.97, alpha = 1 }, textSize = 12,
                  textFont = "SF Pro Text" }
 
   for i = 1, NBARS do
     c[I_LABEL + i] = { type = "rectangle", action = "fill",
                        roundedRectRadii = { xRadius = BAR_W / 2, yRadius = BAR_W / 2 },
-                       fillColor = ACCENT,
-                       frame = { x = BAR_X + (i - 1) * BAR_GAP, y = HUD_H / 2 - 2,
-                                 w = BAR_W, h = 4 } }
+                       fillColor = VOICE,
+                       frame = { x = HUD_PAD + (i - 1) * BAR_PITCH, y = HUD_H / 2 - 1.5,
+                                 w = BAR_W, h = 3 } }
   end
   return c
+end
+
+-- Size and place the pill for this turn: bars only, or label + bars.
+local function hudLayout(label)
+  local c = wf.hud.canvas
+  local w = BARS_SPAN + 2 * HUD_PAD
+  wf.hud.barX = HUD_PAD
+  if label then
+    w = w + LABEL_W + LABEL_GAP - 4
+    wf.hud.barX = w - HUD_PAD - BARS_SPAN
+  end
+  local scr = hs.screen.mainScreen():frame()
+  c:frame({ x = scr.x + (scr.w - w) / 2, y = scr.y + scr.h - HUD_H - 28, w = w, h = HUD_H })
+  c[I_LABEL].text = label or ""
 end
 
 -- Two animations off one timer. Recording: a waveform with a centre-weighted
 -- envelope, so the middle bars run taller than the edges the way real speech
 -- energy does — a flat sine across all bars reads as a loading spinner, not a voice.
--- Working: a single travelling pulse, which says "busy" without implying it is
--- still hearing you.
+-- Working: a travelling wave, which says "busy" without implying it is still
+-- hearing you, and always has motion somewhere on the strip so it never looks hung.
 local function hudAnimate()
   local c = wf.hud.canvas
   if not c then return end
@@ -165,19 +206,13 @@ local function hudAnimate()
   for i = 1, NBARS do
     local h
     if working then
-      -- A travelling sine, not a discrete pulse. A pulse indexed by
-      -- (phase % (NBARS+3)) spends ~27% of its cycle past the last bar with
-      -- nothing lit, which reads as frozen — the exact impression this state
-      -- must never give. A wave always has motion somewhere on the strip.
-      h = 4 + 9 * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.22 - i * 0.7))
+      h = 3 + 7 * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.22 - i * 0.7))
     else
-      -- Centre-weighted so the middle bars run taller, the way speech energy
-      -- does. Floor the envelope at 0.65: at 0.5 the outer bars collapse to
-      -- 4px circles and the waveform reads as a trailing ellipsis.
-      local env = 0.65 + 0.35 * math.sin(math.pi * (i - 0.5) / NBARS)
-      h = 4 + 15 * env * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.30 + i * 0.75))
+      -- Floor the envelope at 0.6 so the outer bars stay bars, not dots.
+      local env = 0.6 + 0.4 * math.sin(math.pi * (i - 0.5) / NBARS)
+      h = 3 + 15 * env * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.30 + i * 0.75))
     end
-    c[I_LABEL + i].frame = { x = BAR_X + (i - 1) * BAR_GAP, y = (HUD_H - h) / 2,
+    c[I_LABEL + i].frame = { x = wf.hud.barX + (i - 1) * BAR_PITCH, y = (HUD_H - h) / 2,
                              w = BAR_W, h = h }
   end
 end
@@ -185,7 +220,6 @@ end
 local function hudTint(col)
   local c = wf.hud.canvas
   wf.hud.tone = col
-  c[I_MARK].strokeColor = col
   for i = 1, NBARS do c[I_LABEL + i].fillColor = col end
 end
 
@@ -193,13 +227,13 @@ function wf.hud.show(s)
   if not wf.hud.canvas then wf.hud.canvas = hudBuild() end
   local c = wf.hud.canvas
   if s == "recording" then
-    hudTint(ACCENT)
-    local labels = { verbatim = "Listening", prompt = "Prompt",
-                     command = "Command", context = "Context" }
-    c[I_LABEL].text = labels[wf.mode] or "Listening"
+    hudTint(VOICE)
+    -- Plain dictation shows bars only; the AI modes name themselves.
+    local labels = { prompt = "Prompt", command = "Command", context = "Context" }
+    hudLayout(labels[wf.mode])
   elseif s == "working" or s == "thinking" then
     hudTint(WORKING)
-    c[I_LABEL].text = (s == "thinking") and "Thinking…" or "Transcribing…"
+    hudLayout((s == "thinking") and "Thinking" or nil)
   end
   -- One timer for both states; hudAnimate branches on tone. Previously the
   -- working state stopped the timer and froze the bars flat, which looked hung.
@@ -214,8 +248,8 @@ end
 
 -- ── Toast: messages in the HUD's visual language, carrying the Senti mark ──
 -- hs.alert's style table is text-only — no image key — so the brand was being
--- stood in for by an emoji. This draws the real mark, the same S as the HUD
--- and the menu bar, and tints it to carry severity.
+-- stood in for by an emoji. This draws the real logo, the same shapes as the
+-- menu bar image, and tints it to carry severity.
 wf.toast = { canvas = nil, timer = nil }
 local T_INFO = ACCENT
 local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
@@ -241,7 +275,7 @@ function wf.notify(msg, secs, tone)
   c[2] = { type = "rectangle", action = "stroke",
            roundedRectRadii = { xRadius = 16, yRadius = 16 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
-  c[#c + 1] = markElement(32, H / 2, 0.52, tone)
+  for _, e in ipairs(markElements(32, H / 2, 0.62, tone)) do c[#c + 1] = e end
   c[#c + 1] = { type = "text", text = tostring(msg),
                 frame = { x = 58, y = 15, w = W - 74, h = H - 24 },
                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,

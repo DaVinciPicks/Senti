@@ -152,5 +152,5 @@ fi
 echo ""
 echo "✅ Senti installed."
 echo "   1) Open Hammerspoon (or run: open -a Hammerspoon) — grant Accessibility if asked."
-echo "   2) Menu bar S → Grant / test microphone → click Allow."
+echo "   2) Menu bar icon → Grant / test microphone → click Allow."
 echo "   3) Hold right ⌥ and speak. AI modes need an OpenAI key at $CFG/openai-key."
