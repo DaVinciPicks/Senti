@@ -55,8 +55,8 @@ with a canary on every run.
 - The `hs` command-line bridge, which would let any process on your Mac run code inside Senti, is off by default.
 - Untrusted text, including a browser tab's title, is passed to the AI as fenced data it must never obey.
 - The AI's output is only ever typed, never run.
-- Your notes leave the Mac only as a capped, section-limited digest, and each one is logged.
-- The log stores no transcripts. Audio and screenshots are deleted the moment each turn ends.
+- Your notes are never read unless you turn the notes feature on and list the folders it may use. Even then only a short, capped digest leaves the Mac, and each one is logged.
+- The log stores no transcripts. Audio and screenshots are deleted when each turn ends, including when it fails, with a 60-second backstop.
 
 ## Features
 
@@ -89,11 +89,16 @@ own history. This uses no screenshots and no extra API call.
 
 ### Your notes, if you want them
 
-If you keep an Obsidian vault, Prompt mode can read a short digest of your note for the project
-you're in, so the prompt reflects what the project is. It only reads folders you allow (never
-`People/`), the digest has a size cap, and every use is logged. A background call of about $0.001
-refreshes the digest for a project when you work on it. Add a `## Senti` section to a note to
-control exactly what Senti sees, or set `WF_BRAIN=0` to turn the feature off.
+This is off unless you turn it on. If you keep an Obsidian vault, Prompt mode can add a short
+digest of your note for the project you're in, so the prompt reflects what the project is.
+It reads only the folders you list (never `People/`), the digest has a size cap, and every use
+is logged. A note's `## Senti` section, if it has one, is exactly what Senti may use;
+otherwise it uses the note's first lines. To turn it on, add to `~/.config/senti/config.sh`:
+
+```bash
+WF_BRAIN=1
+WF_BRAIN_DIRS=$'Projects\nWork'   # vault folders Senti may read, one per line
+```
 
 ### Housekeeping
 
@@ -110,21 +115,29 @@ can be measured. Results go to `eval/history.csv`.
 
 ## Install
 
+You need a Mac with Apple Silicon (M1 or later) and [Homebrew](https://brew.sh).
+
 ```bash
-git clone https://github.com/DaVinciPicks/Senti.git ~/code/senti && cd ~/code/senti && ./install.sh
+git clone https://github.com/DaVinciPicks/Senti.git ~/code/senti
+cd ~/code/senti && ./install.sh
 ```
 
-Requirements (Homebrew / Xcode CLT):
+You can also download the latest release from the
+[Releases page](https://github.com/DaVinciPicks/Senti/releases/latest), unzip it, and run
+`./install.sh` from that folder.
+
+The installer checks for the tools Senti uses (whisper-cpp, sox, resvg and Hammerspoon) and
+offers to install any that are missing with Homebrew. It then downloads the speech model
+(574 MB) and checks it against its published checksum. Run `./install.sh --yes` to do all of
+that without being asked. Running it again later updates Senti and keeps your settings.
+
+The Xcode Command Line Tools (`xcode-select --install`) are optional. Senti uses them to
+build a small helper that triggers the microphone permission prompt.
+
+For a faster, English-only model (about 0.3 seconds), download it as well and switch from
+the menu bar (Speed, then Fast):
 
 ```bash
-brew install whisper-cpp sox resvg   # resvg renders the app icon
-brew install --cask hammerspoon
-# a model, e.g.:
-mkdir -p ~/.local/share/whisper-models
-# Accurate (the default; best with proper nouns and code identifiers, ~0.8s):
-curl -L -o ~/.local/share/whisper-models/ggml-large-v3-turbo-q5_0.bin \
-  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
-# Optional: Fast (~0.3s, English-only). Menu bar → Speed → Fast
 curl -L -o ~/.local/share/whisper-models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
@@ -196,7 +209,7 @@ Models and prices change. To see what your key can use right now:
 
 ```bash
 curl -s https://api.openai.com/v1/models \
-  -H "Authorization: Bearer $(cat ~/.config/senti/openai-key)" | grep '"id"'
+  -K <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/senti/openai-key)") | grep '"id"'
 ```
 
 ## Config

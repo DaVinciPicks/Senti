@@ -53,7 +53,7 @@ SENTI_MIME="${SENTI_MIME:-image/jpeg}" \
 SENTI_MODEL="$MODEL" \
 SENTI_EFFORT="$EFFORT" \
 /usr/bin/python3 - <<'PY'
-import sys, os, json, base64, urllib.request
+import sys, os, json, base64, urllib.request, urllib.error
 key = os.environ["SENTI_KEY"]
 
 img = os.environ.get("SENTI_IMG", "")
@@ -66,24 +66,41 @@ if img:
 else:
     user_content = os.environ["SENTI_USER"]
 
-body = json.dumps({
-    "model": os.environ["SENTI_MODEL"],
-    # gpt-5.x reasoning tier: 'none'|'low'|'medium'|'high'|'xhigh' ('minimal' is rejected).
-    # Text default is 'none': on the prompt-rewrite task it measured 2.2x cheaper and 1.8x
-    # faster than 'low' at an identical eval score. senti-judge.sh overrides to 'low'.
-    "reasoning_effort": os.environ["SENTI_EFFORT"],
-    # Reasoning tokens count against this ceiling — leave headroom or output comes back empty.
-    "max_completion_tokens": 4000,
-    "messages": [
-        {"role": "system", "content": os.environ["SENTI_SYS"]},
-        {"role": "user", "content": user_content},
-    ],
-}).encode()
-req = urllib.request.Request("https://api.openai.com/v1/chat/completions",
-    data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
-try:
+def request(effort):
+    body = json.dumps({
+        "model": os.environ["SENTI_MODEL"],
+        # Reasoning tier. Text default is 'none': on the prompt-rewrite task it measured
+        # 2.2x cheaper and 1.8x faster than 'low' at an identical eval score. Some models
+        # (gpt-6.1-sol, gpt-6-astra, checked 2026-11-11) reject 'none'; see the retry below.
+        "reasoning_effort": effort,
+        # Reasoning tokens count against this ceiling: leave headroom or output comes back empty.
+        "max_completion_tokens": 4000,
+        "messages": [
+            {"role": "system", "content": os.environ["SENTI_SYS"]},
+            {"role": "user", "content": user_content},
+        ],
+    }).encode()
+    req = urllib.request.Request("https://api.openai.com/v1/chat/completions",
+        data=body, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=60) as r:
-        sys.stdout.write(json.load(r)["choices"][0]["message"]["content"] or "")
-except Exception as e:
-    sys.stderr.write("openai error: %s" % e); sys.exit(1)
+        return json.load(r)["choices"][0]["message"]["content"] or ""
+
+effort = os.environ["SENTI_EFFORT"]
+for attempt in (1, 2):
+    try:
+        sys.stdout.write(request(effort))
+        break
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = json.load(e).get("error", {}).get("message", "")[:200]
+        except Exception:
+            pass
+        # A model that doesn't accept 'none' says so in a 400; try once more at 'low'.
+        if attempt == 1 and e.code == 400 and effort == "none" and "reasoning_effort" in detail:
+            effort = "low"
+            continue
+        sys.stderr.write("openai error: HTTP %s for model %s: %s\n" % (e.code, os.environ["SENTI_MODEL"], detail)); sys.exit(1)
+    except Exception as e:
+        sys.stderr.write("openai error: %s\n" % e); sys.exit(1)
 PY

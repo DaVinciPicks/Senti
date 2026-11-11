@@ -231,8 +231,9 @@ clean_text() {
   local t
   t="$(printf '%s' "$1" | /usr/bin/tr '\n' ' ' \
        | /usr/bin/sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
-  # If the entire result is a single bracketed/parenthesised/asterisked token, it's noise.
-  if printf '%s' "$t" | /usr/bin/grep -Eq '^(\[[^]]*\]|\([^)]*\)|\*[^*]*\*)$'; then
+  # If the entire result is made only of bracketed/parenthesised/asterisked tokens
+  # ("[BLANK_AUDIO]", "[BLANK_AUDIO] [BLANK_AUDIO]", "(silence) *music*"), it's noise.
+  if printf '%s' "$t" | /usr/bin/grep -Eq '^((\[[^]]*\]|\([^)]*\)|\*[^*]*\*)[[:space:]]*)+$'; then
     printf ''; return
   fi
   # Smart Formatting: drop filler tokens (um/uh/erm/hmm) anywhere, and one leading

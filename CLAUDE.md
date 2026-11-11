@@ -183,8 +183,8 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   probe — a light idea never sends the title, so it proved nothing).
 - **The vault bridge has one gate** — `brain_digest()` in `senti-brain.sh`. Both the read path
   AND the background refresh upload go through it (`## Senti` section → cap). Never send a raw
-  note. Allowlist is `Efforts/Active` + `Atlas/DaVinci Bets` only — never `People/` — and
-  `brain-map.txt` entries obey it too (no `..`, no absolute paths, no escaping symlinks). The
+  note. The bridge is off unless `WF_BRAIN=1`, and it reads only the folders listed in
+  `WF_BRAIN_DIRS` (no default list), never `People/`. `brain-map.txt` entries obey it too (no `..`, no absolute paths, no escaping symlinks). The
   key-down prefetch never triggers the background refresh upload; only a real prompt turn can.
 - **Verbatim stays local:** verbatim turns are never written to session memory, because
   recall rides prompt-mode API calls. Pasted text is marked transient + concealed so clipboard
