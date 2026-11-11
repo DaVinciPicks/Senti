@@ -1,12 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="44" height="36" viewBox="0 0 44 36">
-  <!-- Menu-bar template image, 22x18pt (drawn at 2x). macOS uses ONLY the alpha
-       channel as a silhouette and tints it for light/dark/active, so this is solid
-       black on transparent.
-       The full logo (S with a waveform above and below) cannot survive at 18pt:
-       the bars blur, and an S with vertical strokes through it reads as a dollar
-       sign. So the small mark keeps the S and moves the waveform to its sides:
-       two bars each side, 2px wide, every edge on a whole pixel so it stays crisp.
-       make-icon.sh must render this at exactly 22x18 and 44x36, never resized. -->
-  <g fill="#000000"><rect x="3" y="14" width="2" height="8" rx="1"/><rect x="7" y="9" width="2" height="18" rx="1"/><rect x="35" y="9" width="2" height="18" rx="1"/><rect x="39" y="14" width="2" height="8" rx="1"/></g>
-  <path d="M 26.67 10.52 A 5.2 5.2 0 1 0 22 18 A 5.2 5.2 0 1 1 17.33 25.48" fill="none" stroke="#000000" stroke-width="4.8" stroke-linecap="round"/>
+  <!-- Menu-bar template image, 22x18pt drawn at 2x. macOS uses ONLY the alpha
+       channel as a silhouette and tints it for light, dark and active, so this is
+       solid black on transparent.
+       A waveform alone: five bars, wider in the middle like the logo's waveform.
+       Every edge sits on a whole pixel at 1x and 2x (x and width in steps of 2,
+       heights in steps of 4), so it renders sharp. make-icon.sh renders it at
+       exactly 22x18 and 44x36; senti.lua loads the 2x file. -->
+  <g fill="#000000">
+    <rect x="4" y="12" width="4" height="12" rx="2"/>
+    <rect x="12" y="6" width="4" height="24" rx="2"/>
+    <rect x="20" y="2" width="4" height="32" rx="2"/>
+    <rect x="28" y="6" width="4" height="24" rx="2"/>
+    <rect x="36" y="12" width="4" height="12" rx="2"/>
+  </g>
 </svg>
