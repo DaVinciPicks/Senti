@@ -28,6 +28,12 @@ wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
 -- 22px image that Retina displays scaled up, which is why the icon looked blurry.
 wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic@2x.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
+wf.AIKEY   = wf.HOME .. "/.config/senti/openai-key"
+-- True when the AI modes have a key to use (a non-empty key file).
+function wf.hasAIKey()
+  local a = hs.fs.attributes(wf.AIKEY)
+  return a ~= nil and a.mode == "file" and (a.size or 0) > 0
+end
 wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
 wf.CTXPRE  = wf.HOME .. "/.config/senti/senti-lib.sh"   -- run directly = prefetch context
 wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
@@ -270,7 +276,7 @@ function wf.setState(s)
         if p and p.clip then
           wf.restoreClipboard(p.clip, hs.pasteboard.changeCount())
         elseif p and p.raw then
-          hs.pasteboard.setContents(p.raw); msg = msg .. "\nWhat you said is on the clipboard."
+          wf.setPrivateClipboard(p.raw); msg = msg .. "\nWhat you said is on the clipboard."
         end
         wf.notify(msg, 5, wf.TONE.warn)
         wf.setState("idle")
@@ -290,16 +296,36 @@ function wf.setState(s)
 end
 
 -- ── Insert text into whatever app is focused (clipboard paste) ──────────
-function wf.paste(text)   -- low-level: put text on the clipboard and ⌘V it
-  -- Marked transient + concealed (the nspasteboard.org convention) so clipboard managers
-  -- don't keep every transcript in their history. Plain setContents if that fails.
+-- Put text on the clipboard marked transient + concealed (the nspasteboard.org
+-- convention) so clipboard managers and Universal Clipboard don't keep transcripts.
+-- Plain setContents if that fails. Every place Senti hands words back uses this.
+function wf.setPrivateClipboard(text)
   local ok, wrote = pcall(hs.pasteboard.writeAllData, {
     ["public.utf8-plain-text"] = text,
     ["org.nspasteboard.TransientType"] = "",
     ["org.nspasteboard.ConcealedType"] = "",
   })
   if not (ok and wrote) then hs.pasteboard.setContents(text) end
+end
+
+-- The window that had focus when the turn started (set in wf.record). A result that
+-- arrives after the user moved to another window must not be typed there.
+function wf.focusMoved()
+  if not wf.focusAtStart then return false end
+  local w = hs.window.focusedWindow()
+  return (w and w:id()) ~= wf.focusAtStart
+end
+
+function wf.paste(text)   -- low-level: put text on the clipboard and ⌘V it
+  wf.setPrivateClipboard(text)
   hs.eventtap.keyStroke({"cmd"}, "v", 0)
+end
+
+-- Hand text back without typing it, because focus moved during the turn.
+function wf.handBack(text, why)
+  wf.setPrivateClipboard(text)
+  wf.log("handed back " .. #text .. " chars on the clipboard (" .. why .. ")")
+  wf.notify("You switched windows, so Senti did not type it.\nIt's on the clipboard.", 5, wf.TONE.warn)
 end
 
 -- Snapshot every flavour on the clipboard, not just its text: getContents() is nil for
@@ -339,6 +365,7 @@ end
 function wf.insert(text)  -- dictation insert: trailing space + clipboard restore
   if not text or text:gsub("%s+","") == "" then wf.log("insert: empty, nothing to paste"); return end
   if wf.TRAILING_SPACE then text = text .. " " end
+  if wf.focusMoved() then wf.handBack(text, "focus moved"); return end
   local prev = wf.saveClipboard()
   wf.paste(text)
   local ours = hs.pasteboard.changeCount()
@@ -355,23 +382,36 @@ function wf.runCommand(command, turn)
   -- If this turn is abandoned, the watchdog restores this clipboard (see setState).
   if wf.pending and wf.pending.turn == turn then wf.pending.clip = prevClip end
   hs.pasteboard.clearContents()
+  local before = hs.pasteboard.changeCount()
   hs.eventtap.keyStroke({"cmd"}, "c", 0)      -- copy the current selection
-  hs.timer.doAfter(0.18, function()
+  -- Wait for the copy to land (the change count moves) rather than a fixed delay: slow
+  -- apps used to miss 0.18 s, which read as "nothing selected", and the result then
+  -- overwrote a selection it never saw. No change within 0.8 s means no selection.
+  local waited, poll = 0, nil
+  poll = hs.timer.doEvery(0.04, function()
+    waited = waited + 0.04
+    if hs.pasteboard.changeCount() == before and waited < 0.8 then return end
+    poll:stop()
     local sel = hs.pasteboard.getContents() or ""
     local f = io.open(wf.SELFILE, "w"); if f then f:write(sel); f:close() end
     wf.log("command: " .. #command .. " chars on " .. #sel .. " selected chars")  -- not the text itself
-    wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(_, out)
+    wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(exitCode, out)
       -- Stale: a newer turn may own selection.txt now; the sweep removes ours.
       if wf.staleTurn(turn) then return end
       os.remove(wf.SELFILE)                    -- selected text is the user's content; don't leave it on disk
       wf.pending = nil
       wf.setState("idle")
+      wf.sweepCache()                          -- the audio of the spoken command
       out = (out or ""):gsub("%s+$", "")
-      if out == "" then
-        wf.log("command: produced nothing")
-        wf.notify("The command produced nothing.\nCheck your network or OpenAI key.", 4, wf.TONE.warn)
-        hs.timer.doAfter(0.5, function() wf.restoreClipboard(prevClip, hs.pasteboard.changeCount()) end)
+      if exitCode ~= 0 or out == "" then
+        wf.log("command: AI request failed (exit " .. tostring(exitCode) .. "), selection left unchanged")
+        wf.restoreClipboard(prevClip, hs.pasteboard.changeCount())
+        wf.notify("The command didn't run. Check your network or OpenAI key.\nYour selection is unchanged.", 5, wf.TONE.warn)
         return
+      end
+      if wf.focusMoved() then
+        wf.restoreClipboard(prevClip, hs.pasteboard.changeCount())
+        wf.handBack(out, "focus moved during command"); return
       end
       wf.paste(out)                            -- replaces the selection, or inserts at cursor
       local ours = hs.pasteboard.changeCount()
@@ -458,8 +498,8 @@ function wf.runVision(raw, kind, turn)
     if exitCode ~= 0 then
       -- Don't throw the user's words away with the failed request.
       wf.log("vision failed (exit " .. tostring(exitCode) .. ") — words left on the clipboard")
-      hs.pasteboard.setContents(raw)
-      wf.notify("Request failed — check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
+      wf.setPrivateClipboard(raw)
+      wf.notify("The request failed. Check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
     else
       wf.insert((out or ""):gsub("%s+$", ""))
     end
@@ -494,7 +534,7 @@ function wf.handleTranscript(raw, turn, clipOnly)
     -- always means Hammerspoon's Microphone permission is missing/revoked or the input
     -- device is muted — NOT that the user said nothing. Real turns in the log lost 50s
     -- and 78s of speech to this with zero feedback. Name the cause and open the fix.
-    wf.setState("idle")
+    wf.setState("idle"); wf.sweepCache()
     pcall(function() hs.sound.getByName("Basso"):play() end)
     wf.notify("Your microphone captured no audio.\nCheck it isn't muted, or re-grant Microphone:\nmenu bar → Grant / test microphone", 5, wf.TONE.warn)
     -- Force a fresh permission probe on the next capture — only if there is a helper to
@@ -503,18 +543,18 @@ function wf.handleTranscript(raw, turn, clipOnly)
     return
   end
   if raw == "__WF_SERVER_DOWN__" then
-    wf.setState("idle")
+    wf.setState("idle"); wf.sweepCache()
     wf.notify("Whisper engine is not running.\nMenu bar → Restart engine", 4, wf.TONE.warn)
     return
   end
   if raw == "__WF_TAP__" then   -- a brushed key, not a dictation: nothing to report
-    wf.setState("idle")
+    wf.setState("idle"); wf.sweepCache()
     return
   end
   if raw == "__WF_TRANSCRIBE_FAILED__" then
     -- The engine errored or timed out. Not a muted mic: say so, or people go re-grant
     -- a permission that was fine.
-    wf.setState("idle")
+    wf.setState("idle"); wf.sweepCache()
     pcall(function() hs.sound.getByName("Basso"):play() end)
     wf.notify("Transcription failed — the whisper engine errored or timed out.\nTry again, or menu bar → Restart engine", 5, wf.TONE.warn)
     return
@@ -525,24 +565,34 @@ function wf.handleTranscript(raw, turn, clipOnly)
     -- no alert, no text — because this branch just returned. Silent, undiagnosed
     -- failure is the single most-cited complaint about competing dictation tools;
     -- losing a minute of speech with no signal is the worst thing this app can do.
-    -- Say what happened, and (below) keep the audio so it's recoverable.
+    -- Say what happened. The audio is deleted with the rest of the turn's files: there is
+    -- no way to recover it from the app, so keeping it only kept speech on disk.
     -- Except after a brushed key: when key-up beats sox to the file there is no audio
     -- at all, and a hold that short was never a dictation. Long holds still alert.
     if (wf.lastHold or 1) < 0.6 then
       wf.log("transcript: empty after a " .. string.format("%.2f", wf.lastHold) .. "s tap — ignored")
-      wf.setState("idle")
+      wf.setState("idle"); wf.sweepCache()
       return
     end
     wf.log("transcript: empty (silence/gated) — alerting user")
-    wf.setState("idle")
+    wf.setState("idle"); wf.sweepCache()
     pcall(function() hs.sound.getByName("Basso"):play() end)
     wf.notify("Nothing was transcribed.\nThe mic may be muted or the audio was silent.\nMenu bar → Grant / test microphone", 4, wf.TONE.warn)
     return
   end
 
   if clipOnly then
-    wf.setState("idle"); hs.pasteboard.setContents(raw); wf.sweepCache()
+    wf.setState("idle"); wf.setPrivateClipboard(raw); wf.sweepCache()
     wf.notify("Recording ran 2.5 minutes, so it was stopped.\nThe transcript is on the clipboard.", 5, wf.TONE.warn)
+    return
+  end
+  -- Prompt, Command and Context call OpenAI with the user's own key. Without one, say
+  -- so and hand the words back on the clipboard rather than typing them as if the mode
+  -- had worked (and never paste raw speech over a Command selection).
+  if wf.mode ~= "verbatim" and not wf.hasAIKey() then
+    wf.setState("idle"); wf.setPrivateClipboard(raw); wf.sweepCache()
+    wf.log("ai mode " .. tostring(wf.mode) .. ": no OpenAI key, words left on the clipboard")
+    wf.notify("This mode needs your OpenAI API key in\n~/.config/senti/openai-key\nWhat you said is on the clipboard.", 6, wf.TONE.warn)
     return
   end
   -- AI modes can outlive the 75s watchdog; keep the words so it can hand them back.
@@ -553,7 +603,7 @@ function wf.handleTranscript(raw, turn, clipOnly)
       if wf.staleTurn(turn) then return end
       if has then wf.runVision(raw, "context", turn)
       else
-        wf.setState("idle")
+        wf.setState("idle"); wf.sweepCache()
         wf.log("context: no screenshot — Screen Recording not granted")
         wf.notify("Context mode needs Screen Recording.\nSystem Settings ▸ Privacy ▸ Screen Recording →\nenable Hammerspoon, then relaunch it", 5, wf.TONE.warn)
         hs.execute("/usr/bin/open 'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'")
@@ -567,10 +617,16 @@ function wf.handleTranscript(raw, turn, clipOnly)
       if has then wf.runVision(raw, "prompt", turn)   -- screen context → context-aware prompt
       else                                       -- no screen → text-only prompt path
         wf.hud.show("thinking")
-        wf.runScript({wf.PROMPTS}, raw, function(_, stdout)
+        wf.runScript({wf.PROMPTS}, raw, function(exitCode, stdout)
           if wf.staleTurn(turn) then return end
           wf.pending = nil
-          wf.setState("idle"); wf.insert(stdout); wf.sweepCache()
+          wf.setState("idle"); wf.sweepCache()
+          if exitCode ~= 0 then
+            wf.setPrivateClipboard(raw)
+            wf.notify("The request failed. Check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
+            return
+          end
+          wf.insert(stdout)
         end)
       end
     end)
@@ -581,6 +637,8 @@ end
 
 function wf.record()
   wf.recStartedAt = hs.timer.secondsSinceEpoch()
+  local fw = hs.window.focusedWindow()
+  wf.focusAtStart = fw and fw:id() or nil
   wf.setState("recording")
   wf.log("record: mode="..tostring(wf.mode))
   hs.task.new(wf.BASH, nil, {wf.DICTATE, "start"}):start()
@@ -870,14 +928,25 @@ end)
 wf.runScript({wf.SESSION, "sweep"}, "", nil)   -- and once at launch
 wf.log("=== init.lua loaded ===")
 
+-- Accessibility is what lets Senti see the hold keys and type. Without it the hotkeys
+-- do nothing and nothing says why, so ask macOS to show its prompt and say it here too.
+if not hs.accessibilityState() then
+  wf.log("startup: Accessibility not granted")
+  hs.accessibilityState(true)   -- shows the system prompt for Hammerspoon
+  wf.notify("Senti needs Accessibility to type.\nSystem Settings ▸ Privacy & Security ▸\nAccessibility → turn ON Hammerspoon", 8, wf.TONE.warn)
+elseif not hs.fs.attributes(wf.AUTH) then
+  -- hs.task on a missing binary fails silently, so the probe below would never answer.
+  wf.notify("Senti is ready, but its microphone helper is missing.\nInstall Xcode Command Line Tools, then re-run install.sh", 6, wf.TONE.warn)
+else
 -- Startup mic-permission probe (no prompt); nudge once if not yet authorized.
 hs.task.new(wf.AUTH, function(_, out)
   out = (out or ""):gsub("%s+","")
   wf.log("startup mic probe: "..out)
   if out == "AUTHORIZED" then
     wf.micOK = true
-    wf.notify("Senti ready — hold right ⌥ to dictate", 3, wf.TONE.ok)
+    wf.notify("Senti is ready. Hold right ⌥ to dictate.", 3, wf.TONE.ok)
   else
-    wf.notify("One step left — menu bar → Grant / test microphone", 5, wf.TONE.warn)
+    wf.notify("One step left: menu bar ▸ Grant / test microphone", 5, wf.TONE.warn)
   end
 end, {"--probe"}):start()
+end

@@ -12,8 +12,8 @@
 # PRIVACY MODEL — read before widening anything here:
 #   - Whatever this prints is injected into prompt mode and therefore RIDES THE API
 #     CALL to OpenAI. That is the entire point, and also the entire risk.
-#   - So: only allowlisted dirs are ever searched (default: Efforts/Active and
-#     Atlas/DaVinci Bets — never People/, never Calendar/, never the vault root).
+#   - So: only the folders listed in WF_BRAIN_DIRS are ever searched. There is no
+#     default list, and the whole bridge is off unless WF_BRAIN=1.
 #   - Digest is hard-capped (WF_BRAIN_MAX chars). A note can control exactly what
 #     Senti sees by adding a "## Senti" section — then ONLY that section is used.
 #   - Every injection is logged to senti.log by note name, so there's a record of
@@ -24,7 +24,7 @@ set -uo pipefail
 blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 source "$HOME/.config/senti/config.sh"
 
-[ "${WF_BRAIN:-1}" = "1" ] || exit 0
+[ "${WF_BRAIN:-0}" = "1" ] || exit 0   # opt-in: off unless config.sh sets WF_BRAIN=1
 VAULT="${WF_VAULT:-$HOME/Documents/Obsidian Vault}"
 [ -d "$VAULT" ] || exit 0
 MAX="${WF_BRAIN_MAX:-700}"
@@ -90,8 +90,9 @@ NH="$(norm "$HINT")"
 
 NOTE=""
 # Newline-separated because the vault path contains spaces.
-DIRS="${WF_BRAIN_DIRS:-Efforts/Active
-Atlas/DaVinci Bets}"
+DIRS="${WF_BRAIN_DIRS:-}"
+# No folders named, nothing read: the user chooses every folder Senti may look in.
+[ -n "$DIRS" ] || exit 0
 in_allowlist() {   # vault-relative path inside an allowlisted dir, no escape hatches
   case "$1" in /*|*..*) return 1 ;; esac
   [ -L "$VAULT/$1" ] && return 1

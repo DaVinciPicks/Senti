@@ -6,6 +6,84 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 CFG="$HOME/.config/senti"
 LA="$HOME/Library/LaunchAgents"
 
+# --- preflight: platform, dependencies, speech model ------------------------------
+# A first-time user should get from a fresh download to a working install with this
+# one script. It checks what Senti needs, offers to install what is missing through
+# Homebrew, and downloads the default speech model with a checksum.
+#   ./install.sh          ask before installing anything
+#   ./install.sh --yes    install missing pieces without asking
+ASSUME_YES=0
+for arg in "$@"; do case "$arg" in -y|--yes) ASSUME_YES=1 ;; esac; done
+ask() {  # ask "question" -> 0 for yes. Non-interactive runs need --yes.
+  [ "$ASSUME_YES" = 1 ] && return 0
+  [ -t 0 ] || return 1
+  printf '%s [Y/n] ' "$1"; read -r reply || return 1
+  case "${reply:-y}" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "Senti runs on macOS only." >&2; exit 1
+fi
+if [ "$(uname -m)" != "arm64" ]; then
+  echo "Senti needs a Mac with Apple Silicon (M1 or later). This Mac reports $(uname -m)." >&2
+  exit 1
+fi
+
+BREW="$(command -v brew || true)"
+HB="${HOMEBREW_PREFIX:-/opt/homebrew}"
+[ -z "$BREW" ] && [ -x "$HB/bin/brew" ] && BREW="$HB/bin/brew"
+if [ -z "$BREW" ]; then
+  echo "Senti installs its tools with Homebrew, which is not installed." >&2
+  echo "Install it from https://brew.sh, then run ./install.sh again." >&2
+  exit 1
+fi
+
+MISSING_FORMULAE=()
+[ -x "$HB/bin/whisper-server" ] || MISSING_FORMULAE+=(whisper-cpp)
+[ -x "$HB/bin/sox" ]            || MISSING_FORMULAE+=(sox)
+[ -x "$HB/bin/resvg" ]          || MISSING_FORMULAE+=(resvg)
+NEED_HS=0
+[ -d /Applications/Hammerspoon.app ] || [ -d "$HOME/Applications/Hammerspoon.app" ] || NEED_HS=1
+
+if [ "${#MISSING_FORMULAE[@]}" -gt 0 ] || [ "$NEED_HS" = 1 ]; then
+  echo "→ missing tools"
+  [ "${#MISSING_FORMULAE[@]}" -gt 0 ] && echo "    brew install ${MISSING_FORMULAE[*]}"
+  [ "$NEED_HS" = 1 ] && echo "    brew install --cask hammerspoon"
+  if ask "  Install them now with Homebrew?"; then
+    [ "${#MISSING_FORMULAE[@]}" -gt 0 ] && "$BREW" install "${MISSING_FORMULAE[@]}"
+    [ "$NEED_HS" = 1 ] && "$BREW" install --cask hammerspoon
+  else
+    echo "  Run the commands above, then ./install.sh again." >&2
+    exit 1
+  fi
+fi
+
+# The default (Accurate) speech model. Sizes and SHA-256 sums are Hugging Face's LFS
+# metadata for ggerganov/whisper.cpp, checked 2026-11-11.
+MODELS_DIR="$HOME/.local/share/whisper-models"
+MODEL_NAME="ggml-large-v3-turbo-q5_0.bin"
+MODEL_SHA="394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$MODEL_NAME"
+if [ ! -f "$MODELS_DIR/$MODEL_NAME" ]; then
+  echo "→ speech model ($MODEL_NAME, 574 MB, runs on this Mac)"
+  if ask "  Download it now?"; then
+    mkdir -p "$MODELS_DIR"
+    /usr/bin/curl -fL --retry 3 -o "$MODELS_DIR/$MODEL_NAME.part" "$MODEL_URL"
+    GOT="$(/usr/bin/shasum -a 256 "$MODELS_DIR/$MODEL_NAME.part" | cut -d' ' -f1)"
+    if [ "$GOT" != "$MODEL_SHA" ]; then
+      rm -f "$MODELS_DIR/$MODEL_NAME.part"
+      echo "  ! the download did not match its checksum, so it was deleted. Run ./install.sh again." >&2
+      exit 1
+    fi
+    mv "$MODELS_DIR/$MODEL_NAME.part" "$MODELS_DIR/$MODEL_NAME"
+    echo "  ✓ model verified"
+  else
+    echo "  Download $MODEL_URL into $MODELS_DIR, then run ./install.sh again." >&2
+    exit 1
+  fi
+fi
+# --------------------------------------------------------------------------------
+
 # --- one-time migration: Sanele → Senti -----------------------------------------
 # The project was renamed Senti → Sanele (2026-08-19), then back to Senti (2026-10-17).
 # A Sanele install keeps the user's API key, dictionary, vault map and eval cases
@@ -25,7 +103,7 @@ fi
 rm -f "$CFG"/sanele-*.sh "$CFG/sanele-mic-auth" 2>/dev/null || true
 # Unload every old launchd label (Sanele's, and the first Senti's), or two
 # whisper-servers race for the same port.
-for old in io.sanele.server com.leo.senti; do
+for old in io.sanele.server; do
   if [ -f "$LA/$old.plist" ]; then
     launchctl unload "$LA/$old.plist" 2>/dev/null || true
     rm -f "$LA/$old.plist"
@@ -98,7 +176,9 @@ echo "→ microphone-permission helper (Swift/AVFoundation)"
 # Never let this abort the install: under set -e a failed build (an SDK mismatch after a
 # macOS update) used to stop here with new scripts deployed and the old init.lua still
 # pointing at them. senti.lua copes with a missing helper.
-if command -v swiftc >/dev/null 2>&1; then
+# /usr/bin/swiftc exists on every Mac as a stub that asks to install the tools, so
+# check for the Command Line Tools themselves.
+if /usr/bin/xcode-select -p >/dev/null 2>&1 && command -v swiftc >/dev/null 2>&1; then
   swiftc -O "$HERE/senti-mic-auth.swift" -o "$CFG/senti-mic-auth" \
     -framework AVFoundation -framework Foundation \
     || echo "  warning: mic helper failed to build — permission prompts will not appear"
@@ -112,8 +192,9 @@ mkdir -p "$HOME/.hammerspoon"
 # keep a copy instead of silently replacing it.
 HSINIT="$HOME/.hammerspoon/init.lua"
 if [ -f "$HSINIT" ] && ! /usr/bin/grep -q 'wf.armTap' "$HSINIT"; then
-  cp "$HSINIT" "$HSINIT.pre-senti"
-  echo "  ! your existing init.lua was saved as init.lua.pre-senti"
+  HSBAK="$HSINIT.pre-senti.$(date +%Y%m%d-%H%M%S)"
+  cp "$HSINIT" "$HSBAK"
+  echo "  ! your existing init.lua was saved as $(basename "$HSBAK")"
 fi
 cp "$HERE/senti.lua" "$HSINIT"
 
