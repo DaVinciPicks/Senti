@@ -41,11 +41,11 @@ else
   echo "  warning: iconutil failed" >&2
 fi
 
-# Menu-bar template image (1x + 2x). macOS uses only the alpha channel and
+# Menu-bar template image, 22x18pt (1x + 2x), rendered at exact size so it is never resampled. macOS uses only the alpha channel and
 # tints it per light/dark/active — see senti.lua's wf.bar:setIcon.
 mkdir -p "$CFG/menubar"
-"$RESVG" --width 22 --height 22 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic.png"    2>/dev/null
-"$RESVG" --width 44 --height 44 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic@2x.png" 2>/dev/null
+"$RESVG" --width 22 --height 18 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic.png"    2>/dev/null
+"$RESVG" --width 44 --height 36 "$HERE/assets/icon-menubar.svg" "$CFG/menubar/mic@2x.png" 2>/dev/null
 [ -f "$CFG/menubar/mic.png" ] && echo "  ✓ menu-bar template built"
 
 # The trailing test above must not decide the script's exit status — a failed
