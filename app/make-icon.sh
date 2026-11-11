@@ -2,9 +2,10 @@
 # Build Senti's .icns and the menu-bar template image from vector source.
 #
 # Every size is re-rasterised from the SVG rather than downsampled from one
-# bitmap — that's what keeps 16px crisp instead of blurry. Sizes 16-64 use
-# icon-small.svg (solid capsule); 128+ use icon.svg (waveform cut in), because
-# the waveform collapses into noise below ~128px.
+# bitmap, which keeps 16px crisp instead of blurry. 16 and 32px use
+# icon-small.svg (the S with two bars each side, the same mark as the menu bar);
+# 64px and up use icon.svg, the full logo. Below 64px the full logo's waveform
+# blurs and the S reads as a dollar sign.
 #
 # Deps: resvg (brew) + iconutil (Apple). No Python, no Pillow.
 set -uo pipefail
@@ -23,7 +24,7 @@ rm -rf "$ICONSET"; mkdir -p "$ICONSET"
 # px:iconset-name:source   (Apple's required 10 entries for a complete .icns)
 for spec in \
   "16:icon_16x16:small"      "32:icon_16x16@2x:small" \
-  "32:icon_32x32:small"      "64:icon_32x32@2x:small" \
+  "32:icon_32x32:small"      "64:icon_32x32@2x:main" \
   "128:icon_128x128:main"    "256:icon_128x128@2x:main" \
   "256:icon_256x256:main"    "512:icon_256x256@2x:main" \
   "512:icon_512x512:main"    "1024:icon_512x512@2x:main"
