@@ -1,26 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Senti app icon, SMALL-SIZE VARIANT (16 / 32 / 64 px).
-       Same silhouette as icon.svg but with the waveform cuts removed and the
-       strokes thickened. At 32px the cut bars collapse into visual noise, so
-       small sizes get a solid capsule instead — this is why real icon sets are
-       hand-tuned per size rather than downsampled from one master. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0"    stop-color="#5B21B6"/>
-      <stop offset="0.55" stop-color="#312E81"/>
-      <stop offset="1"    stop-color="#1E1B4B"/>
-    </linearGradient>
-  </defs>
-
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-
-  <!-- Pure white, no gradient: maximises contrast against the tile when the
-       whole glyph is only a handful of pixels tall. -->
-  <g fill="#FFFFFF">
-    <rect x="416" y="258" width="192" height="312" rx="96"/>
-    <rect x="490" y="648" width="44" height="108" rx="22"/>
-    <rect x="398" y="756" width="228" height="44" rx="22"/>
-  </g>
-  <path d="M 344 482 A 168 168 0 0 0 680 482"
-        fill="none" stroke="#FFFFFF" stroke-width="46" stroke-linecap="round"/>
+  <!-- Small sizes (16 to 64px): the same blue disc with a plain, heavy S.
+       Drawn as one stroked path so it stays crisp when rasterised small. -->
+  <circle cx="512" cy="512" r="412" fill="#0A66FF"/>
+  <path d="M 662 392 C 662 262, 362 262, 362 412 C 362 562, 662 462, 662 622 C 662 762, 362 762, 362 632"
+        fill="none" stroke="#FFFFFF" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
