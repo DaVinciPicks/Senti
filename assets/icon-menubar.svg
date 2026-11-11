@@ -2,8 +2,8 @@
   <!-- Menu-bar template image. macOS discards the colour and uses ONLY the alpha
        channel as a silhouette, then tints it for light/dark/active automatically,
        so this is deliberately solid black on transparent, no background tile.
-       Drawn at 44px (22pt @2x). The S is the same path as the HUD mark in
-       senti.lua and the small app icon. -->
-  <path d="M 29.5 15.5 C 29.5 8.5, 14.5 8.5, 14.5 16.5 C 14.5 24.5, 29.5 19.5, 29.5 27.5 C 29.5 35.5, 14.5 35.5, 14.5 28.5"
-        fill="none" stroke="#000000" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+       Drawn at 44px (22pt @2x). The S is the app icon's two-circle S; the HUD
+       mark in senti.lua traces the same curve. -->
+  <path d="M 28.29 11.93 A 7.0 7.0 0 1 0 22 22 A 7.0 7.0 0 1 1 15.71 32.07"
+        fill="none" stroke="#000000" stroke-width="5.6" stroke-linecap="round"/>
 </svg>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-wave.png" width="150" alt="Senti logo: a white S with a waveform on a blue disc">
+  <img src="assets/senti-icon.png" width="160" alt="Senti logo: a white S with a waveform on a blue tile">
 </p>
 
 <h1 align="center">Senti</h1>

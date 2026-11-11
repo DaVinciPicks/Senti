@@ -92,8 +92,9 @@ wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
 local I_MARK, I_LABEL = 3, 4
 
 -- The Senti S as ONE canvas element centred on (cx, cy); k scales it from the
--- 44px viewBox of assets/icon-menubar.svg, whose path this mirrors point for
--- point. Shared by the HUD and the toast so the two can never drift apart.
+-- 44px viewBox of assets/icon-menubar.svg. That S is two stacked circles; canvas
+-- has no arc-in-path, so each 244-degree arc is three cubic Béziers here.
+-- Shared by the HUD and the toast so the two can never drift apart.
 local function markElement(cx, cy, k, col)
   local function pt(x, y, c1x, c1y, c2x, c2y)
     local q = { x = (x - 22) * k + cx, y = (y - 22) * k + cy }
@@ -104,13 +105,16 @@ local function markElement(cx, cy, k, col)
     return q
   end
   return { type = "segments", action = "stroke", closed = false,
-           strokeColor = col, strokeWidth = 4.4 * k,
+           strokeColor = col, strokeWidth = 5.6 * k,
            strokeCapStyle = "round", strokeJoinStyle = "round",
            coordinates = {
-             pt(29.5, 15.5),
-             pt(14.5, 16.5, 29.5, 8.5, 14.5, 8.5),
-             pt(29.5, 27.5, 14.5, 24.5, 29.5, 19.5),
-             pt(14.5, 28.5, 29.5, 35.5, 14.5, 35.5),
+             pt(28.29, 11.93),
+             pt(19.91, 8.32, 26.78, 8.82, 23.22, 7.29),
+             pt(15.08, 16.05, 16.61, 9.35, 14.56, 12.64),
+             pt(22.00, 22.00, 15.60, 19.47, 18.54, 22.00),
+             pt(28.92, 27.95, 25.46, 22.00, 28.40, 24.53),
+             pt(24.09, 35.68, 29.44, 31.36, 27.39, 34.65),
+             pt(15.71, 32.07, 20.78, 36.71, 17.22, 35.18),
            } }
 end
 
