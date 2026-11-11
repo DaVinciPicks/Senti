@@ -20,7 +20,8 @@ dictation comes back in about 0.2 to 0.8 seconds. While you aren't speaking, Sen
 CPU.
 
 Dictation is free. The optional AI modes call `gpt-6-luna` ($0.10 / $0.50 per million tokens) with
-your own key. A prompt rewrite takes about 2 seconds and costs a fraction of a cent.
+your own key. A prompt rewrite takes about 2 seconds and costs a fraction of a cent. Stronger models
+are listed under [Bring your own AI](#bring-your-own-ai).
 
 ## Modes
 
@@ -166,6 +167,37 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 - `senti-model.sh`: Fast/Accurate model switch.
 - `senti-mic-auth.swift`: triggers the macOS mic-permission prompt.
 - `senti.lua`: Hammerspoon hotkeys, HUD, menu bar, state machine + watchdog.
+
+## Bring your own AI
+
+Dictation is free, runs on your Mac and needs no key. The three AI modes (Prompt, Command and
+Context) call OpenAI with your own API key, which lives in `~/.config/senti/openai-key` and is
+readable only by you.
+
+Senti uses `gpt-6-luna` by default. If you want better results on harder prompts, switch to a
+stronger model. Prices are in US dollars per 1 million tokens, checked on 11 November 2026 on
+[OpenAI's pricing page](https://platform.openai.com/pricing).
+
+| Model | Use it for | Input | Output |
+|---|---|---|---|
+| `gpt-6-luna` | The default. Fast, and the cheapest | $0.10 | $0.50 |
+| `gpt-6.1-terra` | A step up for trickier prompts and screenshots | $1.00 | $5.00 |
+| `gpt-6.1-sol` | Complex prompts, near top-tier quality | $2.00 | $10.00 |
+| `gpt-6-astra` | The most capable, when quality matters more than cost | $10.00 | $50.00 |
+
+To switch, set the model in `~/.config/senti/config.sh`:
+
+```bash
+WF_TEXT_MODEL="gpt-6.1-terra"     # Prompt and Command
+WF_VISION_MODEL="gpt-6.1-terra"   # Context, and Prompt with a screenshot
+```
+
+Models and prices change. To see what your key can use right now:
+
+```bash
+curl -s https://api.openai.com/v1/models \
+  -H "Authorization: Bearer $(cat ~/.config/senti/openai-key)" | grep '"id"'
+```
 
 ## Config
 
