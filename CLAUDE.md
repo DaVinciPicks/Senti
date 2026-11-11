@@ -10,19 +10,16 @@ leaves the Mac (whisper.cpp server bound to `127.0.0.1`). Optional AI modes
 (prompt / command / context) send text — and, with screen context on, a downscaled
 screenshot — to cheap cloud APIs.
 
-- **Repo is PRIVATE (GitHub, verified 2026-10-17). The code is source-available, not open
-  source** — proprietary,
-  "all rights reserved", see `LICENSE`. The owner's name and Mac username were
-  scrubbed from files *and* git history — **do not reintroduce them**
-  (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` / `__HOME__`).
+- **Repo is PUBLIC (GitHub, since 2026-11-11, the owner's decision). The code is
+  source-available, not open source**: "all rights reserved", see `LICENSE`. The owner's
+  name and Mac username were scrubbed from files *and* git history. **Do not reintroduce
+  them** (no real names, no `/Users/<name>/…` paths in committed files; use `$HOME` /
+  `__HOME__`).
 - No roadmap, pricing, or business-entity detail in this repo.
-- **The prompting knowledge base lives in `prompts/`** — merged back in on 2026-10-17 from
-  the separate `senti-kb` repo, with its history, so there is ONE Senti repo. It is the paid
-  artifact: the app is the free on-ramp, the knowledge is what people subscribe to.
-  **Before this repo is ever made public, split `prompts/` out of it and out of its
-  history** (`git filter-repo --path prompts --invert-paths` on a public copy) — a public
-  repo with `prompts/` in its history gives the product away. That is why it was a
-  separate repo from 2026-08-19 to 2026-10-17.
+- **The prompting knowledge base lives in `prompts/`** and ships with the repo. It was a
+  separate repo (`senti-kb`) from 2026-08-19 to 2026-10-17 and was merged back with its
+  history. An earlier plan treated it as a paid artifact to split out before going public;
+  that plan was dropped on 2026-11-11. The AI modes need the user's own API key to run.
 
 ## Repo → live system (the mental model that matters most)
 

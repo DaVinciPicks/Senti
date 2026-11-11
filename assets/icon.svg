@@ -1,52 +1,23 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Senti app icon — "waveform mic".
-       One focal object: a mic capsule with the waveform cut into it as negative
-       space, so it reads as a solid mic silhouette at 16px and reveals the
-       sound metaphor at 512px+. Real gradients (not stacked flat rects, which
-       is what made the old PIL icon look like it had a seam). Hard edges only —
-       no feathering, no baked drop shadows. -->
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.35" y2="1">
-      <stop offset="0"   stop-color="#4C1D95"/>
-      <stop offset="0.55" stop-color="#312E81"/>
-      <stop offset="1"   stop-color="#1E1B4B"/>
-    </linearGradient>
-    <!-- Top sheen: a real soft falloff, kept inside the tile. -->
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0"    stop-color="#FFFFFF" stop-opacity="0.20"/>
-      <stop offset="0.45" stop-color="#FFFFFF" stop-opacity="0.05"/>
-      <stop offset="1"    stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="mic" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF"/>
-      <stop offset="1" stop-color="#C7D2FE"/>
-    </linearGradient>
-
-    <!-- Waveform cut into the capsule. Bars are sized so they vanish gracefully
-         below ~64px rather than turning to mush. -->
-    <mask id="wave">
-      <rect x="0" y="0" width="1024" height="1024" fill="#fff"/>
-      <g fill="#000">
-        <rect x="440" y="356" width="20" height="118" rx="10"/>
-        <rect x="478" y="320" width="20" height="190" rx="10"/>
-        <rect x="516" y="296" width="20" height="238" rx="10"/>
-        <rect x="554" y="336" width="20" height="158" rx="10"/>
-      </g>
-    </mask>
-  </defs>
-
-  <!-- Tile. Legacy .icns is unmasked, so the rounded rect is ours to draw.
-       824x824 art area on a 1024 canvas is the standard macOS proportion. -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
-
-  <!-- Mic: capsule + stand + stem + foot, one consistent light direction. -->
-  <g fill="url(#mic)">
-    <rect x="422" y="266" width="180" height="298" rx="90" mask="url(#wave)"/>
-    <rect x="495" y="646" width="34" height="104" rx="17"/>
-    <rect x="410" y="752" width="204" height="34" rx="17"/>
-  </g>
-  <!-- Stand: open U, drawn as a stroked arc so it stays optically even. -->
-  <path d="M 356 486 A 156 156 0 0 0 668 486"
-        fill="none" stroke="url(#mic)" stroke-width="36" stroke-linecap="round"/>
+<defs>
+<linearGradient id="bg" x1="0.15" y1="0" x2="0.85" y2="1">
+  <stop offset="0" stop-color="#4C9BFF"/><stop offset="0.48" stop-color="#1668FF"/><stop offset="1" stop-color="#0A2FA8"/></linearGradient>
+<radialGradient id="glow" cx="0.5" cy="0.08" r="0.75"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/><stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0.04"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.55"/><stop offset="0.5" stop-color="#FFFFFF" stop-opacity="0.08"/><stop offset="1" stop-color="#001A66" stop-opacity="0.35"/></linearGradient>
+<linearGradient id="ink" gradientUnits="userSpaceOnUse" x1="512" y1="60" x2="512" y2="964"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DCE8FF"/></linearGradient>
+<filter id="lift" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#04155C" flood-opacity="0.38"/></filter>
+</defs>
+  <!-- Senti app icon: a bold S with a waveform rising from its top bowl and
+       falling from its bottom bowl, on a blue tile.
+       Construction: the S is two circles of the same radius stacked on one axis,
+       drawn as a single stroked path. The top waveform is seven round-topped bars
+       under a centre-weighted envelope; the bottom one is the same group rotated
+       180 degrees, so the mark has point symmetry. Used for 128px and up. -->
+<rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)"/>
+<rect x="100" y="100" width="824" height="824" rx="186" fill="url(#glow)"/>
+<rect x="103" y="103" width="818" height="818" rx="183" fill="none" stroke="url(#rim)" stroke-width="6"/>
+<g filter="url(#lift)" transform="translate(512 512) scale(0.69) translate(-512 -512)">
+<g fill="url(#ink)"><path d="M 340.0 234.3 L 340.0 147.4 A 19.0 19.0 0 0 1 378.0 147.4 L 378.0 234.3 Z"/><path d="M 391.0 186.1 L 391.0 67.8 A 19.0 19.0 0 0 1 429.0 67.8 L 429.0 186.1 Z"/><path d="M 442.0 160.7 L 442.0 19.4 A 19.0 19.0 0 0 1 480.0 19.4 L 480.0 160.7 Z"/><path d="M 493.0 149.8 L 493.0 3.0 A 19.0 19.0 0 0 1 531.0 3.0 L 531.0 149.8 Z"/><path d="M 544.0 160.7 L 544.0 19.4 A 19.0 19.0 0 0 1 582.0 19.4 L 582.0 160.7 Z"/><path d="M 595.0 186.1 L 595.0 67.8 A 19.0 19.0 0 0 1 633.0 67.8 L 633.0 186.1 Z"/><path d="M 646.0 234.3 L 646.0 147.4 A 19.0 19.0 0 0 1 684.0 147.4 L 684.0 234.3 Z"/><rect x="226.0" y="266.0" width="36" height="96" rx="18"/><rect x="762.0" y="266.0" width="36" height="96" rx="18"/><g transform="rotate(180 512 512)"><path d="M 340.0 234.3 L 340.0 147.4 A 19.0 19.0 0 0 1 378.0 147.4 L 378.0 234.3 Z"/><path d="M 391.0 186.1 L 391.0 67.8 A 19.0 19.0 0 0 1 429.0 67.8 L 429.0 186.1 Z"/><path d="M 442.0 160.7 L 442.0 19.4 A 19.0 19.0 0 0 1 480.0 19.4 L 480.0 160.7 Z"/><path d="M 493.0 149.8 L 493.0 3.0 A 19.0 19.0 0 0 1 531.0 3.0 L 531.0 149.8 Z"/><path d="M 544.0 160.7 L 544.0 19.4 A 19.0 19.0 0 0 1 582.0 19.4 L 582.0 160.7 Z"/><path d="M 595.0 186.1 L 595.0 67.8 A 19.0 19.0 0 0 1 633.0 67.8 L 633.0 186.1 Z"/><path d="M 646.0 234.3 L 646.0 147.4 A 19.0 19.0 0 0 1 684.0 147.4 L 684.0 234.3 Z"/><rect x="226.0" y="266.0" width="36" height="96" rx="18"/><rect x="762.0" y="266.0" width="36" height="96" rx="18"/></g></g>
+<path d="M 646.8 296.2 A 150 150 0 1 0 512 512 A 150 150 0 1 1 377.2 727.8" fill="none" stroke="url(#ink)" stroke-width="132" stroke-linecap="round"/>
+</g>
 </svg>

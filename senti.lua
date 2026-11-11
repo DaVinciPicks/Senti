@@ -76,25 +76,47 @@ local function menuIcon()
 end
 
 -- ── Floating HUD pill: bottom-center overlay, Senti mark + live waveform ─
--- Brand-aligned: the violet is the app icon's gradient top (#A78BFA on dark),
+-- Brand-aligned: the blue is the app icon's blue, lifted for a dark surface,
 -- so the HUD reads as part of the product rather than a generic system alert.
--- The mark on the left is the SAME geometry as assets/icon-menubar.svg, drawn
+-- The mark on the left is the SAME S as assets/icon-menubar.svg, drawn
 -- natively in canvas rather than loaded as an image — a template PNG can only
 -- be black, and this needs to change colour to carry state.
 local HUD_W, HUD_H, NBARS = 224, 54, 8
 local BAR_W, BAR_GAP, BAR_X = 4, 8, 142
-local ACCENT  = { red = 0.655, green = 0.545, blue = 0.980, alpha = 1 }  -- violet, recording
+local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- blue, recording
 local WORKING = { red = 0.984, green = 0.749, blue = 0.141, alpha = 1 }  -- amber, transcribing
 wf.hud = { canvas = nil, timer = nil, phase = 0, tone = ACCENT }
 
--- Element indices. Named because a bare c[4] is unreadable and the waveform
+-- Element indices. Named because a bare c[3] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
-local I_CAP, I_STEM, I_BASE, I_ARC, I_LABEL = 3, 4, 5, 6, 7
+local I_MARK, I_LABEL = 3, 4
 
--- Senti mark, scaled from the 44px source viewBox onto the pill.
-local S, OX, OY = 0.62, 12.36, 12.36   -- scale + offset: centres the glyph at (26, 26)
-local function gx(v) return v * S + OX end
-local function gy(v) return v * S + OY end
+-- The Senti S as ONE canvas element centred on (cx, cy); k scales it from the
+-- 44px viewBox of assets/icon-menubar.svg. That S is two stacked circles; canvas
+-- has no arc-in-path, so each 244-degree arc is three cubic Béziers here.
+-- Shared by the HUD and the toast so the two can never drift apart.
+local function markElement(cx, cy, k, col)
+  local function pt(x, y, c1x, c1y, c2x, c2y)
+    local q = { x = (x - 22) * k + cx, y = (y - 22) * k + cy }
+    if c1x then
+      q.c1x, q.c1y = (c1x - 22) * k + cx, (c1y - 22) * k + cy
+      q.c2x, q.c2y = (c2x - 22) * k + cx, (c2y - 22) * k + cy
+    end
+    return q
+  end
+  return { type = "segments", action = "stroke", closed = false,
+           strokeColor = col, strokeWidth = 5.6 * k,
+           strokeCapStyle = "round", strokeJoinStyle = "round",
+           coordinates = {
+             pt(28.29, 11.93),
+             pt(19.91, 8.32, 26.78, 8.82, 23.22, 7.29),
+             pt(15.08, 16.05, 16.61, 9.35, 14.56, 12.64),
+             pt(22.00, 22.00, 15.60, 19.47, 18.54, 22.00),
+             pt(28.92, 27.95, 25.46, 22.00, 28.40, 24.53),
+             pt(24.09, 35.68, 29.44, 31.36, 27.39, 34.65),
+             pt(15.71, 32.07, 20.78, 36.71, 17.22, 35.18),
+           } }
+end
 
 local function hudBuild()
   local scr = hs.screen.mainScreen():frame()
@@ -113,22 +135,7 @@ local function hudBuild()
            roundedRectRadii = { xRadius = HUD_H / 2, yRadius = HUD_H / 2 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
 
-  -- The mark: capsule + stem + base + cradle arc (same shapes as the app icon).
-  c[I_CAP]  = { type = "rectangle", action = "fill",
-                roundedRectRadii = { xRadius = gx(5.5) - gx(0), yRadius = gx(5.5) - gx(0) },
-                fillColor = ACCENT,
-                frame = { x = gx(16.5), y = gy(7), w = 11 * S, h = 19 * S } }
-  c[I_STEM] = { type = "rectangle", action = "fill",
-                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
-                frame = { x = gx(20.7), y = gy(32), w = 2.6 * S, h = 5 * S } }
-  c[I_BASE] = { type = "rectangle", action = "fill",
-                roundedRectRadii = { xRadius = 1.3 * S, yRadius = 1.3 * S }, fillColor = ACCENT,
-                frame = { x = gx(15.5), y = gy(35.6), w = 13 * S, h = 2.6 * S } }
-  -- 90°→270° sweeps clockwise through the bottom, giving the U-shaped cradle.
-  c[I_ARC]  = { type = "arc", action = "stroke", arcRadii = false,
-                center = { x = gx(22), y = gy(22.5) }, radius = 10.5 * S,
-                startAngle = 90, endAngle = 270,
-                strokeColor = ACCENT, strokeWidth = 2.6 * S, strokeCapStyle = "round" }
+  c[I_MARK] = markElement(26, HUD_H / 2, 0.62, ACCENT)
 
   c[I_LABEL] = { type = "text", text = "Listening",
                  frame = { x = 46, y = HUD_H / 2 - 10, w = 92, h = 20 },
@@ -178,8 +185,7 @@ end
 local function hudTint(col)
   local c = wf.hud.canvas
   wf.hud.tone = col
-  c[I_CAP].fillColor, c[I_STEM].fillColor, c[I_BASE].fillColor = col, col, col
-  c[I_ARC].strokeColor = col
+  c[I_MARK].strokeColor = col
   for i = 1, NBARS do c[I_LABEL + i].fillColor = col end
 end
 
@@ -208,34 +214,12 @@ end
 
 -- ── Toast: messages in the HUD's visual language, carrying the Senti mark ──
 -- hs.alert's style table is text-only — no image key — so the brand was being
--- stood in for by a 🎤 emoji. This draws the real mark, same geometry as the
--- HUD and the app icon, and tints it to carry severity.
+-- stood in for by an emoji. This draws the real mark, the same S as the HUD
+-- and the menu bar, and tints it to carry severity.
 wf.toast = { canvas = nil, timer = nil }
 local T_INFO = ACCENT
 local T_WARN = { red = 0.98, green = 0.55, blue = 0.24, alpha = 1 }
 local T_OK   = { red = 0.36, green = 0.85, blue = 0.55, alpha = 1 }
-
--- The mark as a list of canvas elements, positioned around (cx, cy). Factored
--- out because the HUD and the toast must never drift apart visually.
-local function markElements(cx, cy, k, col)
-  local function mx(v) return (v - 22) * k + cx end
-  local function my(v) return (v - 22) * k + cy end
-  return {
-    { type = "rectangle", action = "fill", fillColor = col,
-      roundedRectRadii = { xRadius = 5.5 * k, yRadius = 5.5 * k },
-      frame = { x = mx(16.5), y = my(7), w = 11 * k, h = 19 * k } },
-    { type = "rectangle", action = "fill", fillColor = col,
-      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
-      frame = { x = mx(20.7), y = my(32), w = 2.6 * k, h = 5 * k } },
-    { type = "rectangle", action = "fill", fillColor = col,
-      roundedRectRadii = { xRadius = 1.3 * k, yRadius = 1.3 * k },
-      frame = { x = mx(15.5), y = my(35.6), w = 13 * k, h = 2.6 * k } },
-    { type = "arc", action = "stroke", arcRadii = false, strokeColor = col,
-      center = { x = mx(22), y = my(22.5) }, radius = 10.5 * k,
-      startAngle = 90, endAngle = 270,
-      strokeWidth = 2.6 * k, strokeCapStyle = "round" },
-  }
-end
 
 function wf.notify(msg, secs, tone)
   secs, tone = secs or 3, tone or T_INFO
@@ -257,7 +241,7 @@ function wf.notify(msg, secs, tone)
   c[2] = { type = "rectangle", action = "stroke",
            roundedRectRadii = { xRadius = 16, yRadius = 16 },
            strokeColor = { white = 1, alpha = 0.10 }, strokeWidth = 1 }
-  for _, e in ipairs(markElements(32, H / 2, 0.52, tone)) do c[#c + 1] = e end
+  c[#c + 1] = markElement(32, H / 2, 0.52, tone)
   c[#c + 1] = { type = "text", text = tostring(msg),
                 frame = { x = 58, y = 15, w = W - 74, h = H - 24 },
                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
