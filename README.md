@@ -7,6 +7,8 @@
 <p align="center">Free, local speech-to-text for macOS. Hold a key, speak, and your words are typed
 into whatever app you're in. Audio never leaves your Mac.</p>
 
+<p align="center"><a href="https://usesenti.io">usesenti.io</a></p>
+
 *Senti* is Italian for "listen."
 
 I built it because I wanted to speak naturally, keep audio processing local, improve my prompts,
