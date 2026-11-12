@@ -118,12 +118,12 @@ can be measured. Results go to `eval/history.csv`.
 You need a Mac with Apple Silicon (M1 or later) and [Homebrew](https://brew.sh).
 
 ```bash
-git clone https://github.com/DaVinciPicks/Senti.git ~/code/senti
+git clone https://github.com/Leonardo-Engineering/Senti.git ~/code/senti
 cd ~/code/senti && ./install.sh
 ```
 
 You can also download the latest release from the
-[Releases page](https://github.com/DaVinciPicks/Senti/releases/latest), unzip it, and run
+[Releases page](https://github.com/Leonardo-Engineering/Senti/releases/latest), unzip it, and run
 `./install.sh` from that folder.
 
 The installer checks for the tools Senti uses (whisper-cpp, sox, resvg and Hammerspoon) and
