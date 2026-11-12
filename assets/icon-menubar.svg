@@ -2,7 +2,7 @@
   <!-- Menu-bar template image, 22x18pt drawn at 2x. macOS uses ONLY the alpha
        channel as a silhouette and tints it for light, dark and active, so this is
        solid black on transparent.
-       A waveform alone: five bars, wider in the middle like the logo's waveform.
+       A waveform alone: five bars, wider in the middle. It shows dictation, not the brand.
        Every edge sits on a whole pixel at 1x and 2x (x and width in steps of 2,
        heights in steps of 4), so it renders sharp. make-icon.sh renders it at
        exactly 22x18 and 44x36; senti.lua loads the 2x file. -->
