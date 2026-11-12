@@ -91,10 +91,15 @@ end
 -- say one thing: "I'm hearing you". The AI modes add a short label, because
 -- there the pill is the only place that says which mode a held key started.
 -- The brand mark lives in the menu bar, the app icon and the toasts instead.
+-- Text uses the macOS system font through its UI names, which every Mac has.
+-- Naming "SF Pro Text" only works where Apple's font download is installed;
+-- elsewhere macOS silently substitutes another face. Sizes follow Apple's HIG:
+-- 13 pt is the macOS default, medium weight for the mode label.
+local SYS_FONT, SYS_FONT_MEDIUM = ".AppleSystemUIFont", ".AppleSystemUIFontMedium"
 local HUD_H, NBARS = 34, 9
 local BAR_W, BAR_PITCH = 3, 7
 local BARS_SPAN = (NBARS - 1) * BAR_PITCH + BAR_W
-local HUD_PAD, LABEL_W, LABEL_GAP = 20, 62, 10
+local HUD_PAD, LABEL_W, LABEL_GAP = 20, 68, 10
 local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- brand blue (toasts, working)
 local VOICE   = { white = 0.97, alpha = 1 }                               -- recording
 local WORKING = ACCENT                                                    -- transcribing / thinking
@@ -120,8 +125,8 @@ local function hudBuild()
 
   c[I_LABEL] = { type = "text", text = "",
                  frame = { x = HUD_PAD - 4, y = HUD_H / 2 - 9, w = LABEL_W, h = 18 },
-                 textColor = { white = 0.97, alpha = 1 }, textSize = 12,
-                 textFont = "SF Pro Text" }
+                 textColor = { white = 0.97, alpha = 1 }, textSize = 13,
+                 textFont = SYS_FONT_MEDIUM }
 
   for i = 1, NBARS do
     c[I_LABEL + i] = { type = "rectangle", action = "fill",
@@ -209,7 +214,7 @@ wf.toast = { canvas = nil, timer = nil }
 local T_INFO = ACCENT
 local T_OK   = ACCENT
 local T_WARN = { red = 0.98, green = 0.62, blue = 0.24, alpha = 1 }
-local TOAST_FONT = { name = "SF Pro Text", size = 13 }
+local TOAST_FONT = { name = SYS_FONT, size = 13 }
 
 function wf.notify(msg, secs, tone)
   secs, tone = secs or 3, tone or T_INFO
