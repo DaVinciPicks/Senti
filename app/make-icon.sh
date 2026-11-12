@@ -3,9 +3,9 @@
 #
 # Every size is re-rasterised from the SVG rather than downsampled from one
 # bitmap, which keeps 16px crisp instead of blurry. 16 and 32px use
-# icon-small.svg (the S with two bars each side);
-# 64px and up use icon.svg, the full logo. Below 64px the full logo's waveform
-# blurs and the S reads as a dollar sign.
+# icon-small.svg (the same ribbon S drawn thicker, no fold shading);
+# 64px and up use icon.svg, the full logo. Below 64px the thin ribbon tail
+# and the fold shading blur away.
 #
 # Deps: resvg (brew) + iconutil (Apple). No Python, no Pillow.
 set -uo pipefail
