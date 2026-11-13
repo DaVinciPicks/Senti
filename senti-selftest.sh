@@ -532,7 +532,10 @@ SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Ter
 /usr/bin/grep -q "resolved exact model 'claude-opus-5-5'" "$WF_LOG" && ok "Claude Code on claude-opus-5-5 gets its exact KB section" || bad "no exact section for claude-opus-5-5"
 printf '{"message":{"model":"claude-opus-5-9"}}\n' > "$SB/.claude/projects/-x-code-selftestproj/s.jsonl"
 SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Terminal >/dev/null 2>&1
-/usr/bin/grep -q "fallback model 'claude-opus-5' for 'claude-opus-5-9'" "$WF_LOG" && ok "a model newer than the KB falls back to the nearest older id, logged" || bad "nearest-older fallback did not fire"
+/usr/bin/grep -q "fallback model 'claude-opus-5-5' for 'claude-opus-5-9'" "$WF_LOG" && ok "a model newer than the KB falls back to the nearest older id (claude-opus-5-9 takes 5-5), logged" || bad "nearest-older fallback did not pick claude-opus-5-5"
+printf '{"message":{"model":"claude-opus-6"}}\n' > "$SB/.claude/projects/-x-code-selftestproj/s.jsonl"
+SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Terminal >/dev/null 2>&1
+/usr/bin/grep -q "for 'claude-opus-6'" "$WF_LOG" && bad "claude-opus-6 borrowed an older generation's section" || ok "a new generation (claude-opus-6) never borrows claude-opus-5"
 
 echo "── prompt-mode path parity ──"
 # Parity is STRUCTURAL: both paths source senti-lib.sh and call BOTH shared functions
