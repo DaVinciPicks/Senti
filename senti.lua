@@ -287,7 +287,7 @@ function wf.noticeFor(code, label, model, mode)
   local t = wf.NOTICE[code] or wf.NOTICE_OTHER
   t = t:gsub("<P>", function() return label or "The provider" end)
        :gsub("<id>", function() return model or "you picked" end)
-  t = t:gsub("^Add a ([AEIOU])", "Add an %1")   -- "an OpenAI key", "an Anthropic key"
+  t = t:gsub("^Add a ([AEIOU])", "Add an %1")   -- an article that fits OpenAI or Anthropic
   t = t:gsub(" " .. CLIP_LINE:gsub("%.", "%%.") .. "$", "")
   if code == 19 then t = t .. "." end
   return t .. "\n" .. ((mode == "command") and SEL_LINE or CLIP_LINE)
