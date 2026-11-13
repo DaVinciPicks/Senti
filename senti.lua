@@ -1311,7 +1311,7 @@ function wf.saveKey(provider, key)
     if code == 0 or code == 19 then
       wf.panelSaved[provider] = true
       wf.keyTests[provider] = (code == 19) and { state = "keychain", detail = wf.testDetail("keychain"), at = os.time() } or nil
-      wf.log("keys: saved a " .. provider .. " key" .. (code == 19 and " (Keychain unavailable, file fallback)" or ""))
+      wf.log("keys: saved the " .. provider .. " key" .. (code == 19 and " (Keychain unavailable, file fallback)" or ""))
       wf.refreshKeys(function() wf.testKey(provider) end)
     else
       wf.log("keys: saving a " .. provider .. " key failed (exit " .. tostring(code) .. ")")
@@ -2245,10 +2245,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 </header>
 
 <div class="split">
-  <div class="railwrap">
-    <nav class="rail" id="rail" aria-label="Providers"></nav>
+  <aside class="railwrap" aria-label="Providers">
+    <nav class="rail" id="rail" aria-label="Provider list"></nav>
     <p class="railnote">Senti is open source. <span class="nw">senti-key.sh</span> in the repo is the only code that reads or writes these keys.</p>
-  </div>
+  </aside>
 
   <main class="detail" id="detail">
     <section aria-labelledby="ktitle">
