@@ -115,6 +115,7 @@ _sk_kc_get() {
 # the read-back is the only evidence the key is stored.
 _sk_kc_put() {
   local p="$1" k="$2" label back
+  SK_PUT_STALE=0
   _sk_kc_path_ok && [ -x "$(_sk_sec)" ] || return 19
   label="Senti $(senti_provider_label "$p") API key"
   if [ -n "${SENTI_KEYCHAIN:-}" ]; then
@@ -125,7 +126,9 @@ _sk_kc_put() {
       "$SENTI_KC_SERVICE" "$p" "$label" "$k" | _sk_run 10 -i >/dev/null 2>&1
   fi
   back="$(_sk_kc_get "$p")" || return 19
-  [ "$back" = "$k" ] || return 19
+  # An item still reads but holds something else: the write failed and an OLDER key is left,
+  # which the read path would keep preferring over any file. The caller must deal with it.
+  [ "$back" = "$k" ] || { SK_PUT_STALE=1; return 19; }
   return 0
 }
 # 0 deleted or nothing there, 19 locked or unavailable.
@@ -289,6 +292,15 @@ cmd_set() {
     echo "saved $p key ending ...$(last4 "$k") (Keychain)"
     _sk_log "saved $p key (Keychain)"
     exit 0
+  fi
+  # The write failed but an older key still reads from the Keychain: the read path prefers it,
+  # so a saved file would never be used. Remove the old item, or say plainly nothing changed.
+  if [ "${SK_PUT_STALE:-0}" = 1 ]; then
+    if ! _sk_kc_del "$p" || _sk_kc_get "$p" >/dev/null; then
+      echo "could not replace the older $p key in the Keychain, and Senti would keep using it; nothing was saved. Unlock the Keychain (or remove the io.senti $p item in Keychain Access) and try again." >&2
+      _sk_log "set $p failed: an older Keychain item could not be replaced"
+      exit 19
+    fi
   fi
   write_private "$(senti_key_file "$p")" "$k" || { echo "could not write $(senti_key_file "$p")" >&2; exit 1; }
   echo "saved $p key ending ...$(last4 "$k") (file, mode 600)"
