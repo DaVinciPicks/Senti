@@ -23,7 +23,7 @@
 #
 # Prints ONLY the model's text. Exit codes (every wrapper keeps them; senti.lua maps them
 # to notices): 10 no key, 11 key refused (401/403), 12 quota or credit, 13 model not
-# offered, 14 the model declined, 15 network, 16 provider server error, 17 empty answer,
+# offered, 14 the model declined, 15 network, 16 provider server error, 17 empty or cut-off answer,
 # 18 request rejected, 1 bad input (missing image).
 #
 # Logging: one `ai:` line per call with COUNTS only (provider, model, effort, ms, tokens).
