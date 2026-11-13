@@ -1221,6 +1221,49 @@ function wf.promptKeyDialog(provider)
   wf.notify("Saving and testing your " .. label .. " key…")
 end
 
+-- Model picker: writes ai.pref through `senti-key.sh use` (the helper validates and writes
+-- it atomically, mode 600). A pin in config.sh or the environment wins over ai.pref, so the
+-- picker is read only while one is set.
+function wf.useModel(provider, model)
+  local a = wf.active()
+  if a.pinned then
+    wf.notify("The model is pinned in config.sh, so the picker cannot change it.", nil, wf.TONE.warn)
+    return
+  end
+  local reg = wf.registry or wf.loadRegistry()
+  local info = reg.providers[provider]
+  local m = model and wf.findModel(reg, provider, model)
+  if model and not m then wf.log("picker: " .. provider .. " has no model " .. model .. " in ai-models.json"); return end
+  local text = model or info.default
+  if not text then
+    wf.notify("No model list is installed for " .. info.label .. ".\nRun install.sh again.", nil, wf.TONE.warn)
+    return
+  end
+  -- Screenshots need a model that reads images: keep the chosen one when it does, else the
+  -- provider's default when that does, else let senti-key.sh decide.
+  local vision = (m and m.vision) and m.id or nil
+  if not vision and info.default then
+    local dm = wf.findModel(reg, provider, info.default)
+    if dm and dm.vision then vision = info.default end
+  end
+  local args = { "use", provider, text }
+  if vision then args[4] = vision end
+  wf.keyTask(args, nil, function(code)
+    if code ~= 0 then
+      wf.log("picker: senti-key.sh use failed (exit " .. tostring(code) .. ")")
+      wf.notify("Senti could not switch the model (senti-key.sh exit " .. tostring(code) .. ").", nil, wf.TONE.warn)
+      wf.panelRefresh()
+      return
+    end
+    wf.log("picker: now " .. provider .. " " .. text .. (vision and (" / " .. vision) or ""))
+    wf.refreshKeys(function()
+      local k = wf.keys and wf.keys.keys[provider]
+      local tail = (k and k.present) and "" or ("\nAdd a key for " .. info.label .. " in AI provider and key.")
+      wf.notify("Senti writes with " .. text .. " on " .. info.label .. " now." .. tail, nil, wf.TONE.ok)
+    end)
+  end)
+end
+
 -- ── Transcription pipeline ─────────────────────────────────────────────
 -- Poll briefly for the async screenshot — a very short utterance can outrun the
 -- ~200ms screencapture. cb(true) if it appears within ~1s, else cb(false).
@@ -1487,6 +1530,51 @@ function wf.snapAndCapture(mode)
 end
 
 -- ── Menu bar ───────────────────────────────────────────────────────────
+-- The AI submenu: what Senti writes with, what it writes for, and the picker. Built from
+-- the cached status and registry, so opening the menu spawns nothing for keys.
+local function aiMenu()
+  local reg = wf.registry or wf.loadRegistry()
+  local a = wf.active()
+  local label = wf.providerLabel(a.provider)
+  local items = {
+    { title = "Senti writes with: " .. (a.text_model or "no model set") .. " on " .. label
+              .. (a.pinned and ((a.source == "env") and " (pinned in the environment)" or " (pinned in config.sh)") or ""),
+      disabled = true },
+    { title = "Written for: " .. (wf.writtenFor() or "detected from the app you prompt into"), disabled = true },
+    { title = "-" },
+  }
+  local provs = {}
+  for _, p in ipairs(wf.PROVIDERS) do
+    local info = reg.providers[p]
+    local k = wf.keys and wf.keys.keys[p]
+    local have = k and k.present
+    provs[#provs + 1] = {
+      title = info.label .. (info.available and "" or " (New)") .. ":  "
+              .. (have and ("key ending …" .. (k.last4 or "")) or "needs a key"),
+      checked = (a.provider == p), disabled = a.pinned,
+      fn = function() if have then wf.useModel(p, nil) else wf.openPanel(p) end end }
+  end
+  items[#items + 1] = { title = "Provider", menu = provs }
+  local models = {}
+  if a.pinned then
+    models[1] = { title = (a.source == "env") and "Pinned in the environment" or "Pinned in config.sh", disabled = true }
+    models[2] = { title = "-" }
+  end
+  for _, m in ipairs(wf.modelsFor(reg, a.provider)) do
+    models[#models + 1] = { title = m.id .. "    " .. wf.priceLine(m),
+      checked = (a.text_model == m.id), disabled = a.pinned,
+      tooltip = m.role .. ". " .. (wf.costEstimate(m) or ""),
+      fn = function() wf.useModel(a.provider, m.id) end }
+  end
+  if #wf.modelsFor(reg, a.provider) == 0 then models[#models + 1] = { title = "No model list installed", disabled = true } end
+  items[#items + 1] = { title = "Model", menu = models }
+  local have = wf.keys and wf.keys.keys[a.provider] and wf.keys.keys[a.provider].present
+  items[#items + 1] = { title = "Test key", disabled = not have, fn = function() wf.testKey(a.provider, true) end }
+  items[#items + 1] = { title = "-" }
+  items[#items + 1] = { title = "Add a key in a plain dialog…", fn = function() wf.promptKeyDialog() end }
+  return items
+end
+
 wf.bar = hs.menubar.new()
 local function menu()
   local serverUp = hs.execute(wf.BASH .. " '" .. wf.DICTATE .. "' server"):gsub("%s+","") == "up"
@@ -1512,7 +1600,7 @@ local function menu()
       } },
     { title = "-" },
     { title = "AI provider and key…", fn = function() wf.openPanel() end },
-    { title = "Add a key in a plain dialog…", fn = function() wf.promptKeyDialog() end },
+    { title = "AI", menu = aiMenu() },
     { title = "-" },
     { title = "Grant / test microphone", fn = function()
         -- Step 1: request authorization (prompts on first use), then Step 2: verify capture.
