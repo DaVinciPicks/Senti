@@ -859,6 +859,58 @@ function wf.notify(msg, secs, tone)
 end
 wf.TONE = { info = T_INFO, warn = T_WARN, ok = T_OK }
 
+-- Abandon the turn in flight: bumping the id makes its late callback drop its result
+-- instead of pasting into whatever app is focused by then. Don't lose the user's words with
+-- the turn: give back what they had copied (command mode cleared it to read the selection),
+-- else what they said. Returns "words" when the words went to the clipboard.
+function wf.abandonTurn()
+  local abandoned = wf.turn
+  wf.turn = (wf.turn or 0) + 1
+  local p = wf.pending
+  wf.pending = nil
+  if p and p.turn ~= abandoned then p = nil end   -- left over from an earlier turn
+  if p and p.clip then
+    wf.restoreClipboard(p.clip, hs.pasteboard.changeCount())
+  elseif p and p.raw then
+    wf.setPrivateClipboard(p.raw); return "words"
+  end
+  return nil
+end
+
+-- ── Esc cancels (UI-8) ───────────────────────────────────────────────
+-- The tap runs ONLY while Senti is recording or working, so every other app keeps Esc the
+-- rest of the time (Claude Code uses it to interrupt). On wf.* so GC cannot collect it.
+local ESC = 53
+function wf.cancelTurn()
+  if wf.state == "recording" then
+    wf.held = nil
+    wf.turn = (wf.turn or 0) + 1            -- nothing from this capture may paste later
+    wf.pending = nil
+    -- "cancel" stops sox and transcribes nothing; argv carries only the verb.
+    hs.task.new(wf.BASH, function() wf.sweepCache() end, { wf.DICTATE, "cancel" }):start()
+    wf.log("esc: recording cancelled")
+    wf.setState("idle")
+    wf.hud.flash("Cancelled", 1)
+  elseif wf.state == "working" then
+    local back = wf.abandonTurn()
+    wf.log("esc: working turn abandoned")
+    wf.setState("idle")
+    wf.hud.flash("Cancelled", 1)
+    if back == "words" then wf.notify("Cancelled. What you said is on the clipboard.") end
+  end
+end
+if wf.escTap then wf.escTap:stop() end
+wf.escTap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(e)
+  local ok, acted = pcall(function()
+    if e:getKeyCode() ~= ESC then return false end
+    if wf.state ~= "recording" and wf.state ~= "working" then return false end
+    wf.cancelTurn()
+    return true
+  end)
+  if not ok then wf.log("esc tap ERROR: " .. tostring(acted)); return false end
+  return acted == true   -- swallow only the Esc that cancelled
+end)
+
 function wf.setState(s)
   wf.state = s
   if wf.bar then
@@ -867,26 +919,21 @@ function wf.setState(s)
     else wf.bar:setTitle("●") end   -- template missing (icon build skipped): stay visible
   end
   if s == "recording" or s == "working" then wf.hud.show(s) else wf.hud.hide() end
+  if wf.escTap then
+    if s == "recording" or s == "working" then
+      if not wf.escTap:isEnabled() then wf.escTap:start() end
+    else
+      wf.escTap:stop()
+    end
+  end
   -- Watchdog: never let a silent task or a missed key-up wedge the tool.
   if wf.stuckTimer then wf.stuckTimer:stop(); wf.stuckTimer = nil end
   if s == "working" then
     wf.stuckTimer = hs.timer.doAfter(75, function()
       if wf.state == "working" then
-        -- Abandon the turn: bumping the id makes its late callback drop its result
-        -- instead of pasting into whatever app is focused by then.
-        local abandoned = wf.turn
-        wf.turn = (wf.turn or 0) + 1
         wf.log("watchdog: 'working' stuck 75s → turn abandoned, reset idle")
-        -- Don't lose the user's words with the turn: give back what they had copied
-        -- (command mode cleared it to read the selection), else what they said.
-        local p, msg = wf.pending, "That took too long and was cancelled."
-        wf.pending = nil
-        if p and p.turn ~= abandoned then p = nil end   -- left over from an earlier turn
-        if p and p.clip then
-          wf.restoreClipboard(p.clip, hs.pasteboard.changeCount())
-        elseif p and p.raw then
-          wf.setPrivateClipboard(p.raw); msg = msg .. "\nWhat you said is on the clipboard."
-        end
+        local msg = "That took too long and was cancelled."
+        if wf.abandonTurn() == "words" then msg = msg .. "\nWhat you said is on the clipboard." end
         wf.notify(msg, 5, wf.TONE.warn)
         wf.setState("idle")
       end
@@ -1856,6 +1903,7 @@ local function menu()
     { title = "-" },
     { title = "Hold right ⌥ = dictate · right ⌘ = prompt · Fn(🌐) = command", disabled = true },
     { title = "Toggles: ⌃⌥D dictate · ⌃⌥P prompt · ⌃⌥C command · ⌃⌥V context", disabled = true },
+    { title = "Esc cancels while the pill is showing", disabled = true },
     { title = "-" },
     { title = "Speed", menu = {
         { title = (curModel == "fast" and "✓ " or "   ") .. "Fast (base.en, ~0.3s)", fn = function()
@@ -1963,6 +2011,12 @@ wf.watchdog = hs.timer.doEvery(5, function()
   if wf.flagWatcher and not wf.flagWatcher:isEnabled() then
     wf.log("watchdog: tap was disabled — re-arming")
     wf.flagWatcher:start()
+  end
+  -- The Esc tap follows the state: on while recording or working, off otherwise.
+  if wf.escTap then
+    local busy = (wf.state == "recording" or wf.state == "working")
+    if busy and not wf.escTap:isEnabled() then wf.escTap:start()
+    elseif not busy and wf.escTap:isEnabled() then wf.escTap:stop() end
   end
 end)
 
