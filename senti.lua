@@ -423,6 +423,22 @@ function wf.lastRequestView(t, labelFor)
   return { empty = false, rows = rows, parts = list }
 end
 
+-- HUD motion maths. easeBar: frame-rate independent exponential approach with a fast
+-- attack (0.03 s) and a slower release (0.09 s); dt is clamped so a stalled timer can't
+-- overshoot. easeTo: the same with one time constant. mixColor: RGB blend, k in 0..1.
+function wf.easeTo(d, t, dt, tau)
+  dt = math.max(0, math.min(0.1, dt or 0))
+  return d + (t - d) * (1 - math.exp(-dt / tau))
+end
+function wf.easeBar(d, t, dt)
+  return wf.easeTo(d, t, dt, (t > d) and 0.03 or 0.09)
+end
+function wf.mixColor(a, b, k, alpha)
+  k = math.max(0, math.min(1, k or 0))
+  return { red = a.red + (b.red - a.red) * k, green = a.green + (b.green - a.green) * k,
+           blue = a.blue + (b.blue - a.blue) * k, alpha = alpha or 1 }
+end
+
 -- ~/.config/senti/ui.pref: strict key=value lines, never sourced or executed.
 function wf.parseUIPref(text)
   local p = { prompt_screen = true, panel_seen = false }
@@ -474,10 +490,29 @@ local BAR_W, BAR_PITCH = 3, 7
 local BARS_SPAN = (NBARS - 1) * BAR_PITCH + BAR_W
 local HUD_PAD, LABEL_W, LABEL_GAP = 20, 68, 10
 local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- brand blue (toasts, working)
-local VOICE   = { white = 0.97, alpha = 1 }                               -- recording
+-- RGB, not { white = … }, so the recording → working blend can mix the two.
+local VOICE   = { red = 0.97, green = 0.97, blue = 0.97, alpha = 1 }       -- recording
 local WORKING = ACCENT                                                    -- transcribing / thinking
-wf.hud = { canvas = nil, timer = nil, phase = 0, tone = VOICE, barX = HUD_PAD,
-           levels = {}, live = false, seen = false, lastSize = 0, since = 0 }  -- see hudSample
+-- Motion (u4-motion fixes 3, 5, 7, 8, 10, 14). One render rate, used only while the pill
+-- shows; drop HUD_FPS to 30 if a 10 s hold costs Hammerspoon more than about 15% CPU.
+local HUD_FPS      = 60
+local SAMPLE_EVERY = 0.05   -- s between capture.wav reads (sox writes a 64 ms block)
+local BLEND        = 0.2    -- s for the recording → working colour and height blend
+local WAIT_ALPHA   = 0.45   -- bars before the first real audio block: armed, not hearing
+local AI_LABEL     = { prompt = "Prompt", command = "Command", context = "Context" }
+wf.hud = wf.hud or {}
+wf.hud.barX, wf.hud.levels, wf.hud.shown, wf.hud.drawn = HUD_PAD, {}, {}, {}
+wf.hud.live, wf.hud.seen, wf.hud.lastSize, wf.hud.since = false, false, 0, 0
+
+-- macOS Reduce Motion: read at launch and again at each key-down (a cheap system call,
+-- no process). When on, fades and blends are skipped and the working wave is a still
+-- strip; bars that draw the live mic level are content and keep moving.
+function wf.readReduceMotion()
+  local ok, acc = pcall(hs.screen.accessibilitySettings)
+  wf.hud.reduce = (ok and type(acc) == "table" and acc.ReduceMotion == true) or false
+  return wf.hud.reduce
+end
+wf.readReduceMotion()
 
 -- Element indices. Named because a bare c[3] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
@@ -588,74 +623,155 @@ local function hudSample()
   for _, rms in ipairs(got) do table.remove(lv, 1); lv[NBARS] = levelHeight(rms) end
 end
 
--- Two animations off one timer. Recording: the measured level above. Until the first
--- audio block lands the bars rest flat; if capture.wav never appears within LIVE_GRACE
--- (WF_RUN moved it, or sox failed to start) it falls back to a synthetic wave with a
--- centre-weighted envelope, so the pill never looks hung. Working: a travelling wave,
--- which says "busy" without implying it is still hearing you, and always has motion
--- somewhere on the strip so it never looks hung.
-local function hudAnimate()
-  local c = wf.hud.canvas
-  if not c then return end
-  wf.hud.phase = wf.hud.phase + 1
-  local working = (wf.hud.tone == WORKING)
-  local waiting = false
-  if not working then
-    hudSample()
-    waiting = not wf.hud.live and
-              (wf.hud.seen or (hs.timer.secondsSinceEpoch() - wf.hud.since) < LIVE_GRACE)
-  end
-  for i = 1, NBARS do
-    local h
-    if working then
-      h = 3 + 7 * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.22 - i * 0.7))
-    elseif wf.hud.live then
-      h = wf.hud.levels[i]
-    elseif waiting then
-      h = 3
-    else
-      -- Floor the envelope at 0.6 so the outer bars stay bars, not dots.
-      local env = 0.6 + 0.4 * math.sin(math.pi * (i - 0.5) / NBARS)
-      h = 3 + 15 * env * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.30 + i * 0.75))
-    end
-    c[I_LABEL + i].frame = { x = wf.hud.barX + (i - 1) * BAR_PITCH, y = (HUD_H - h) / 2,
-                             w = BAR_W, h = h }
-  end
-end
-
-local function hudTint(col)
-  local c = wf.hud.canvas
-  wf.hud.tone = col
+-- One timer for every state, at HUD_FPS and only while the pill is on screen. Each bar keeps
+-- a displayed height that eases toward its target (wf.easeBar: fast attack, slower
+-- release), so 64 ms audio blocks arriving on a 50 ms read gate no longer step the bars in
+-- a move, move, move, hold rhythm. Recording: the measured level; until the first block
+-- lands the bars rest flat and dim (armed, not hearing). If capture.wav never appears within
+-- LIVE_GRACE (WF_RUN moved it, or sox failed to start) a synthetic wave stands in, so the
+-- pill never looks hung. Working: a travelling wave, blended in from wherever the bars were.
+local function setBarColor(c, col)
   for i = 1, NBARS do c[I_LABEL + i].fillColor = col end
 end
 
+local function hudTick()
+  local H, c = wf.hud, wf.hud.canvas
+  if not c then return end
+  local now = hs.timer.secondsSinceEpoch()
+  local dt = math.max(0, math.min(0.1, now - (H.lastTick or now)))
+  H.lastTick = now
+  H.phase = (H.phase or 0) + dt
+  local working = (H.state == "working")
+  local waiting = false
+  if not working then
+    if now - (H.lastSample or 0) >= SAMPLE_EVERY then H.lastSample = now; hudSample() end
+    waiting = not H.live and (H.seen or (now - H.since) < LIVE_GRACE)
+  end
+  -- k: 0 = recording look, 1 = working look, smoothstepped over BLEND seconds.
+  local k = 0
+  if working then
+    k = H.reduce and 1 or math.min(1, (now - (H.blendAt or now)) / BLEND)
+    k = k * k * (3 - 2 * k)
+  end
+  local aTarget = (waiting and not working) and WAIT_ALPHA or 1
+  H.alpha = H.reduce and aTarget or wf.easeTo(H.alpha or aTarget, aTarget, dt, 0.08)
+  local col = wf.mixColor(VOICE, WORKING, k, H.alpha)
+  local last = H.lastColor
+  if not last or math.abs(last.red - col.red) + math.abs(last.blue - col.blue) + math.abs(last.alpha - col.alpha) > 0.004 then
+    setBarColor(c, col); H.lastColor = col
+  end
+  for i = 1, NBARS do
+    local t
+    if working then
+      local wave = H.reduce and 6 or (3 + 7 * (0.5 + 0.5 * math.sin(H.phase * 4.4 - i * 0.7)))
+      t = (H.frozen[i] or 3) * (1 - k) + wave * k
+    elseif H.live then
+      t = H.levels[i]
+    elseif waiting then
+      t = 3
+    else
+      -- Floor the envelope at 0.6 so the outer bars stay bars, not dots.
+      local env = 0.6 + 0.4 * math.sin(math.pi * (i - 0.5) / NBARS)
+      t = 3 + 15 * env * (0.5 + 0.5 * math.sin(H.phase * 6 + i * 0.75))
+    end
+    local d = (working and H.reduce) and t or wf.easeBar(H.shown[i] or 3, t, dt)
+    H.shown[i] = d
+    if math.abs(d - (H.drawn[i] or -1)) > 0.05 then
+      H.drawn[i] = d
+      c[I_LABEL + i].frame = { x = H.barX + (i - 1) * BAR_PITCH, y = (HUD_H - d) / 2, w = BAR_W, h = d }
+    end
+  end
+end
+
+local function startHudTimer()
+  if not wf.hud.timer then
+    wf.hud.lastTick = hs.timer.secondsSinceEpoch()
+    wf.hud.timer = hs.timer.doEvery(1 / HUD_FPS, hudTick)
+  end
+end
+
+-- Retire a canvas: fade it out on its own and delete it later. The next turn always gets a
+-- fresh canvas, so a key press during a fade never fights the old one (u4 fix 8).
+local function retireCanvas(c, fade)
+  if not c then return end
+  if fade and not wf.hud.reduce then
+    c:hide(fade)
+    hs.timer.doAfter(fade + 0.13, function() c:delete() end)
+  else
+    c:delete()
+  end
+end
+
+local function freshCanvas()
+  if wf.hud.flashTimer then wf.hud.flashTimer:stop(); wf.hud.flashTimer = nil end
+  retireCanvas(wf.hud.canvas, nil)
+  wf.hud.canvas = hudBuild()
+  wf.hud.drawn, wf.hud.lastColor = {}, nil
+  return wf.hud.canvas
+end
+
 function wf.hud.show(s)
-  if not wf.hud.canvas then wf.hud.canvas = hudBuild() end
-  local c = wf.hud.canvas
+  local H = wf.hud
+  if s == "thinking" then s = "working" end   -- one state now; the label already says Thinking
   if s == "recording" then
-    hudTint(VOICE)
+    wf.readReduceMotion()
+    local c = freshCanvas()
     -- A fresh history per turn. Start from the current size of any capture.wav still
     -- on disk, so a previous turn's audio is never drawn as this one's.
-    wf.hud.levels, wf.hud.live, wf.hud.seen = {}, false, false
-    for i = 1, NBARS do wf.hud.levels[i] = 3 end
-    wf.hud.lastSize = hs.fs.attributes(wf.CACHE .. "/capture.wav", "size") or 0
-    wf.hud.since = hs.timer.secondsSinceEpoch()
+    H.levels, H.shown, H.live, H.seen = {}, {}, false, false
+    for i = 1, NBARS do H.levels[i] = 3; H.shown[i] = 3 end
+    H.lastSize = hs.fs.attributes(wf.CACHE .. "/capture.wav", "size") or 0
+    H.since, H.lastSample, H.phase = hs.timer.secondsSinceEpoch(), 0, 0
+    H.state, H.alpha = "recording", WAIT_ALPHA
     -- Plain dictation shows bars only; the AI modes name themselves.
-    local labels = { prompt = "Prompt", command = "Command", context = "Context" }
-    hudLayout(labels[wf.mode])
-  elseif s == "working" or s == "thinking" then
-    hudTint(WORKING)
-    hudLayout((s == "thinking") and "Thinking" or nil)
+    hudLayout(AI_LABEL[wf.mode])
+    hudTick()
+    c:show()                                   -- instant: a key press wants instant feedback
+  elseif s == "working" then
+    if not H.canvas then                       -- e.g. a watchdog path with no recording pill
+      freshCanvas(); H.shown, H.levels = {}, {}
+      for i = 1, NBARS do H.shown[i] = 3; H.levels[i] = 3 end
+      H.alpha, H.phase = 1, 0
+      hudLayout(AI_LABEL[wf.mode] and "Thinking" or nil)
+      H.canvas:show()
+    end
+    if H.state ~= "working" then
+      H.state, H.blendAt, H.frozen = "working", hs.timer.secondsSinceEpoch(), {}
+      for i = 1, NBARS do H.frozen[i] = H.shown[i] or 3 end
+    end
+    -- AI modes swap "Prompt" for "Thinking" in the same box: the width stays put (it used
+    -- to pop 173 → 99 → 173 px). Plain dictation stays bars only.
+    if AI_LABEL[wf.mode] then H.canvas[I_LABEL].text = "Thinking" end
   end
-  -- One timer for both states; hudAnimate branches on tone. Previously the
-  -- working state stopped the timer and froze the bars flat, which looked hung.
-  if not wf.hud.timer then wf.hud.timer = hs.timer.doEvery(0.05, hudAnimate) end
-  c:show()
+  startHudTimer()
 end
 
 function wf.hud.hide()
-  if wf.hud.timer then wf.hud.timer:stop(); wf.hud.timer = nil end
-  if wf.hud.canvas then wf.hud.canvas:hide() end
+  local H = wf.hud
+  if H.timer then H.timer:stop(); H.timer = nil end
+  local old = H.canvas
+  H.canvas, H.state = nil, nil
+  retireCanvas(old, 0.12)
+end
+
+-- A one-word message in the pill (for example "Cancelled"), centred, then gone.
+function wf.hud.flash(text, secs)
+  local H = wf.hud
+  if H.timer then H.timer:stop(); H.timer = nil end
+  H.state = nil
+  local c = freshCanvas()
+  local w = LABEL_W + 2 * HUD_PAD
+  local scr = hs.screen.mainScreen():frame()
+  c:frame({ x = scr.x + (scr.w - w) / 2, y = scr.y + scr.h - HUD_H - 28, w = w, h = HUD_H })
+  c[I_LABEL].text = hs.styledtext.new(text, { font = { name = SYS_FONT_MEDIUM, size = 13 },
+    color = { white = 0.97, alpha = 1 }, paragraphStyle = { alignment = "center" } })
+  c[I_LABEL].frame = { x = HUD_PAD, y = HUD_H / 2 - 9, w = LABEL_W, h = 18 }
+  setBarColor(c, { white = 0, alpha = 0 })
+  c:show()
+  H.flashTimer = hs.timer.doAfter(secs or 1, function()
+    H.flashTimer = nil
+    if H.canvas == c and H.state == nil then H.canvas = nil; retireCanvas(c, 0.12) end
+  end)
 end
 
 -- ── Toast: short messages in the same dark pill language as the HUD ──────
