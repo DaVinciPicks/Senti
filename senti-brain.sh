@@ -2,7 +2,7 @@
 # Second-brain bridge: pull a SMALL digest of the user's own notes for the project
 # they're working in, so prompt mode knows what the project actually is.
 #
-#   senti-brain.sh <project-hint>             # e.g. "senti", "davincibets_main"
+#   senti-brain.sh <project-hint>             # e.g. "senti", "my-app"
 #   senti-brain.sh --preview <project-hint>   # print, locally, what would ride a heavy
 #                                             # Prompt turn and where it would go; no network
 #
