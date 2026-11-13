@@ -2269,7 +2269,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .status .swap { transition: opacity 160ms ease; }
 
 .store { margin-top: 14px; padding: 11px 14px; border-radius: 10px; background: var(--raise);
-  display: grid; grid-template-columns: 16px 1fr; gap: 10px; max-width: 64ch; text-wrap: pretty; }
+  display: grid; grid-template-columns: 16px 1fr; gap: 10px; max-width: 51ch; text-wrap: pretty; }
 .store svg { margin-top: 2px; }
 .store .lock { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
