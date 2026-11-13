@@ -32,6 +32,12 @@ for a in "$@"; do
   esac
 done
 
+# Every target below hangs off $HOME. Empty or missing, they would become /Applications,
+# /Library/LaunchAgents and so on, so stop before anything is asked.
+if [ -z "${HOME:-}" ] || [ ! -d "$HOME" ]; then
+  echo "HOME is empty or not a directory; nothing was changed" >&2
+  exit 1
+fi
 CFG="$HOME/.config/senti"
 PLIST="$HOME/Library/LaunchAgents/io.senti.server.plist"
 HSDIR="$HOME/.hammerspoon"
