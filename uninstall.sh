@@ -121,13 +121,24 @@ echo "✓ removed Senti.app, ~/.cache/senti and the logs"
 # 4. Settings and keys: asked separately, kept by default.
 if [ -d "$CFG" ]; then
   if confirm_extra "Also remove your settings and API keys (~/.config/senti and the io.senti Keychain items)?"; then
+    KC_LEFT=""
     if [ -f "$CFG/senti-key.sh" ]; then
       for p in openai anthropic openrouter; do
-        bash "$CFG/senti-key.sh" clear "$p" >/dev/null 2>&1 || echo "  ! could not clear the $p Keychain item (Keychain locked?)"
+        bash "$CFG/senti-key.sh" clear "$p" >/dev/null 2>&1 \
+          || { KC_LEFT="$KC_LEFT $p"; echo "  ! could not clear the $p Keychain item (Keychain locked?)"; }
       done
+    else
+      KC_LEFT=" openai anthropic openrouter"
+      echo "  ! senti-key.sh is missing, so the Keychain items were not checked"
     fi
     rm -rf "$CFG"
-    echo "✓ removed ~/.config/senti and Senti's Keychain items"
+    if [ -z "$KC_LEFT" ]; then
+      echo "✓ removed ~/.config/senti and Senti's Keychain items"
+    else
+      echo "✓ removed ~/.config/senti"
+      echo "  ! Senti's Keychain items may remain. In Keychain Access, search for io.senti and delete them,"
+      echo "    or run: security delete-generic-password -s io.senti -a <provider>  (for:$KC_LEFT)"
+    fi
   else
     echo "  kept ~/.config/senti and your keys"
   fi
