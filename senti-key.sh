@@ -272,7 +272,9 @@ cmd_set() {
   else
     k="$(cat)"
   fi
-  k="${k//[[:space:]]/}"
+  # Trim the ends only (a paste often carries a trailing newline). Whitespace inside the key
+  # is a malformed paste, so it stays in and the charset check below rejects it.
+  k="${k#"${k%%[![:space:]]*}"}"; k="${k%"${k##*[![:space:]]}"}"
   [ -n "$k" ] || { echo "no key given" >&2; exit 2; }
   senti_key_ok "$k" || { echo "that does not look like an API key (expected 8 to 512 letters, digits, dots, dashes or underscores); nothing was saved" >&2; exit 2; }
   prefix_hint "$p" "$k"
