@@ -2179,11 +2179,13 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .bars i:nth-child(4) { animation-delay: -450ms; } .bars i:nth-child(5) { animation-delay: -300ms; }
 @keyframes bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
 
-.status { margin-top: 10px; display: flex; align-items: center; gap: 8px; min-height: 20px; font-variant-numeric: tabular-nums; }
+.status { margin-top: 10px; display: grid; grid-template-columns: 14px 1fr; align-items: start; gap: 8px; min-height: 20px; font-variant-numeric: tabular-nums; }
+.status > .glyph, .status > .bars { margin-top: 3px; }
+.smsg { text-wrap: pretty; }
 .status .stext { font-weight: 600; }
 .status[data-state="rejected"] .stext, .status[data-state="invalid"] .stext { color: var(--warn); }
 .status[data-state="connected"] .stext { color: var(--blue); }
-.status .sdetail { flex: 1; min-width: 0; }
+.status .sdetail { margin-left: 6px; }
 .status .swap { transition: opacity 160ms ease; }
 
 .store { margin-top: 14px; padding: 11px 14px; border-radius: 10px; background: var(--raise);
@@ -2392,8 +2394,10 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     s.setAttribute("data-state", state);
     if (state === "saving" || state === "testing") s.appendChild(bars());
     else s.appendChild(svg(GLYPH[state] || GLYPH.none));
-    s.appendChild(el("span", "stext", text));
-    if (detail) s.appendChild(el("span", "sdetail", detail));
+    var msg = el("span", "smsg");
+    msg.appendChild(el("span", "stext", text));
+    if (detail) msg.appendChild(el("span", "sdetail", detail));
+    s.appendChild(msg);
 
     var where = p.source === "file"
       ? "Stored in ~/.config/senti/" + p.id + "-key, readable only by your macOS account, because the Keychain was not available."
