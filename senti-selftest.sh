@@ -671,6 +671,15 @@ if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
   printf 'y\nn\nn\n' | HOME="$UH" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" >/dev/null 2>&1
   [ ! -f "$UH/Library/LaunchAgents/io.senti.server.plist" ] && [ "$(cat "$UH/.hammerspoon/init.lua")" = mine ] && [ -d "$UH/.config/senti" ] \
     && ok "uninstall: y removes the LaunchAgent and restores the init.lua backup, keeps settings" || bad "uninstall y did not do its job"
+  # The user replaced Senti's init.lua with their own config after installing: that newer
+  # config must survive, and the older backup must stay where it was.
+  UH2="$SBT/uh2"; mkdir -p "$UH2/.hammerspoon"
+  printf 'newer own config\n' > "$UH2/.hammerspoon/init.lua"
+  printf 'older backup\n' > "$UH2/.hammerspoon/init.lua.pre-senti.20261001-120000"
+  UO="$(printf 'y\nn\nn\n' | HOME="$UH2" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" 2>&1)"
+  [ "$(cat "$UH2/.hammerspoon/init.lua")" = "newer own config" ] && [ -f "$UH2/.hammerspoon/init.lua.pre-senti.20261001-120000" ] \
+    && case "$UO" in *"init.lua.pre-senti.20261001-120000"*) true ;; *) false ;; esac \
+    && ok "uninstall: a non-Senti init.lua is kept and the backup's path is printed" || bad "uninstall replaced a non-Senti init.lua"
 fi
 
 echo

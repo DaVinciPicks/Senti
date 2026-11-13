@@ -8,7 +8,8 @@
 # What "Senti itself" means here, all of it written by install.sh:
 #   ~/Library/LaunchAgents/io.senti.server.plist   the warm whisper server (stopped first)
 #   ~/.hammerspoon/init.lua                        restored from the newest
-#                                                  init.lua.pre-senti.* backup, if any
+#                                                  init.lua.pre-senti.* backup, if any, and
+#                                                  only when the current one is Senti's
 #   ~/Applications/Senti.app (and ~/Desktop/Senti.app if you made that copy)
 #   ~/.cache/senti                                 audio, screenshots, session memory
 #   ~/Library/Logs/senti.log, senti-server.log
@@ -52,7 +53,11 @@ confirm_extra() {
 
 echo "This removes Senti from this Mac:"
 [ -f "$PLIST" ] && echo "  - the whisper server LaunchAgent (stopped first)"
-[ -f "$HSDIR/init.lua" ] && echo "  - Senti's Hammerspoon config (your previous init.lua comes back if a backup exists)"
+if [ -f "$HSDIR/init.lua" ] && /usr/bin/grep -q 'wf.armTap' "$HSDIR/init.lua"; then
+  echo "  - Senti's Hammerspoon config (your previous init.lua comes back if a backup exists)"
+elif [ -e "$HSDIR/init.lua" ] || [ -L "$HSDIR/init.lua" ]; then
+  echo "  (your ~/.hammerspoon/init.lua is not Senti's, so it stays as it is)"
+fi
 [ -d "$HOME/Applications/Senti.app" ] && echo "  - ~/Applications/Senti.app"
 [ -d "$HOME/.cache/senti" ] && echo "  - ~/.cache/senti (audio, screenshots, session memory)"
 echo "  - Senti's logs in ~/Library/Logs"
@@ -69,17 +74,26 @@ if [ -f "$PLIST" ]; then
   echo "✓ stopped and removed the whisper server LaunchAgent"
 fi
 
-# 2. Hammerspoon config: the newest backup install.sh made comes back as init.lua.
+# 2. Hammerspoon config. Only Senti's own init.lua (it carries the wf.armTap marker), or a
+#    missing one, is replaced by the newest backup install.sh made. A config written after
+#    Senti was installed is the user's newest work: it stays, and so does the backup.
 #    Backup names sort by time (init.lua.pre-senti.YYYYMMDD-HHMMSS).
+HSINIT="$HSDIR/init.lua"
 NEWEST=""
 for b in "$HSDIR"/init.lua.pre-senti.*; do
   [ -f "$b" ] && NEWEST="$b"
 done
-if [ -n "$NEWEST" ]; then
-  mv -f "$NEWEST" "$HSDIR/init.lua"
+IS_SENTI=0; HAS_INIT=0
+{ [ -e "$HSINIT" ] || [ -L "$HSINIT" ]; } && HAS_INIT=1
+[ -f "$HSINIT" ] && /usr/bin/grep -q 'wf.armTap' "$HSINIT" && IS_SENTI=1
+if [ "$HAS_INIT" = 1 ] && [ "$IS_SENTI" = 0 ]; then
+  echo "  kept ~/.hammerspoon/init.lua: it is not Senti's config"
+  [ -n "$NEWEST" ] && echo "  your pre-Senti backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
+elif [ -n "$NEWEST" ]; then
+  mv -f "$NEWEST" "$HSINIT"
   echo "✓ restored your previous Hammerspoon config from $(basename "$NEWEST")"
-elif [ -f "$HSDIR/init.lua" ] && /usr/bin/grep -q 'wf.armTap' "$HSDIR/init.lua"; then
-  rm -f "$HSDIR/init.lua"
+elif [ "$IS_SENTI" = 1 ]; then
+  rm -f "$HSINIT"
   echo "✓ removed Senti's Hammerspoon config (there was no earlier config to restore)"
 fi
 
