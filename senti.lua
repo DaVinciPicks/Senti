@@ -1337,6 +1337,7 @@ function wf.panelState(focus)
     local t = wf.keyTests[p]
     local e = { id = p, label = info.label, mono = MONO[p], host = info.host, isNew = not info.available,
                 present = (k.present == true), source = k.source, last4 = k.last4,
+                unknown = (wf.keys == nil),   -- status unreadable: say so, not "no key"
                 busy = wf.panelBusy[p], saved = wf.panelSaved[p] or nil,
                 test = t and t.state or nil,
                 testDetail = t and (t.detail .. ((t.state == "connected" or t.state == "unverified") and ago(t.at) or "")) or nil,
@@ -2414,7 +2415,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
   function railState(p) {
     if (p.busy === "saving") return ["saved", "Saving"];
     if (p.busy === "testing") return ["saved", "Testing"];
-    if (!p.present) return ["none", "Needs a key"];
+    if (!p.present) return p.unknown ? ["none", "Status unknown"] : ["none", "Needs a key"];
     var t = p.test || "saved";
     var label = { connected: "Connected", unverified: "Could not verify", rejected: "Rejected", network: "No network", keychain: "Keychain locked", error: "Test failed", saved: "Saved, not tested" }[t] || "Saved";
     return [t, label];
@@ -2476,6 +2477,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     if (lo.invalid) { state = "invalid"; text = "That does not look like a key"; detail = "Keys use letters, digits, dots, dashes and underscores, 8 to 512 characters."; }
     else if (p.busy === "saving") { state = "saving"; text = "Saving to your Keychain"; }
     else if (p.busy === "testing") { state = "testing"; text = "Asking " + p.host; detail = "A free list request. No prompt is sent."; }
+    else if (!p.present && p.unknown) { state = "none"; text = "Key status unknown"; detail = "Dictation still works."; }
     else if (!p.present) { state = "none"; text = "No key saved"; detail = "Dictation still works."; }
     else {
       var rs = railState(p); state = rs[0]; text = rs[1];
