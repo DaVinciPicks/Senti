@@ -20,8 +20,9 @@
 #   - Digest is hard-capped (WF_BRAIN_MAX chars). A note can control exactly what
 #     Senti sees by adding a "## Senti" section — then ONLY that section is used.
 #   - The log says "brain: prepared" when a digest is built (that happens at key-down, when
-#     nothing has left the Mac) and senti-lib.sh logs "sent: vault" only when the digest
-#     joins a request. Kill switch: WF_BRAIN=0.
+#     nothing has left the Mac) and senti-lib.sh logs "sent: vault" when the digest joins a
+#     request, as the request is built: a turn that then stops (no key, a dry run) still
+#     shows it, so it can over-report but never under-report. Kill switch: WF_BRAIN=0.
 #   - There is no background upload. A lazy background step that sent the digest to the
 #     model to compress it was deleted on 13 Nov 2026: it had not run since 17 Oct (the
 #     key-down prefetch disabled it) and it was one more upload than the feature needs.

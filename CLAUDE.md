@@ -190,7 +190,9 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   it (`## Senti` section wins, else `## For future Claude`, else first lines), caps at
   `WF_BRAIN_MAX`. The digest rides only HEAVY turns (opening "think hard" or "today let's
   work on"). The log says `brain: prepared '<note>' N chars` when it is built (at key-down,
-  nothing sent) and `sent: vault '<note>' N chars` only when it joins a request.
+  nothing sent) and `sent: vault '<note>' N chars` when it joins a request. That line is
+  written as the request is built, so a turn that then stops (no key, a dry run) still shows it:
+  it can over-report, never under-report.
   `senti-brain.sh --preview <project>` prints, locally, what would be sent and to which
   provider. There is NO background upload: the lazy "refresh" that sent the digest to the
   model to compress it was deleted 13 Nov 2026 (it had not run since 17 Oct), and
