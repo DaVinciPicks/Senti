@@ -439,6 +439,15 @@ function wf.mixColor(a, b, k, alpha)
            blue = a.blue + (b.blue - a.blue) * k, alpha = alpha or 1 }
 end
 
+-- How long a toast stays: long enough to read, never a fixed 3 s for an 18-word warning.
+-- min(8, max(2.5, 1.2 + 0.3 per word)); an explicit value can only raise it (u4 fix 9).
+function wf.toastSeconds(msg, secs)
+  local words = 0
+  for _ in tostring(msg or ""):gmatch("%S+") do words = words + 1 end
+  local auto = math.min(8, math.max(2.5, 1.2 + 0.3 * words))
+  return math.max(auto, tonumber(secs) or 0)
+end
+
 -- ~/.config/senti/ui.pref: strict key=value lines, never sourced or executed.
 function wf.parseUIPref(text)
   local p = { prompt_screen = true, panel_seen = false }
@@ -785,9 +794,19 @@ local T_OK   = ACCENT
 local T_WARN = { red = 0.98, green = 0.62, blue = 0.24, alpha = 1 }
 local TOAST_FONT = { name = SYS_FONT, size = 13 }
 
+-- Soft in (0.15 s) and out (0.12 s) like the pill; a replaced toast fades instead of
+-- vanishing. Hovering holds it, so a warning with a menu path can be read to the end.
+local function retireToast(c)
+  if not c then return end
+  if wf.hud.reduce then c:delete(); return end
+  c:hide(0.12)
+  hs.timer.doAfter(0.25, function() c:delete() end)
+end
+
 function wf.notify(msg, secs, tone)
-  secs, tone = secs or 3, tone or T_INFO
+  tone = tone or T_INFO
   msg = tostring(msg)
+  secs = wf.toastSeconds(msg, secs)
   local text = hs.styledtext.new(msg, {
     font = TOAST_FONT, color = { white = 0.97, alpha = 1 },
     paragraphStyle = { alignment = "center", lineSpacing = 3 } })
@@ -799,12 +818,13 @@ function wf.notify(msg, secs, tone)
   local H = math.ceil(size.h) + 2 * padY
   local radius = math.min(H / 2, 18)
   local scr = hs.screen.mainScreen():frame()
-  if wf.toast.canvas then wf.toast.canvas:delete(); wf.toast.canvas = nil end
+  if wf.toast.timer then wf.toast.timer:stop(); wf.toast.timer = nil end
+  retireToast(wf.toast.canvas); wf.toast.canvas = nil
   local c = hs.canvas.new({ x = scr.x + (scr.w - W) / 2,
                             y = scr.y + scr.h - H - 76, w = W, h = H })
   c:level(hs.canvas.windowLevels.overlay)
   c:behavior({ "canJoinAllSpaces", "stationary" })
-  c[1] = { type = "rectangle", action = "fill",
+  c[1] = { type = "rectangle", action = "fill", trackMouseEnterExit = true,
            roundedRectRadii = { xRadius = radius, yRadius = radius },
            fillColor = { red = 0.043, green = 0.043, blue = 0.055, alpha = 0.94 } }
   local warn = (tone == T_WARN)
@@ -815,12 +835,27 @@ function wf.notify(msg, secs, tone)
            strokeWidth = 1 }
   c[3] = { type = "text", text = text,
            frame = { x = padX, y = padY, w = W - 2 * padX, h = H - 2 * padY } }
-  c:show()
-  wf.toast.canvas = c
-  if wf.toast.timer then wf.toast.timer:stop() end
-  wf.toast.timer = hs.timer.doAfter(secs, function()
-    if wf.toast.canvas then wf.toast.canvas:delete(); wf.toast.canvas = nil end
+  local function expire()
+    wf.toast.timer = nil
+    if wf.toast.canvas == c then wf.toast.canvas = nil; retireToast(c) end
+  end
+  local deadline = hs.timer.secondsSinceEpoch() + secs
+  c:clickActivating(false)
+  c:canvasMouseEvents(nil, nil, true)
+  c:mouseCallback(function(_, event)
+    if wf.toast.canvas ~= c then return end
+    if event == "mouseEnter" then
+      if wf.toast.timer then wf.toast.timer:stop(); wf.toast.timer = nil end
+    elseif event == "mouseExit" then
+      local left = math.max(1.5, deadline - hs.timer.secondsSinceEpoch())
+      deadline = hs.timer.secondsSinceEpoch() + left
+      if wf.toast.timer then wf.toast.timer:stop() end
+      wf.toast.timer = hs.timer.doAfter(left, expire)
+    end
   end)
+  c:show(wf.hud.reduce and 0 or 0.15)
+  wf.toast.canvas = c
+  wf.toast.timer = hs.timer.doAfter(secs, expire)
 end
 wf.TONE = { info = T_INFO, warn = T_WARN, ok = T_OK }
 
