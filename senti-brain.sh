@@ -67,8 +67,8 @@ if [ "${1:-}" = "refresh" ]; then
   BODY="$(brain_digest "$RNOTE")"
   blank "$BODY" && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
   SYS="Compress this project note into at most 120 words of plain text: what the project IS, the stack, the current focus, hard constraints, and any naming conventions. Facts only, no headings, no preamble — this becomes standing context for an assistant writing prompts about the project."
-  OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" \
-         bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
+  OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" SENTI_SYS="$SYS" \
+         bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG")"
   if ! blank "$OUT"; then
     T="$(mktemp "$CACHEDIR/.tmp.XXXXXX")" && printf '%s' "$OUT" > "$T" \
       && chmod 600 "$T" && mv "$T" "$CACHEDIR/$RKEY.md"

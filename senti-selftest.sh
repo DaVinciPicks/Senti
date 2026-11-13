@@ -99,7 +99,7 @@ if [ "${WF_SELFTEST_OFFLINE:-0}" = "1" ] || [ "$HAVE_KEY" != 1 ]; then
 else
   echo "── live API ──"
   T0=$(date +%s)
-  OUT="$(bash "$CFG/senti-ai.sh" 'Reply with exactly the word: PONG. Nothing else.' 'ping' 2>/dev/null)"
+  OUT="$(SENTI_SYS='Reply with exactly the word: PONG. Nothing else.' SENTI_IN='ping' bash "$CFG/senti-ai.sh" 2>/dev/null)"
   T1=$(date +%s)
   case "$OUT" in
     *PONG*) ok "text path answered in $((T1-T0))s (${WF_TEXT_MODEL:-gpt-6-luna})" ;;

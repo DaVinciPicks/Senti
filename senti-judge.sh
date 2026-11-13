@@ -40,7 +40,7 @@ case "$MODE" in
            SENTI_IN="ROUGH IDEA: $IDEA
 
 CANDIDATE PROMPT:
-$PROMPT" bash "$AI" "$SYS" 2>>"$WF_LOG")"
+$PROMPT" SENTI_SYS="$SYS" bash "$AI" 2>>"$WF_LOG")"
     echo "$OUT" | /usr/bin/grep -oE '10|[0-9]' | head -1
     ;;
 
@@ -65,7 +65,7 @@ CANDIDATE A:
 $first
 
 CANDIDATE B:
-$second" bash "$AI" "$SYS" 2>>"$WF_LOG")"
+$second" SENTI_SYS="$SYS" bash "$AI" 2>>"$WF_LOG")"
       v="$(printf '%s' "$out" | /usr/bin/perl -0777 -ne 'print $1 if /<r>\s*(A|B|TIE)\s*<\/r>/si' | /usr/bin/tr 'a-z' 'A-Z')"
       case "$v" in
         A) printf '%s' "$firstlabel" ;;

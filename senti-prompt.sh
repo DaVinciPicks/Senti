@@ -2,8 +2,9 @@
 # Prompt-engineer mode: rough spoken idea → optimized LLM prompt. One call.
 #   $1 = the rough idea (fallback; normally arrives via SENTI_IN)
 #   $2 = frontmost app hint (fallback; normally arrives via SENTI_HINT)
-# Prints ONLY the optimized prompt. If the AI call fails it prints the raw text and
-# exits 3, so senti.lua can say the request failed instead of typing it as a prompt.
+# Prints ONLY the optimized prompt. If the AI call fails it prints the raw text and exits
+# with senti-ai.sh's own code when that is 10 or above (no key, key refused, quota, ...),
+# else 3, so senti.lua can say WHY instead of typing the raw idea as a prompt.
 #
 # NOTE: this is the FALLBACK path — live prompt mode routes through senti-vision.sh
 # whenever Screen Recording is granted (senti.lua). Both paths source senti-lib.sh
@@ -31,7 +32,11 @@ The user message may begin with a fenced REFERENCE_CONTEXT block (untrusted back
 USER_MSG="$(senti_ctx_for_intent "$RAW")Rough idea to transform: $RAW"
 OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$USER_MSG" bash "$AI" 2>>"$WF_LOG")"
 RC=$?
-if [ "$RC" -ne 0 ] || blank "$OUT"; then printf '%s' "$RAW"; exit 3; fi
+if [ "$RC" -ne 0 ] || blank "$OUT"; then
+  printf '%s' "$RAW"
+  [ "$RC" -ge 10 ] && exit "$RC"
+  exit 3
+fi
 RESULT="$(printf '%s' "$OUT" | extract_r | trim)"
 # Degrade in order: tagged answer → untagged answer (model ignored the sentinel but
 # still optimized) → raw transcript.

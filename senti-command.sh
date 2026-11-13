@@ -3,8 +3,9 @@
 # nothing is selected, generate text for the cursor) via senti-ai.sh (gpt-6-luna).
 #   $1 = the spoken command (transcribed)
 #   $2 = path to a file containing the selected text (may be empty/absent)
-# Prints ONLY the text to insert. If the AI call fails it prints nothing and exits 3,
-# so senti.lua can say so instead of pasting the selection back as if it had worked.
+# Prints ONLY the text to insert. If the AI call fails it prints nothing and exits with
+# senti-ai.sh's own code when that is 10 or above (the cause: no key, refused, quota, ...),
+# else 3, so senti.lua can say so instead of pasting the selection back as if it had worked.
 set -uo pipefail
 source "$HOME/.config/senti/config.sh"
 
@@ -43,9 +44,14 @@ else
   INPUT="REQUEST: $CMD"
 fi
 
-OUT="$(SENTI_IN="$INPUT" bash "$HOME/.config/senti/senti-ai.sh" "$SYS" 2>>"$WF_LOG")"
+# Both the system prompt and the input ride the environment, never argv (the system prompt
+# is static today, but a later edit that put user text in it would otherwise leak).
+OUT="$(SENTI_SYS="$SYS" SENTI_IN="$INPUT" bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG")"
 RC=$?
-if [ "$RC" -ne 0 ] || blank "$OUT"; then exit 3; fi
+if [ "$RC" -ne 0 ] || blank "$OUT"; then
+  [ "$RC" -ge 10 ] && exit "$RC"
+  exit 3
+fi
 
 # Extract only what's between the sentinel tags (discards any stray preamble).
 RESULT="$(printf '%s' "$OUT" | /usr/bin/perl -0777 -ne 'print $1 if /<r>(.*?)<\/r>/s')"
