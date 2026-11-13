@@ -21,7 +21,11 @@
 #     The bump forces install.sh to replace it (yours is kept at config.sh.bak).
 # v8: renamed back, Sanele → Senti. Same reason as v7, paths reversed (~/.config/sanele →
 #     ~/.config/senti, ~/.cache/sanele → ~/.cache/senti, sanele.log → senti.log).
-WF_CONFIG_VERSION=8
+# v9: three AI providers (WF_AI_PROVIDER pins; keys in the macOS Keychain), the audio_ctx
+#     gate moved from 10 s to 14 s (measured), WF_URL can be overridden (the self-test
+#     points it at a dead port to prove the transcription check fails), and the notes
+#     digest refresh is gone (WF_BRAIN_REFRESH no longer exists).
+WF_CONFIG_VERSION=9
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -32,7 +36,8 @@ WF_MODEL_ACCURATE="$WF_MODELS_DIR/ggml-large-v3-turbo-q5_0.bin"
 WF_MODEL_FAST="$WF_MODELS_DIR/ggml-base.en.bin"
 WF_MODEL_PREF="$HOME/.cache/senti/model.pref"
 if [ -z "${WF_MODEL:-}" ]; then
-  case "$(cat "$WF_MODEL_PREF" 2>/dev/null)" in
+  _wf_pref=""; [ -f "$WF_MODEL_PREF" ] && IFS= read -r _wf_pref < "$WF_MODEL_PREF"   # builtin: no spawn
+  case "$_wf_pref" in
     fast) WF_MODEL="$WF_MODEL_FAST" ;;
     *)    WF_MODEL="$WF_MODEL_ACCURATE" ;;
   esac
@@ -49,7 +54,7 @@ fi
 # --- Server ---
 WF_HOST="${WF_HOST:-127.0.0.1}"
 WF_PORT="${WF_PORT:-8090}"
-WF_URL="http://${WF_HOST}:${WF_PORT}"
+WF_URL="${WF_URL:-http://${WF_HOST}:${WF_PORT}}"
 
 # --- Language --- ("auto" to autodetect, or "en", "es", etc.)
 WF_LANG="${WF_LANG:-en}"
@@ -120,10 +125,12 @@ WF_SHOT_PX="${WF_SHOT_PX:-1536}"
 # Shrinking whisper's encoder window ~halves latency on short clips (measured 833ms →
 # 420ms on a 6s clip, byte-identical transcript) but TRUNCATES longer ones: at 16s the
 # transcript diverged and ran 3x slower; at 18.8s the end of the recording was silently
-# lost. So it only applies below WF_AUDIO_CTX_MAX_SEC — 12s was still identical, 10s is
-# the shipped margin. Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
+# lost. So it only applies below WF_AUDIO_CTX_MAX_SEC. 768 frames of 20 ms cover 15.36 s;
+# b2 measured identical words up to 14.61 s and a lost ending at 16.17 s (13 Nov 2026), and
+# moving the gate from 10 to 14 took 10.8 to 12.9 s dictations from about 1.15 s to 0.73 s.
+# Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
 WF_AUDIO_CTX="${WF_AUDIO_CTX:-768}"
-WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
+WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-14}"
 
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for
@@ -157,4 +164,4 @@ WF_SOUND_STOP="${WF_SOUND_STOP:-/System/Library/Sounds/Pop.aiff}"
 
 # 700 every time, not only at install: a cache wiped by a disk cleanup was recreated 755
 # here, and it holds audio, screenshots and selected text while a turn runs.
-{ mkdir -p "$WF_RUN" && chmod 700 "$WF_RUN"; } 2>/dev/null || true
+{ { [ -d "$WF_RUN" ] || mkdir -p "$WF_RUN"; } && chmod 700 "$WF_RUN"; } 2>/dev/null || true

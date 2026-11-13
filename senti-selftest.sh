@@ -25,7 +25,7 @@ done
 echo "── config ──"
 # Bump with WF_CONFIG_VERSION in config.sh: a restored config.sh.bak from before the
 # rename points every path at the old directories, and ">= 2" let that pass.
-[ "${WF_CONFIG_VERSION:-0}" -ge 8 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
+[ "${WF_CONFIG_VERSION:-0}" -ge 9 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
                                                  || bad "config schema stale (v${WF_CONFIG_VERSION:-0}) — re-run install.sh"
 # Every var a script dereferences must survive `set -u` even with an old config.
 MISSING=""
