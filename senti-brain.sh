@@ -2,7 +2,9 @@
 # Second-brain bridge: pull a SMALL digest of the user's own notes for the project
 # they're working in, so prompt mode knows what the project actually is.
 #
-#   senti-brain.sh <project-hint>     # e.g. "senti", "davincibets_main"
+#   senti-brain.sh <project-hint>             # e.g. "senti", "davincibets_main"
+#   senti-brain.sh --preview <project-hint>   # print, locally, what would ride a heavy
+#                                             # Prompt turn and where it would go; no network
 #
 # Prints a capped digest, or nothing. Sources, in order:
 #   1. an explicit mapping in brain-map.txt (project|path/to/note.md, vault-relative)
@@ -10,27 +12,35 @@
 #      (or the single .md inside, if the convention isn't followed)
 #
 # PRIVACY MODEL — read before widening anything here:
-#   - Whatever this prints is injected into prompt mode and therefore RIDES THE API
-#     CALL to OpenAI. That is the entire point, and also the entire risk.
+#   - Whatever this prints can be injected into prompt mode and then RIDES THE API CALL to
+#     the active AI provider (OpenAI, Anthropic or OpenRouter). That is the entire point,
+#     and also the entire risk. It rides only heavy turns (senti_intent in senti-lib.sh).
 #   - So: only the folders listed in WF_BRAIN_DIRS are ever searched. There is no
 #     default list, and the whole bridge is off unless WF_BRAIN=1.
 #   - Digest is hard-capped (WF_BRAIN_MAX chars). A note can control exactly what
 #     Senti sees by adding a "## Senti" section — then ONLY that section is used.
-#   - Every injection is logged to senti.log by note name, so there's a record of
-#     what left the machine. Kill switch: WF_BRAIN=0.
+#   - The log says "brain: prepared" when a digest is built (that happens at key-down, when
+#     nothing has left the Mac) and senti-lib.sh logs "sent: vault" only when the digest
+#     joins a request. Kill switch: WF_BRAIN=0.
+#   - There is no background upload. A lazy background step that sent the digest to the
+#     model to compress it was deleted on 13 Nov 2026: it had not run since 17 Oct (the
+#     key-down prefetch disabled it) and it was one more upload than the feature needs.
 #   - Verbatim dictation never touches this script.
 set -uo pipefail
 # Blank test that stays O(n) on bash 3.2 (${VAR// /} is quadratic there: 8 KB took 4.8s).
 blank() { case "$1" in *[![:space:]]*) return 1 ;; *) return 0 ;; esac; }
 source "$HOME/.config/senti/config.sh"
 
-[ "${WF_BRAIN:-0}" = "1" ] || exit 0   # opt-in: off unless config.sh sets WF_BRAIN=1
+PREVIEW=0
+if [ "${1:-}" = "--preview" ]; then PREVIEW=1; shift; fi
+if [ "${WF_BRAIN:-0}" != "1" ]; then   # opt-in: off unless config.sh sets WF_BRAIN=1
+  [ "$PREVIEW" = 1 ] && echo "The notes bridge is off (WF_BRAIN is not 1), so nothing from your notes is sent."
+  exit 0
+fi
 VAULT="${WF_VAULT:-$HOME/Documents/Obsidian Vault}"
-[ -d "$VAULT" ] || exit 0
+[ -d "$VAULT" ] || { [ "$PREVIEW" = 1 ] && echo "No vault at WF_VAULT, so nothing from your notes is sent."; exit 0; }
 MAX="${WF_BRAIN_MAX:-700}"
 MAP="${WF_BRAIN_MAP:-$HOME/.config/senti/brain-map.txt}"
-CACHEDIR="$HOME/.cache/senti/brain"
-mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 
 # Extract the shippable digest from a note, in order of preference:
 #   "## Senti" section       → the note author's explicit choice of what Senti may see
@@ -40,9 +50,8 @@ mkdir -p "$CACHEDIR" 2>/dev/null; chmod 700 "$CACHEDIR" 2>/dev/null
 #   "## For future Claude"   → already written for AI consumption
 #   else                     → first body lines after the frontmatter
 # Wiki-link noise stripped, hard-capped at WF_BRAIN_MAX. This is the ONE gate that keeps
-# private note content from leaving the Mac — BOTH the read path and the background
-# refresh upload must go through it (the refresh once sent 24KB of raw body, bypassing
-# every control this function enforces).
+# private note content from leaving the Mac: every path that can send note text goes
+# through it. Never send a raw note.
 brain_digest() {
   local f="$1" d
   d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## (?:Senti|Sanele)\s*\n(.*?)(?=^## |\z)/ms' "$f")"
@@ -52,31 +61,6 @@ brain_digest() {
     | /usr/bin/perl -pe 's/\[\[[^\]|]*\|([^\]]*)\]\]/$1/g; s/\[\[([^\]]*)\]\]/$1/g' \
     | cut -c1-100000 | head -c "$MAX"
 }
-
-# ── refresh mode (background worker) ─────────────────────────────────────
-#   senti-brain.sh refresh <abs-note-path> <cache-key>
-# One cheap luna call (~$0.001) compresses the note into a digest for NEXT time.
-# Runs lazily: only when a stale project is actually used — no cron, no scheduler,
-# and projects you never touch are never sent anywhere.
-if [ "${1:-}" = "refresh" ]; then
-  RNOTE="${SENTI_RNOTE:-${2:-}}"; RKEY="${3:-}"
-  [ -f "$RNOTE" ] && [ -n "$RKEY" ] || exit 0
-  # Feed the LLM the SAME gated digest the read path would inject — not the raw note.
-  # This respects the ## Senti section choice and the WF_BRAIN_MAX cap; a note without
-  # an allowed section still only exposes its capped first lines.
-  BODY="$(brain_digest "$RNOTE")"
-  blank "$BODY" && { rm -f "$CACHEDIR/.refreshing.$RKEY"; exit 0; }
-  SYS="Compress this project note into at most 120 words of plain text: what the project IS, the stack, the current focus, hard constraints, and any naming conventions. Facts only, no headings, no preamble — this becomes standing context for an assistant writing prompts about the project."
-  OUT="$(WF_OPERATING_LAYER=0 SENTI_IN="$BODY" SENTI_SYS="$SYS" \
-         bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG")"
-  if ! blank "$OUT"; then
-    T="$(mktemp "$CACHEDIR/.tmp.XXXXXX")" && printf '%s' "$OUT" > "$T" \
-      && chmod 600 "$T" && mv "$T" "$CACHEDIR/$RKEY.md"
-    echo "$(date '+%F %T') brain: refreshed digest '$RKEY' ($(printf '%s' "$OUT" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"
-  fi
-  rm -f "$CACHEDIR/.refreshing.$RKEY"
-  exit 0
-fi
 
 # Identity via env first (window titles stay off argv); argv is a manual fallback.
 HINT="${1:-${SENTI_SLABEL:-}}"
@@ -92,7 +76,7 @@ NOTE=""
 # Newline-separated because the vault path contains spaces.
 DIRS="${WF_BRAIN_DIRS:-}"
 # No folders named, nothing read: the user chooses every folder Senti may look in.
-[ -n "$DIRS" ] || exit 0
+[ -n "$DIRS" ] || { [ "$PREVIEW" = 1 ] && echo "WF_BRAIN_DIRS lists no folders, so nothing from your notes is sent."; exit 0; }
 in_allowlist() {   # vault-relative path inside an allowlisted dir, no escape hatches
   case "$1" in /*|*..*) return 1 ;; esac
   [ -L "$VAULT/$1" ] && return 1
@@ -144,34 +128,30 @@ $DIRS
 EOF
 fi
 
-[ -n "$NOTE" ] && [ -f "$NOTE" ] || exit 0
-
-# Cached LLM digest first: fresher than 24h AND not older than the note itself
-# (an edited note invalidates its digest). Falls through to raw extraction below.
-KEY="$(norm "$(basename "$NOTE" .md)")"
-CACHE="$CACHEDIR/$KEY.md"
-if [ -s "$CACHE" ] && [ -n "$(/usr/bin/find "$CACHE" -mmin -1440 -newer "$NOTE" 2>/dev/null)" ]; then
-  DIGEST="$(head -c "$MAX" "$CACHE")"
-  echo "$(date '+%F %T') brain: injected cached digest '$KEY'" >> "$WF_LOG"   # not the hint: it is window-title text
-  printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"
+if [ -z "$NOTE" ] || [ ! -f "$NOTE" ]; then
+  [ "$PREVIEW" = 1 ] && echo "No note in your allowed folders matches '$HINT', so nothing from your notes is sent."
   exit 0
-fi
-# Stale or missing → serve the raw extract NOW (zero added latency) and refresh in
-# the background for next time. `&` + parent exit orphans the worker safely.
-# The lock marker stops rapid consecutive dictations from stampeding parallel
-# refreshes of the same note; a stuck lock self-expires after 3 minutes.
-if [ "${WF_BRAIN_REFRESH:-1}" = "1" ]; then
-  LOCK="$CACHEDIR/.refreshing.$KEY"
-  if [ -z "$(/usr/bin/find "$LOCK" -mmin -3 2>/dev/null)" ]; then
-    : > "$LOCK"
-    # Note PATH via env, not argv: filenames in other vault dirs are people's names,
-    # and argv is same-uid readable via `ps` for the call's duration.
-    ( SENTI_RNOTE="$NOTE" bash "$HOME/.config/senti/senti-brain.sh" refresh "" "$KEY" >/dev/null 2>&1 & )
-  fi
 fi
 
 DIGEST="$(brain_digest "$NOTE")"
-blank "$DIGEST" && exit 0
+blank "$DIGEST" && { [ "$PREVIEW" = 1 ] && echo "The matching note has nothing to send."; exit 0; }
+NAME="$(basename "$NOTE")"
+NCH="$(printf '%s' "$DIGEST" | wc -c | tr -d ' ')"
 
-echo "$(date '+%F %T') brain: injected '$(basename "$NOTE")' ($(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars)" >> "$WF_LOG"   # not the hint: it is window-title text
+if [ "$PREVIEW" = 1 ]; then
+  source "$HOME/.config/senti/senti-key.sh"
+  senti_ai_resolve text
+  echo "On a heavy Prompt turn (one that opens with \"think hard\" or \"today let's work on\"),"
+  echo "Senti would send these $NCH characters from '$NAME' (cap $MAX) to $(senti_provider_label "$SENTI_R_PROVIDER") ($SENTI_R_MODEL):"
+  echo "────"
+  printf '%s\n' "$DIGEST"
+  echo "────"
+  exit 0
+fi
+
+# senti-lib.sh asks for the note name (to log "sent: vault" and fill last-request.json)
+# through a file it names, under the ctx- prefix so the cache sweep removes it.
+if [ -n "${SENTI_BRAIN_NOTEOUT:-}" ]; then printf '%s' "$NAME" > "$SENTI_BRAIN_NOTEOUT" 2>/dev/null; fi
+# Built, not sent: that is decided per turn in senti-lib.sh. Not the hint: it is window-title text.
+echo "$(date '+%F %T') brain: prepared '$NAME' $NCH chars" >> "$WF_LOG"
 printf 'Project knowledge from the user'"'"'s own notes (their vault is ground truth — trust it over guesses):\n%s\n' "$DIGEST"

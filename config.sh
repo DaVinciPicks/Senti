@@ -142,15 +142,17 @@ WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
 WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 
 # --- Second brain (Obsidian) ---
-# Off by default. When on, Prompt mode adds a capped digest of YOUR vault note for
-# the current project to the API call; that is the point and the risk. Only the
-# folders you list are searched, size is capped, every injection is logged to
-# senti.log. To turn it on, set both:
+# Off by default. When on, a heavy Prompt turn (one that opens with "think hard" or
+# "today let's work on") adds a capped digest of YOUR vault note for the current project
+# to the AI call; that is the point and the risk. Only the folders you list are searched,
+# size is capped, and senti.log records "sent: vault '<note>' N chars" for every digest
+# that joins a request. See what would be sent, locally:
+#   bash ~/.config/senti/senti-brain.sh --preview <project>
+# To turn it on, set both:
 # WF_BRAIN=1
 # WF_BRAIN_DIRS=$'Projects\nWork'              # vault folders it may read, one per line
 # WF_VAULT="$HOME/Documents/Obsidian Vault"
 # WF_BRAIN_MAX=700                            # digest cap, chars
-# WF_BRAIN_REFRESH=0                          # disable the background luna digest (~$0.001)
 
 # --- Binaries (absolute paths — Hammerspoon/launchd have a minimal PATH) ---
 WF_SOX="${WF_SOX:-/opt/homebrew/bin/sox}"

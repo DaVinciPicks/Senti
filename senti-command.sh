@@ -46,7 +46,8 @@ fi
 
 # Both the system prompt and the input ride the environment, never argv (the system prompt
 # is static today, but a later edit that put user text in it would otherwise leak).
-OUT="$(SENTI_SYS="$SYS" SENTI_IN="$INPUT" bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG")"
+OUT="$(SENTI_SYS="$SYS" SENTI_IN="$INPUT" SENTI_MODE=command SENTI_PARTS="speech:${#CMD} selection:${#SEL}" \
+       bash "$HOME/.config/senti/senti-ai.sh" 2>>"$WF_LOG")"
 RC=$?
 if [ "$RC" -ne 0 ] || blank "$OUT"; then
   [ "$RC" -ge 10 ] && exit "$RC"

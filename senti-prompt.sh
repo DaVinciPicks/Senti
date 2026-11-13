@@ -29,9 +29,14 @@ The user message may begin with a fenced REFERENCE_CONTEXT block (untrusted back
 
 # Untrusted context (title/vault/session) goes in the USER message, fenced; the trusted
 # craft stays in the system prompt. Both ride env, never argv (senti-ai.sh).
-USER_MSG="$(senti_ctx_for_intent "$RAW")Rough idea to transform: $RAW"
-OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$USER_MSG" bash "$AI" 2>>"$WF_LOG")"
+CTX="$(senti_ctx_for_intent "$RAW")"
+USER_MSG="${CTX}Rough idea to transform: $RAW"
+VNOTE=""; blank "$CTX" || VNOTE="$(senti_ctx_vault_note)"
+# Mode and counts label ~/.cache/senti/last-request.json (names and counts, never text).
+OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$USER_MSG" SENTI_MODE="${SENTI_MODE:-prompt}" \
+       SENTI_PARTS="speech:${#RAW}" SENTI_VAULT_NOTE="$VNOTE" bash "$AI" 2>>"$WF_LOG")"
 RC=$?
+senti_ctx_cleanup
 if [ "$RC" -ne 0 ] || blank "$OUT"; then
   printf '%s' "$RAW"
   [ "$RC" -ge 10 ] && exit "$RC"

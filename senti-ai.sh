@@ -243,7 +243,9 @@ def write_lastreq(result, ms, usage, effort):
 
 def log_line(result, usage, effort):
     try:
-        with open(ENV["SENTI_LOGF"], "a") as f:
+        # Created 600 if missing: the log lives beside speech-derived data.
+        fd = os.open(ENV["SENTI_LOGF"], os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as f:
             f.write("%s ai: provider=%s model=%s effort=%s ms=%d in=%s out=%s think=%s cache_read=%s key=%s result=%s\n" % (
                 stamp(), P, M, effort, int((time.time() - T0) * 1000), usage.get("in", 0), usage.get("out", 0),
                 usage.get("think", 0), usage.get("cache_read", 0), ENV.get("SENTI_KEYSRC", "none"), result))
