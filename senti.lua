@@ -2204,7 +2204,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .mnote { margin-top: 6px; max-width: 62ch; text-wrap: pretty; }
 .models { margin-top: 10px; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
-.model { display: grid; grid-template-columns: 18px 1fr auto; gap: 12px; text-align: left; align-items: start;
+.model { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 12px; text-align: left; align-items: start;
   padding: 11px 10px; border-bottom: 1px solid var(--line); transition: background-color 150ms ease; }
 .model:hover:not(:disabled) { background: var(--raise); }
 .model[aria-checked="true"] { background: var(--raise-2); }
@@ -2213,7 +2213,8 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
   display: grid; place-items: center; transition: box-shadow 150ms ease; }
 .model[aria-checked="true"] .radio { box-shadow: inset 0 0 0 5px var(--blue-strong); }
 .mline { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
-.mid { font: 600 13px/1.4 var(--mono); letter-spacing: -0.01em; }
+.mid { font: 600 13px/1.4 var(--mono); letter-spacing: -0.01em; overflow-wrap: anywhere; min-width: 0; }
+.mline { min-width: 0; }
 .mrole { font-weight: 400; }
 .mmain { min-width: 0; }
 .mrole2 { display: block; margin-top: 1px; }
@@ -2317,6 +2318,16 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     none: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="none" cx="7" cy="7" r="6"/></svg>'
   };
   function bars() { var b = el("span", "bars"); b.setAttribute("aria-hidden", "true"); for (var i = 0; i < 5; i++) b.appendChild(el("i")); return b; }
+  // Every change of the provider shown goes through here, so a key typed or pasted under
+  // one provider can never be saved or tested under another.
+  function setView(id) {
+    if (id === view) return;
+    clearTimeout(pasteTimer); pasteTimer = null;
+    var input = document.getElementById("key");
+    if (input) input.value = "";
+    if (view) { var o = L(view); o.typed = false; o.invalid = false; o.confirm = false; }
+    view = id;
+  }
   function prov(id) { if (!S) return null; for (var i = 0; i < S.providers.length; i++) if (S.providers[i].id === id) return S.providers[i]; return null; }
   function L(id) { return local[id] || (local[id] = { typed: false, invalid: false, confirm: false }); }
   function shapeOK(k) { return /^[A-Za-z0-9._-]{8,512}$/.test(k); }
@@ -2348,7 +2359,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
       txt.appendChild(nm); txt.appendChild(st);
       b.appendChild(m); b.appendChild(txt);
       b.setAttribute("aria-label", p.label + ", " + rs[1] + (p.id === S.active.provider ? ", in use" : ""));
-      b.addEventListener("click", function () { if (view !== p.id) { view = p.id; renderAll(); } });
+      b.addEventListener("click", function () { if (view !== p.id) { setView(p.id); renderAll(); } });
       rail.appendChild(b);
     });
   }
@@ -2478,7 +2489,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 
   function renderAll() {
     if (!S) return;
-    if (!prov(view)) view = S.focus || S.active.provider || "openai";
+    if (!prov(view)) setView(S.focus || S.active.provider || "openai");
     var p = prov(view);
     var al = document.getElementById("alert");
     al.hidden = !S.statusError; al.textContent = S.statusError || "";
@@ -2489,13 +2500,14 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     render: function (state) {
       if (!state || !Array.isArray(state.providers)) return;
       S = state;
-      if (state.focus && state.refocus) view = state.focus;
+      if (state.focus && state.refocus) setView(state.focus);
       state.providers.forEach(function (p) { if (p.busy === null) p.busy = undefined; if (p.saved) { L(p.id).typed = false; L(p.id).invalid = false; } });
       renderAll();
     }
   };
 
-  function submit(viaPaste) {
+  function submit(viaPaste, forProvider) {
+    if (forProvider && forProvider !== view) return;   // the user moved on; drop it
     var input = document.getElementById("key"), p = prov(view);
     if (!p || p.busy) return;
     var k = input.value.trim();
@@ -2517,13 +2529,16 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     });
     input.addEventListener("paste", function () {
       clearTimeout(pasteTimer);
-      pasteTimer = setTimeout(function () { submit(true); }, 500);
+      var pastedFor = view;
+      pasteTimer = setTimeout(function () { pasteTimer = null; submit(true, pastedFor); }, 500);
     });
     input.addEventListener("keydown", function (e) {
       if (e.key === "Enter") { e.preventDefault(); clearTimeout(pasteTimer); submit(false); }
     });
     document.getElementById("action").addEventListener("click", function () { clearTimeout(pasteTimer); submit(false); });
-    document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    // No page context menu, except on the key field, where right-click Paste is a fallback
+    // for Command V.
+    document.addEventListener("contextmenu", function (e) { if (e.target !== input) e.preventDefault(); });
     document.addEventListener("dragover", function (e) { e.preventDefault(); });
     document.addEventListener("drop", function (e) { e.preventDefault(); });
     post({ type: "ready" });
@@ -2662,7 +2677,7 @@ wf.refreshKeys(function(st)
   if not st or wf.prefs.panel_seen then return end
   for _, p in ipairs(wf.PROVIDERS) do if st.keys[p].present then return end end
   wf.prefs.panel_seen = true; wf.savePrefs()
-  hs.timer.doAfter(1.5, function() wf.openPanel() end)
+  wf.firstRunTimer = hs.timer.doAfter(1.5, function() wf.firstRunTimer = nil; wf.openPanel() end)
 end)
 wf.log("=== init.lua loaded ===")
 
