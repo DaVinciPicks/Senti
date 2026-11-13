@@ -64,7 +64,25 @@ WF_PIDFILE="$WF_RUN/sox.pid"
 WF_LOG="$HOME/Library/Logs/senti.log"
 
 # --- AI modes (prompt / command / context) ---
-# One provider, one key, one model: OpenAI gpt-6-luna ($0.10/$0.50 per 1M).
+# Three providers behind one adapter (senti-ai.sh): OpenAI, Anthropic and OpenRouter. The
+# menu bar writes the choice to ~/.config/senti/ai.pref; keys live in the macOS Keychain
+# (senti-key.sh). Defaults: OpenAI gpt-6-luna ($0.10/$0.50 per 1M), Anthropic
+# claude-opus-5-5, OpenRouter openai/gpt-6-luna. ai-models.json lists every model, its
+# price and the efforts it accepts.
+# Pins below OUTRANK the menu choice, which is why they are commented out. Provider and
+# model always resolve as a pair, so a pinned model is never sent to another provider:
+# WF_AI_PROVIDER=anthropic          # openai | anthropic | openrouter
+# WF_TEXT_MODEL="claude-haiku-5-5"  # claude-* means Anthropic, an id with "/" OpenRouter
+# WF_VISION_MODEL="claude-haiku-5-5"
+# Key file paths, used only when the Keychain holds no key (defaults shown):
+# WF_ANTHROPIC_KEY="$HOME/.config/senti/anthropic-key"
+# WF_OPENROUTER_KEY="$HOME/.config/senti/openrouter-key"
+# Anthropic refusal fallbacks (Opus and Sonnet; Haiku has none): a declined request is
+# re-run server-side on the model Anthropic recommends. On by default (owner, 13 Nov 2026).
+# WF_ANTHROPIC_FALLBACKS=0
+# OpenRouter: data_collection "deny" is always sent. Zero-data-retention routing is
+# stricter and can leave a model with no endpoint (the request then fails):
+# WF_OPENROUTER_ZDR=1
 # Measured on this Mac (8-case eval + per-call cost):
 #   gpt-4o-mini   vision 3.30s  37k tok  $0.00560   (the old vision model)
 #   deepseek-chat text   1.37s           $0.00003   (the old text model — still cheapest)
@@ -78,7 +96,7 @@ WF_LOG="$HOME/Library/Logs/senti.log"
 #   gpt-5.6-terra 8.25   text  $0.00568   (+0.25 eval for ~12x luna's cost — not worth it)
 # Eval granularity is integer scores over 8 cases, so ±0.25 is noise; luna is chosen
 # because it is newer and 3-4.5x cheaper at indistinguishable quality, not because 8.12>8.00.
-# For a one-off quality push: WF_TEXT_MODEL=gpt-5.6-sol bash senti-prompt.sh ...
+# For a one-off quality push: SENTI_PROVIDER=openai SENTI_MODEL=gpt-6.1-sol bash senti-prompt.sh ...
 WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
 # Reasoning depth: none | low | medium | high | xhigh   ('minimal' is REJECTED by gpt-5.x)
 # Measured on the prompt-rewrite task (2 runs each): none 2.05s/$0.00115 ·
@@ -106,10 +124,6 @@ WF_SHOT_PX="${WF_SHOT_PX:-1536}"
 # the shipped margin. Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
 WF_AUDIO_CTX="${WF_AUDIO_CTX:-768}"
 WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
-# Uncomment to pin a model; otherwise each script's built-in default is used
-# (so upgrades take effect without editing this file).
-# WF_TEXT_MODEL="gpt-6-luna"
-# WF_VISION_MODEL="gpt-6-luna"
 
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for

@@ -1,0 +1,23 @@
+{
+  "checked": "2026-11-13",
+  "unit": "US dollars per 1 million tokens",
+  "providers": {
+    "openai":     { "label": "OpenAI",     "host": "api.openai.com",    "key_url": "https://platform.openai.com/api-keys",   "default": "gpt-6-luna",        "available": true },
+    "anthropic":  { "label": "Anthropic",  "host": "api.anthropic.com", "key_url": "https://platform.claude.com/settings/keys", "default": "claude-opus-5-5", "available": false },
+    "openrouter": { "label": "OpenRouter", "host": "openrouter.ai",     "key_url": "https://openrouter.ai/settings/keys",    "default": "openai/gpt-6-luna", "available": false }
+  },
+  "models": [
+    { "provider": "openai", "id": "gpt-6-luna", "role": "The default for text and screenshots, and the cheapest", "input": 0.10, "output": 0.50, "vision": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "source": "platform.openai.com/pricing, checked 2026-11-11; on the key 2026-11-13; vision self-test 2026-11-13" },
+    { "provider": "openai", "id": "gpt-6.1-terra", "role": "Trickier prompts and screenshots", "input": 1.00, "output": 5.00, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "source": "platform.openai.com/pricing, checked 2026-11-11; on the key 2026-11-13" },
+    { "provider": "openai", "id": "gpt-6.1-sol", "role": "Complex prompts", "input": 2.00, "output": 10.00, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "platform.openai.com/pricing, checked 2026-11-11; on the key 2026-11-13; rejects none (checked 2026-11-11)" },
+    { "provider": "openai", "id": "gpt-6-astra", "role": "Most capable, highest cost", "input": 10.00, "output": 50.00, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "platform.openai.com/pricing, checked 2026-11-11; on the key 2026-11-13; rejects none (checked 2026-11-11)" },
+    { "provider": "anthropic", "id": "claude-opus-5-5", "role": "The default when the provider is Anthropic", "input": 4.00, "output": 20.00, "vision": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "claude-api skill model table, cached 2026-11-03, read 2026-11-13" },
+    { "provider": "anthropic", "id": "claude-sonnet-5-5", "role": "Claude at a middle price", "input": 2.00, "output": 10.00, "vision": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "claude-api skill model table, cached 2026-11-03, read 2026-11-13" },
+    { "provider": "anthropic", "id": "claude-haiku-5-5", "role": "Claude at the same price as the default (prompts up to 100K tokens)", "input": 0.10, "output": 0.50, "vision": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "claude-api skill model table, cached 2026-11-03, read 2026-11-13" },
+    { "provider": "openrouter", "id": "openai/gpt-6-luna", "role": "The default when the provider is OpenRouter", "input": 0.10, "output": 0.50, "vision": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "source": "openrouter.ai/api/v1/models, fetched 2026-11-13" },
+    { "provider": "openrouter", "id": "anthropic/claude-haiku-5.5", "role": "Claude, cheapest", "input": 0.10, "output": 0.50, "vision": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "source": "openrouter.ai/api/v1/models, fetched 2026-11-13" },
+    { "provider": "openrouter", "id": "anthropic/claude-sonnet-5.5", "role": "Claude, middle price", "input": 2.00, "output": 10.00, "vision": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "openrouter.ai/api/v1/models, fetched 2026-11-13" },
+    { "provider": "openrouter", "id": "anthropic/claude-opus-5.5", "role": "Claude, most capable", "input": 4.00, "output": 20.00, "vision": true, "efforts": ["low", "medium", "high", "xhigh", "max"], "source": "openrouter.ai/api/v1/models, fetched 2026-11-13" },
+    { "provider": "openrouter", "id": "google/gemini-3.8-flash", "role": "Google, through OpenRouter (not yet measured on Senti's eval)", "input": 0.825, "output": 4.125, "vision": true, "efforts": ["low", "medium", "high"], "source": "openrouter.ai/api/v1/models, fetched 2026-11-13" }
+  ]
+}
