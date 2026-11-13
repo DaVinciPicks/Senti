@@ -246,12 +246,18 @@ end
 -- An estimate, labelled as one: about 1,500 tokens in and 250 out per prompt rewrite
 -- (lead plan section 5, b1 4.10), list prices, nothing measured. Claude also bills
 -- thinking tokens, which this leaves out, so it says so.
-function wf.costEstimate(m)
+function wf.fmtCost(m)
   if not (m and m.input and m.output) then return nil end
   local c = (m.input * 1500 + m.output * 250) / 1e6
-  if c <= 0 then return "Free" end
-  local d = math.max(2, 1 - math.floor(math.log(c, 10)))
-  local s = "About $" .. string.format("%." .. d .. "f", c) .. " per prompt"
+  if c <= 0 then return "$0" end
+  local d = math.max(2, 1 - math.floor(math.log(c, 10)))   -- 2 significant digits
+  return "$" .. string.format("%." .. d .. "f", c)
+end
+
+function wf.costEstimate(m)
+  local c = wf.fmtCost(m)
+  if not c then return nil end
+  local s = "About " .. c .. " per prompt"
   if m.provider == "anthropic" or m.id:find("^anthropic/") then s = s .. ", plus thinking" end
   return s .. " (estimate)"
 end
@@ -305,6 +311,75 @@ function wf.testState(code, stdout, decode)
     end
   end
   return TEST_BY_CODE[code] or "error", false
+end
+-- One line under the key field after a test. No key ever appears here.
+function wf.testDetail(state, label, host, model, unlisted)
+  label, host = label or "The provider", host or "the provider"
+  if state == "connected" then
+    if model and unlisted then return model .. " is not on this key. Pick another model below." end
+    if model then return model .. " is on this key." end
+    return label .. " accepted the key."
+  elseif state == "rejected" then return label .. " refused this key. Paste it again, or remove it."
+  elseif state == "unverified" then return host .. " gave no clear answer. The key may still work."
+  elseif state == "network" then return "Senti could not reach " .. host .. ". Check your connection."
+  elseif state == "none" then return "No key is saved for " .. label .. "."
+  elseif state == "keychain" then return wf.NOTICE[19] .. "."
+  end
+  return "The key test did not run."
+end
+
+-- The page talks to Lua only through these messages. Anything else, or a field of the
+-- wrong type, is dropped. Only fields named here are copied out, so nothing extra from
+-- the page reaches the handlers.
+local BRIDGE = { ready = {}, save = { provider = true, key = true }, test = { provider = true },
+                 clear = { provider = true }, use = { provider = true, model = true },
+                 getkey = { provider = true }, close = {} }
+function wf.validateBridge(body)
+  if type(body) ~= "table" or type(body.type) ~= "string" then return nil, "not a message" end
+  local spec = BRIDGE[body.type]
+  if not spec then return nil, "unknown type" end
+  local m = { type = body.type }
+  if spec.provider then
+    if not wf.isProvider(body.provider) then return nil, "bad provider" end
+    m.provider = body.provider
+  end
+  if spec.key then
+    if not wf.validKeyShape(body.key) then return nil, "bad key shape" end
+    m.key = body.key
+  end
+  if spec.model then
+    if not wf.validId(body.model) then return nil, "bad model id" end
+    m.model = body.model
+  end
+  return m
+end
+
+-- "Written for": the destination family the last Prompt turn was tailored to, from the
+-- note name senti-ai.sh records in last-request.json (prompts/models/<family>.md).
+local FAMILY = { openai = "OpenAI models (ChatGPT, Codex)", anthropic = "Claude",
+                 ["google-open"] = "Gemini and open models", ["google-and-open"] = "Gemini and open models",
+                 universal = "Any model (general guidance)", _techniques = "Any model (general guidance)" }
+function wf.writtenForLabel(note)
+  note = wf.cleanText(note, 60)
+  if not note or note == "" then return nil end
+  local key = note:gsub("%.md$", "")
+  local name = FAMILY[key] or (key:find("^claude") and "Claude (" .. key .. ")") or key
+  return name .. ", detected in your last prompt"
+end
+
+-- ~/.config/senti/ui.pref: strict key=value lines, never sourced or executed.
+function wf.parseUIPref(text)
+  local p = { prompt_screen = true, panel_seen = false }
+  for line in (type(text) == "string" and text or ""):gmatch("[^\n]+") do
+    local k, v = line:match("^%s*([%w_]+)%s*=%s*([01])%s*$")
+    if k == "prompt_screen" then p.prompt_screen = (v == "1")
+    elseif k == "panel_seen" then p.panel_seen = (v == "1") end
+  end
+  return p
+end
+function wf.serializeUIPref(p)
+  return "prompt_screen=" .. (p.prompt_screen and "1" or "0") .. "\n" ..
+         "panel_seen=" .. (p.panel_seen and "1" or "0") .. "\n"
 end
 -- ── END pure helpers ──────────────────────────────────────────────────
 
@@ -891,6 +966,261 @@ function wf.aiNotice(code, mode, vision)
   return wf.noticeFor(code, wf.providerLabel(a.provider), model, mode)
 end
 
+-- ── UI prefs (~/.config/senti/ui.pref; app-ui only, gitignored as *.pref) ──
+function wf.loadPrefs()
+  wf.prefs = wf.parseUIPref(readFile(wf.UIPREF, 4096))
+  return wf.prefs
+end
+function wf.savePrefs()
+  local tmp = wf.UIPREF .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then wf.log("prefs: could not write ui.pref"); return end
+  f:write(wf.serializeUIPref(wf.prefs)); f:close()
+  os.rename(tmp, wf.UIPREF)
+end
+wf.loadPrefs()
+
+-- ── "AI provider and key…" panel (hs.webview) ─────────────────────────
+-- Locked down: the page is inline HTML with a CSP of default-src 'none' (no fetch, no
+-- remote anything), navigation is allowed only until that one page has loaded, no new
+-- windows, a fresh private datastore, and every message from the page is checked by
+-- wf.validateBridge. The page never receives a key: Lua sends it presence and the last
+-- 4 characters only. A pasted key travels page → this handler → one hs.task's SENTI_IN.
+wf.panel = wf.panel or {}
+wf.panelBusy, wf.panelSaved = {}, {}
+local PANEL_W, PANEL_H = 820, 760
+local MONO = { openai = "O", anthropic = "A", openrouter = "OR" }
+
+local function ago(at)
+  if not at then return "" end
+  local s = os.time() - at
+  if s < 60 then return " Checked just now." end
+  if s < 3600 then return string.format(" Checked %d min ago.", s // 60) end
+  return " Checked " .. os.date("%H:%M", at) .. "."
+end
+
+function wf.writtenFor()
+  local ok, t = pcall(hs.json.decode, readFile(wf.LASTREQ, 65536) or "")
+  if not ok or type(t) ~= "table" or type(t.parts) ~= "table" then return nil end
+  for _, part in ipairs(t.parts) do
+    if type(part) == "table" and part.source == "target_digest" then return wf.writtenForLabel(part.note) end
+  end
+  return nil
+end
+
+function wf.panelState(focus)
+  local reg = wf.registry or wf.loadRegistry()
+  local a = wf.active()
+  local st = { providers = {}, unit = reg.unit, checked = reg.checked, writtenFor = wf.writtenFor(),
+               focus = focus, refocus = (focus ~= nil),
+               active = { provider = a.provider, text = a.text_model, vision = a.vision_model,
+                          pinned = a.pinned, pinSource = a.source } }
+  if not wf.keys then
+    st.statusError = hs.fs.attributes(wf.KEYSH)
+      and "Senti could not read the key status. Close this window and open it again from the menu bar."
+      or "The key helper senti-key.sh is not installed. Run install.sh again, then reopen this window."
+  end
+  for _, p in ipairs(wf.PROVIDERS) do
+    local info = reg.providers[p]
+    local k = (wf.keys and wf.keys.keys[p]) or { present = false }
+    local t = wf.keyTests[p]
+    local e = { id = p, label = info.label, mono = MONO[p], host = info.host, isNew = not info.available,
+                present = (k.present == true), source = k.source, last4 = k.last4,
+                busy = wf.panelBusy[p], saved = wf.panelSaved[p] or nil,
+                test = t and t.state or nil,
+                testDetail = t and (t.detail .. ((t.state == "connected" or t.state == "unverified") and ago(t.at) or "")) or nil,
+                models = {} }
+    for _, m in ipairs(wf.modelsFor(reg, p)) do
+      e.models[#e.models + 1] = { id = m.id, role = m.role, vision = m.vision, isDefault = (m.id == info.default),
+        price = (m.input and m.output) and ("$" .. wf.fmtPrice(m.input) .. " in, $" .. wf.fmtPrice(m.output) .. " out") or nil,
+        cost = wf.fmtCost(m) }
+    end
+    st.providers[#st.providers + 1] = e
+  end
+  wf.panelSaved = {}
+  return st
+end
+
+-- Push the current state into the page. hs.json.encode output is a JS literal, so the
+-- page never parses anything else from Lua.
+function wf.panelRefresh(focus)
+  local v = wf.panel.view
+  if not (v and wf.panel.loaded) then return end
+  local ok, js = pcall(hs.json.encode, wf.panelState(focus))
+  if ok and js then v:evaluateJavaScript("window.senti && window.senti.render(" .. js .. ")") end
+end
+
+function wf.saveKey(provider, key)
+  wf.panelBusy[provider] = "saving"; wf.panelRefresh()
+  wf.keyTask({ "set", provider }, key, function(code)
+    wf.panelBusy[provider] = nil
+    if code == 0 or code == 19 then
+      wf.panelSaved[provider] = true
+      wf.keyTests[provider] = (code == 19) and { state = "keychain", detail = wf.testDetail("keychain"), at = os.time() } or nil
+      wf.log("keys: saved a " .. provider .. " key" .. (code == 19 and " (Keychain unavailable, file fallback)" or ""))
+      wf.refreshKeys(function() wf.testKey(provider) end)
+    else
+      wf.log("keys: saving a " .. provider .. " key failed (exit " .. tostring(code) .. ")")
+      wf.keyTests[provider] = { state = "error", at = os.time(),
+        detail = (code == 127) and "senti-key.sh is missing. Run install.sh again."
+                 or ("The key was not saved (senti-key.sh exit " .. tostring(code) .. ").") }
+      wf.panelRefresh()
+    end
+  end)
+end
+
+function wf.testKey(provider, announce)
+  local reg = wf.registry or wf.loadRegistry()
+  local info, a = reg.providers[provider], wf.active()
+  local model = (a.provider == provider) and a.text_model or info.default
+  local args = { "test", provider }
+  if model then args[3], args[4] = "--model", model end
+  wf.panelBusy[provider] = "testing"; wf.panelRefresh()
+  wf.keyTask(args, nil, function(code, out)
+    wf.panelBusy[provider] = nil
+    local state, unlisted = wf.testState(code, out, hs.json.decode)
+    wf.keyTests[provider] = { state = state, at = os.time(),
+                              detail = wf.testDetail(state, info.label, info.host, model, unlisted) }
+    wf.log("keys: test " .. provider .. " → " .. state)
+    wf.panelRefresh()
+    if announce then
+      wf.notify(info.label .. ": " .. (wf.TEST_LABEL[state] or state) .. "\n" .. wf.keyTests[provider].detail,
+                nil, (state == "connected") and wf.TONE.ok or wf.TONE.warn)
+    end
+  end)
+end
+
+function wf.clearKey(provider)
+  wf.keyTask({ "clear", provider }, nil, function(code)
+    wf.keyTests[provider] = nil
+    wf.log("keys: cleared " .. provider .. " (exit " .. tostring(code) .. ")")
+    wf.refreshKeys()
+  end)
+end
+
+function wf.openKeyPage(provider)
+  local reg = wf.registry or wf.loadRegistry()
+  local url = wf.safeKeyURL(reg.providers[provider].key_url, provider) or wf.PROVIDER_INFO[provider].key_url
+  hs.urlevent.openURL(url)
+end
+
+function wf.panelMessage(raw)
+  local body = raw
+  if type(raw) == "table" and raw.body ~= nil then
+    if type(raw.frameInfo) == "table" and raw.frameInfo.mainFrame == false then return end
+    body = raw.body
+  end
+  local m, why = wf.validateBridge(body)
+  if not m then
+    wf.log("panel: dropped a message (" .. tostring(why) .. ")")
+    if why == "bad key shape" then wf.panelRefresh() end   -- clears the page's "Saving"
+    return
+  end
+  if m.type == "ready" then wf.panel.loaded = true; wf.panelRefresh(wf.panel.focus)
+  elseif m.type == "save" then
+    local key = m.key; m.key = nil
+    wf.saveKey(m.provider, key)
+    key = nil
+  elseif m.type == "test" then wf.testKey(m.provider)
+  elseif m.type == "clear" then wf.clearKey(m.provider)
+  elseif m.type == "use" then if wf.useModel then wf.useModel(m.provider, m.model) end
+  elseif m.type == "getkey" then wf.openKeyPage(m.provider)
+  elseif m.type == "close" then if wf.panel.view then wf.panel.view:delete() end
+  end
+end
+
+-- Navigation policy: the inline page loads once; after that every navigation, response,
+-- new window and auth challenge is refused. Before the first load only non-web schemes
+-- pass, so even a mistake cannot point the panel at a remote site.
+local function panelPolicy(action, _, info)
+  if action ~= "navigationAction" and action ~= "navigationResponse" then return false end
+  if wf.panel.loaded then
+    wf.log("panel: refused a navigation")
+    return false
+  end
+  local url = ""
+  if type(info) == "table" then
+    local req = info.request or (info.response and { URL = info.response.URL }) or {}
+    url = tostring(req.URL or "")
+  end
+  if url:find("^%a[%w+.-]*:") and not url:find("^about:") then
+    local scheme = url:match("^(%a[%w+.-]*):"):lower()
+    if scheme == "http" or scheme == "https" or scheme == "ftp" or scheme == "file"
+       or scheme == "javascript" or scheme == "data" then return false end
+  end
+  return true
+end
+
+function wf.openPanel(focus)
+  wf.panel.focus = focus
+  if wf.panel.view then
+    wf.panel.view:show()
+    hs.focus()
+    local w = wf.panel.view:hswindow(); if w then w:focus() end
+    wf.refreshKeys(function() wf.panelRefresh(focus) end)
+    return
+  end
+  wf.loadRegistry()
+  local scr = hs.screen.mainScreen():frame()
+  local h = math.min(PANEL_H, scr.h - 40)
+  local rect = { x = scr.x + (scr.w - PANEL_W) / 2, y = scr.y + (scr.h - h) / 2, w = PANEL_W, h = h }
+  local uc = hs.webview.usercontent.new("senti")
+  uc:setCallback(function(msg)
+    local ok, err = pcall(wf.panelMessage, msg)
+    if not ok then wf.log("panel: handler error " .. tostring(err)) end
+  end)
+  local v = hs.webview.new(rect, { javaScriptEnabled = true, javaScriptCanOpenWindowsAutomatically = false,
+                                   developerExtrasEnabled = false, privateBrowsing = true }, uc)
+  if not v then wf.log("panel: could not create the webview"); wf.promptKeyDialog(focus); return end
+  wf.panel.view, wf.panel.uc, wf.panel.loaded = v, uc, false
+  v:windowStyle({ "titled", "closable", "fullSizeContentView" })
+  v:titleVisibility("hidden")
+  v:windowTitle("Senti AI provider and key")
+  v:allowTextEntry(true)
+  v:allowNewWindows(false)
+  v:allowGestures(false)
+  v:closeOnEscape(true)
+  v:deleteOnClose(true)
+  v:darkMode(true)
+  v:shadow(true)
+  v:policyCallback(panelPolicy)
+  v:navigationCallback(function(action)
+    if action == "didFinishNavigation" then
+      wf.panel.loaded = true
+      wf.panelRefresh(wf.panel.focus)
+    elseif action == "didFailNavigation" or action == "didFailProvisionalNavigation" then
+      wf.log("panel: page failed to load, falling back to the plain dialog")
+    end
+  end)
+  v:windowCallback(function(action)
+    if action == "closing" then wf.panel.view, wf.panel.uc, wf.panel.loaded = nil, nil, false end
+  end)
+  v:html(wf.PANEL_HTML)
+  v:show()
+  hs.focus()
+  local w = v:hswindow(); if w then w:focus() end
+  wf.refreshKeys()
+end
+
+-- Fallback when the panel cannot open: a native secure prompt (secureField = true).
+function wf.promptKeyDialog(provider)
+  provider = wf.isProvider(provider) and provider or wf.active().provider
+  local label = wf.providerLabel(provider)
+  hs.focus()
+  local button, key = hs.dialog.textPrompt("Add your " .. label .. " API key",
+    "Stored in your macOS Keychain, encrypted on disk. Senti sends it only to that provider, and only when you use Prompt, Command or Context. Programs running as your macOS user can still read it.",
+    "", "Save", "Cancel", true)
+  if button ~= "Save" then return end
+  key = (key or ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if not wf.validKeyShape(key) then
+    wf.notify("That does not look like an API key.\nKeys use letters, digits, dots, dashes and underscores.", nil, wf.TONE.warn)
+    return
+  end
+  wf.saveKey(provider, key)
+  key = nil
+  wf.notify("Saving and testing your " .. label .. " key…")
+end
+
 -- ── Transcription pipeline ─────────────────────────────────────────────
 -- Poll briefly for the async screenshot — a very short utterance can outrun the
 -- ~200ms screencapture. cb(true) if it appears within ~1s, else cb(false).
@@ -1181,6 +1511,9 @@ local function menu()
           end },
       } },
     { title = "-" },
+    { title = "AI provider and key…", fn = function() wf.openPanel() end },
+    { title = "Add a key in a plain dialog…", fn = function() wf.promptKeyDialog() end },
+    { title = "-" },
     { title = "Grant / test microphone", fn = function()
         -- Step 1: request authorization (prompts on first use), then Step 2: verify capture.
         hs.task.new(wf.AUTH, function(_, aout)
@@ -1314,6 +1647,478 @@ function wf.diag()
 end
 function wf.diagToLog() wf.log("diag: " .. wf.diag()) end
 
+-- ── Panel page (inline so install.sh needs no change; rendered by hs.webview) ──
+-- Text is set with textContent only, never innerHTML with data, and the CSP blocks every
+-- network request. Copy follows the workspace rules: plain sentences, no dashes.
+wf.PANEL_HTML = [==[
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>Senti AI provider and key</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0B0B0E;
+  --rail: #111116;
+  --raise: #18181F;
+  --raise-2: #20202A;
+  --line: rgba(255,255,255,0.08);
+  --line-2: rgba(255,255,255,0.16);
+  --text: #FFFFFF;
+  --blue: #4C9BFF;
+  --blue-strong: #1668FF;
+  --blue-deep: #0A2FA8;
+  --warn: #FA9E3D;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 13px/1.45 -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; overflow: hidden;
+  display: grid; grid-template-rows: auto 1fr auto;
+  user-select: none; -webkit-user-select: none; cursor: default;
+}
+::selection { background: rgba(76,155,255,0.45); color: #fff; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
+
+/* Header sits under the traffic lights (fullSizeContentView). */
+.head { padding: 38px 28px 16px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.15; text-wrap: balance; }
+.lede { margin-top: 6px; text-wrap: pretty; }
+.lede b { font-weight: 600; }
+.alert { margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(250,158,61,0.12); box-shadow: inset 0 0 0 1px rgba(250,158,61,0.45); }
+
+.split { display: grid; grid-template-columns: 216px 1fr; min-height: 0; }
+
+/* Provider rail: a list, not cards. */
+.railwrap { background: var(--rail); border-right: 1px solid var(--line); display: flex; flex-direction: column; justify-content: space-between; min-height: 0; }
+.rail { padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; }
+.railnote { padding: 0 20px 18px; text-wrap: pretty; }
+.nw { white-space: nowrap; font-family: var(--mono); font-size: 13px; }
+.prov { display: grid; grid-template-columns: 32px 1fr; gap: 10px; align-items: center; text-align: left;
+  padding: 10px; border-radius: 10px; min-height: 52px; transition: background-color 150ms ease; }
+.prov:hover { background: var(--raise); }
+.prov[aria-current="true"] { background: var(--raise-2); }
+.prov:active .mark { transform: scale(0.96); }
+.mark { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--raise-2); box-shadow: inset 0 0 0 1px var(--line-2);
+  font-weight: 600; font-size: 13px; letter-spacing: -0.02em; transition: transform 120ms var(--ease); }
+.prov[aria-current="true"] .mark { background: #2A2A36; }
+.prov .mark.inuse { background: var(--blue-strong); box-shadow: none; }
+.pname { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+.pstate { display: flex; align-items: center; gap: 6px; margin-top: 1px; font-variant-numeric: tabular-nums; }
+.badge { font-size: 13px; font-weight: 500; line-height: 18px; padding: 0 6px; border-radius: 5px;
+  box-shadow: inset 0 0 0 1px var(--line-2); }
+.badge.blue { color: var(--blue); box-shadow: inset 0 0 0 1px rgba(76,155,255,0.45); }
+
+/* Status glyphs: shape and label always, colour never alone. */
+.glyph { width: 14px; height: 14px; flex: none; }
+.glyph .ok { fill: var(--blue); }
+.glyph .bad { fill: var(--warn); }
+.glyph .ring { fill: none; stroke: var(--blue); stroke-width: 1.6; }
+.glyph .ringw { fill: none; stroke: var(--warn); stroke-width: 1.6; }
+.glyph .tick { fill: none; stroke: #0B0B0E; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.glyph .bar { fill: #0B0B0E; }
+.glyph .q { fill: var(--blue); }
+.glyph .none { fill: none; stroke: #fff; stroke-width: 1.4; stroke-dasharray: 2 2.2; }
+
+.detail { overflow-y: auto; padding: 22px 28px 24px; display: flex; flex-direction: column; gap: 26px; }
+.detail::-webkit-scrollbar { width: 8px; }
+.detail::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+
+.ktitle { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.newnote { margin-top: 4px; }
+
+.field { margin-top: 12px; display: flex; gap: 8px; }
+.input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 8px;
+  background: var(--raise); color: #fff; border: 1px solid var(--line-2);
+  font: 500 13px/1 var(--mono); letter-spacing: 0.02em;
+  user-select: text; -webkit-user-select: text; cursor: text;
+  transition: border-color 150ms ease, background-color 150ms ease; }
+.input::placeholder { color: rgba(255,255,255,0.62); font-family: -apple-system, system-ui, sans-serif; letter-spacing: 0; font-weight: 400; }
+.input:hover { border-color: rgba(255,255,255,0.24); }
+.input:focus { border-color: var(--blue); background: #1B1B23; outline: none; }
+.input[aria-invalid="true"] { border-color: var(--warn); }
+.input:disabled { opacity: 0.6; }
+
+.btn { height: 36px; padding: 0 14px; border-radius: 8px; font-weight: 600; white-space: nowrap;
+  background: var(--raise-2); box-shadow: inset 0 0 0 1px var(--line-2);
+  display: inline-flex; align-items: center; gap: 8px;
+  transition: transform 120ms var(--ease), background-color 150ms ease; }
+.btn:hover:not(:disabled) { background: #2A2A36; }
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn.primary { background: var(--blue-strong); box-shadow: none; }
+.btn.primary:hover:not(:disabled) { background: #2C77FF; }
+.btn:disabled { opacity: 0.55; }
+.btn.danger { background: rgba(250,158,61,0.14); box-shadow: inset 0 0 0 1px rgba(250,158,61,0.5); }
+
+/* The pill's bars, small: the one shape Senti uses for "working". */
+.bars { display: inline-flex; gap: 2px; align-items: center; height: 12px; }
+.bars i { width: 2px; height: 12px; border-radius: 1px; background: #fff; transform-origin: center;
+  animation: bar 900ms ease-in-out infinite; }
+.bars i:nth-child(2) { animation-delay: -750ms; } .bars i:nth-child(3) { animation-delay: -600ms; }
+.bars i:nth-child(4) { animation-delay: -450ms; } .bars i:nth-child(5) { animation-delay: -300ms; }
+@keyframes bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+
+.status { margin-top: 10px; display: flex; align-items: center; gap: 8px; min-height: 20px; font-variant-numeric: tabular-nums; }
+.status .stext { font-weight: 600; }
+.status[data-state="rejected"] .stext, .status[data-state="invalid"] .stext { color: var(--warn); }
+.status[data-state="connected"] .stext { color: var(--blue); }
+.status .sdetail { flex: 1; min-width: 0; }
+.status .swap { transition: opacity 160ms ease; }
+
+.store { margin-top: 14px; padding: 11px 14px; border-radius: 10px; background: var(--raise);
+  display: grid; grid-template-columns: 16px 1fr; gap: 10px; max-width: 64ch; text-wrap: pretty; }
+.store svg { margin-top: 2px; }
+.store .lock { fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+
+.links { margin-top: 12px; display: flex; gap: 18px; align-items: center; min-height: 24px; }
+.link { font-weight: 600; color: var(--blue); display: inline-flex; gap: 4px; align-items: center; min-height: 24px; border-radius: 4px; }
+.link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.link.warnlink { color: var(--warn); }
+.link svg { stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.confirm { display: inline-flex; gap: 8px; align-items: center; }
+.confirm .btn { height: 28px; padding: 0 10px; }
+
+.mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.mnote { margin-top: 6px; max-width: 62ch; text-wrap: pretty; }
+.models { margin-top: 10px; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.model { display: grid; grid-template-columns: 18px 1fr auto; gap: 12px; text-align: left; align-items: start;
+  padding: 11px 10px; border-bottom: 1px solid var(--line); transition: background-color 150ms ease; }
+.model:hover:not(:disabled) { background: var(--raise); }
+.model[aria-checked="true"] { background: var(--raise-2); }
+.model:disabled { opacity: 0.55; }
+.radio { width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,0.4);
+  display: grid; place-items: center; transition: box-shadow 150ms ease; }
+.model[aria-checked="true"] .radio { box-shadow: inset 0 0 0 5px var(--blue-strong); }
+.mline { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.mid { font: 600 13px/1.4 var(--mono); letter-spacing: -0.01em; }
+.mrole { font-weight: 400; }
+.mmain { min-width: 0; }
+.mrole2 { display: block; margin-top: 1px; }
+.mnum { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mnum span { display: block; }
+.mnum .mcost { margin-top: 1px; }
+.tag { font-size: 13px; font-weight: 500; color: var(--blue); }
+
+.empty { padding: 14px; border-radius: 10px; background: var(--raise); margin-top: 10px; max-width: 62ch; }
+
+.foot { border-top: 1px solid var(--line); padding: 12px 28px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; background: var(--rail); }
+.fcell { min-width: 0; }
+.flabel { font-weight: 600; display: block; }
+.fval { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fval .mono { font-family: var(--mono); font-weight: 600; }
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0ms !important; }
+  .bars i { animation: none; transform: scaleY(0.6); }
+  .bars i:nth-child(2n) { transform: scaleY(1); }
+}
+</style>
+</head>
+<body>
+<header class="head">
+  <h1>AI provider and key</h1>
+  <p class="lede">Dictation needs no key and stays on your Mac. A key turns on <b>Prompt</b>, <b>Command</b> and <b>Context</b>.</p>
+  <p class="alert" id="alert" role="alert" hidden></p>
+</header>
+
+<div class="split">
+  <div class="railwrap">
+    <nav class="rail" id="rail" aria-label="Providers"></nav>
+    <p class="railnote">Senti is open source. <span class="nw">senti-key.sh</span> in the repo is the only code that reads or writes these keys.</p>
+  </div>
+
+  <main class="detail" id="detail">
+    <section aria-labelledby="ktitle">
+      <div class="ktitle">
+        <h2 id="ktitle">API key</h2>
+        <span id="kbadge"></span>
+      </div>
+      <p class="newnote" id="newnote" hidden></p>
+      <div class="field">
+        <label class="sr" for="key" id="keylabel">API key</label>
+        <input class="input" id="key" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" maxlength="512" aria-describedby="sline store">
+        <button class="btn" id="action" type="button">Test key</button>
+      </div>
+      <div class="status" id="sline" role="status" aria-live="polite"></div>
+      <div class="store" id="store">
+        <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect class="lock" x="3" y="7" width="10" height="7" rx="1.6"/><path class="lock" d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7"/></svg>
+        <p id="storetext"></p>
+      </div>
+      <div class="links" id="links"></div>
+    </section>
+
+    <section aria-labelledby="mtitle">
+      <div class="mhead"><h2 id="mtitle">Model</h2></div>
+      <p class="mnote" id="mnote"></p>
+      <div class="models" id="models" role="radiogroup" aria-labelledby="mtitle"></div>
+    </section>
+  </main>
+</div>
+
+<footer class="foot">
+  <div class="fcell"><span class="flabel">Senti writes with</span><span class="fval" id="writes"></span></div>
+  <div class="fcell"><span class="flabel">Written for</span><span class="fval" id="written"></span></div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var S = null;            // last state from Lua (never holds a key)
+  var view = null;         // provider shown in the detail pane
+  var local = {};          // per-provider UI-only state: {typed, invalid, confirm}
+  var pasteTimer = null;
+
+  function post(msg) {
+    try { window.webkit.messageHandlers.senti.postMessage(msg); } catch (e) {}
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function svg(markup) {   // static, authored markup only, never data
+    var t = document.createElement("template"); t.innerHTML = markup.trim(); return t.content.firstChild;
+  }
+  var GLYPH = {
+    connected: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ok" cx="7" cy="7" r="7"/><path class="tick" d="M4 7.2l2 2 4-4.4"/></svg>',
+    rejected: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="bad" cx="7" cy="7" r="7"/><rect class="bar" x="6.1" y="3.2" width="1.8" height="4.8" rx="0.9"/><circle class="bar" cx="7" cy="10.2" r="1"/></svg>',
+    invalid: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="bad" cx="7" cy="7" r="7"/><rect class="bar" x="6.1" y="3.2" width="1.8" height="4.8" rx="0.9"/><circle class="bar" cx="7" cy="10.2" r="1"/></svg>',
+    unverified: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ring" cx="7" cy="7" r="6.2"/><circle class="q" cx="7" cy="7" r="2.2"/></svg>',
+    network: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ringw" cx="7" cy="7" r="6.2"/><path class="ringw" d="M3.2 10.8l7.6-7.6"/></svg>',
+    keychain: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ringw" cx="7" cy="7" r="6.2"/><path class="ringw" d="M3.2 10.8l7.6-7.6"/></svg>',
+    error: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ringw" cx="7" cy="7" r="6.2"/><path class="ringw" d="M3.2 10.8l7.6-7.6"/></svg>',
+    saved: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="ring" cx="7" cy="7" r="6.2"/></svg>',
+    none: '<svg class="glyph" viewBox="0 0 14 14" aria-hidden="true"><circle class="none" cx="7" cy="7" r="6"/></svg>'
+  };
+  function bars() { var b = el("span", "bars"); b.setAttribute("aria-hidden", "true"); for (var i = 0; i < 5; i++) b.appendChild(el("i")); return b; }
+  function prov(id) { if (!S) return null; for (var i = 0; i < S.providers.length; i++) if (S.providers[i].id === id) return S.providers[i]; return null; }
+  function L(id) { return local[id] || (local[id] = { typed: false, invalid: false, confirm: false }); }
+  function shapeOK(k) { return /^[A-Za-z0-9._-]{8,512}$/.test(k); }
+
+  function railState(p) {
+    if (p.busy === "saving") return ["saved", "Saving"];
+    if (p.busy === "testing") return ["saved", "Testing"];
+    if (!p.present) return ["none", "Needs a key"];
+    var t = p.test || "saved";
+    var label = { connected: "Connected", unverified: "Could not verify", rejected: "Rejected", network: "No network", keychain: "Keychain locked", error: "Test failed", saved: "Saved, not tested" }[t] || "Saved";
+    return [t, label];
+  }
+
+  function renderRail() {
+    var rail = document.getElementById("rail");
+    rail.textContent = "";
+    S.providers.forEach(function (p) {
+      var b = el("button", "prov"); b.type = "button";
+      b.setAttribute("aria-current", p.id === view ? "true" : "false");
+      var m = el("span", "mark" + (p.id === S.active.provider && p.present ? " inuse" : ""), p.mono);
+      m.setAttribute("aria-hidden", "true");
+      var txt = el("span");
+      var nm = el("span", "pname", p.label);
+      if (p.isNew) nm.appendChild(el("span", "badge", "New"));
+      var rs = railState(p);
+      var st = el("span", "pstate");
+      if (p.busy) st.appendChild(bars()); else st.appendChild(svg(GLYPH[rs[0]] || GLYPH.none));
+      st.appendChild(el("span", null, rs[1] + (p.present && p.last4 && !p.busy ? "  …" + p.last4 : "")));
+      txt.appendChild(nm); txt.appendChild(st);
+      b.appendChild(m); b.appendChild(txt);
+      b.setAttribute("aria-label", p.label + ", " + rs[1] + (p.id === S.active.provider ? ", in use" : ""));
+      b.addEventListener("click", function () { if (view !== p.id) { view = p.id; renderAll(); } });
+      rail.appendChild(b);
+    });
+  }
+
+  function renderKey(p) {
+    var lo = L(p.id);
+    document.getElementById("ktitle").textContent = p.label + " API key";
+    document.getElementById("keylabel").textContent = p.label + " API key";
+    var kb = document.getElementById("kbadge"); kb.textContent = "";
+    if (p.id === S.active.provider && p.present) kb.appendChild(el("span", "badge blue", "In use"));
+    var nn = document.getElementById("newnote");
+    if (p.isNew) { nn.hidden = false; nn.textContent = "New in Senti 1.1 and tested offline. The first live check with a real key is still to come."; }
+    else { nn.hidden = true; nn.textContent = ""; }
+
+    var input = document.getElementById("key");
+    input.placeholder = p.present
+      ? "Saved, ending …" + (p.last4 || "") + ". Paste a new key to replace it."
+      : "Paste your " + p.label + " key";
+    input.disabled = !!p.busy;
+    input.setAttribute("aria-invalid", lo.invalid ? "true" : "false");
+
+    var btn = document.getElementById("action");
+    btn.textContent = ""; btn.className = "btn";
+    if (p.busy) {
+      btn.disabled = true; btn.appendChild(bars());
+      btn.appendChild(el("span", null, p.busy === "saving" ? "Saving" : "Testing"));
+    } else if (lo.typed) {
+      btn.disabled = false; btn.className = "btn primary"; btn.appendChild(el("span", null, "Save and test"));
+    } else {
+      btn.disabled = !p.present; btn.appendChild(el("span", null, "Test key"));
+    }
+
+    var s = document.getElementById("sline"); s.textContent = "";
+    var state, text, detail = "";
+    if (lo.invalid) { state = "invalid"; text = "That does not look like a key"; detail = "Keys use letters, digits, dots, dashes and underscores, 8 to 512 characters."; }
+    else if (p.busy === "saving") { state = "saving"; text = "Saving to your Keychain"; }
+    else if (p.busy === "testing") { state = "testing"; text = "Asking " + p.host; detail = "A free list request. No prompt is sent."; }
+    else if (!p.present) { state = "none"; text = "No key saved"; detail = "Dictation still works."; }
+    else {
+      var rs = railState(p); state = rs[0]; text = rs[1];
+      detail = p.testDetail || "";
+    }
+    s.setAttribute("data-state", state);
+    if (state === "saving" || state === "testing") s.appendChild(bars());
+    else s.appendChild(svg(GLYPH[state] || GLYPH.none));
+    s.appendChild(el("span", "stext", text));
+    if (detail) s.appendChild(el("span", "sdetail", detail));
+
+    var where = p.source === "file"
+      ? "Stored in ~/.config/senti/" + p.id + "-key, readable only by your macOS account, because the Keychain was not available."
+      : (p.present ? "Stored in your macOS Keychain, encrypted on disk." : "Saved keys go into your macOS Keychain, encrypted on disk.");
+    document.getElementById("storetext").textContent = where +
+      " Senti sends it only to that provider, at " + p.host + ", and only when you use Prompt, Command or Context. Programs running as your macOS user can still read it.";
+
+    var links = document.getElementById("links"); links.textContent = "";
+    var gk = el("button", "link"); gk.type = "button";
+    gk.appendChild(el("span", null, "Get a key"));
+    gk.appendChild(svg('<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2h6v6M10 2L3 9"/></svg>'));
+    gk.setAttribute("aria-label", "Get a key from " + p.label + " (opens your browser)");
+    gk.addEventListener("click", function () { post({ type: "getkey", provider: p.id }); });
+    links.appendChild(gk);
+    if (p.present && !p.busy) {
+      if (lo.confirm) {
+        var c = el("span", "confirm");
+        c.appendChild(el("span", null, "Remove the " + p.label + " key?"));
+        var yes = el("button", "btn danger", "Remove"); yes.type = "button";
+        yes.addEventListener("click", function () { lo.confirm = false; post({ type: "clear", provider: p.id }); });
+        var no = el("button", "btn", "Keep"); no.type = "button";
+        no.addEventListener("click", function () { lo.confirm = false; renderAll(); });
+        c.appendChild(yes); c.appendChild(no); links.appendChild(c);
+        setTimeout(function () { no.focus(); }, 0);
+      } else {
+        var rm = el("button", "link warnlink", "Remove key"); rm.type = "button";
+        rm.addEventListener("click", function () { lo.confirm = true; renderAll(); });
+        links.appendChild(rm);
+      }
+    }
+  }
+
+  function renderModels(p) {
+    var list = document.getElementById("models"); list.textContent = "";
+    var note = document.getElementById("mnote");
+    var a = S.active;
+    var models = p.models || [];
+    if (a.pinned) note.textContent = a.pinSource === "env"
+      ? "Pinned by SENTI_PROVIDER or SENTI_MODEL in the environment, so the list is read only."
+      : "Pinned in config.sh, so the list is read only. Remove WF_AI_PROVIDER and WF_TEXT_MODEL there to pick here.";
+    else if (!p.present) note.textContent = "Add a key above to use these models.";
+    else note.textContent = "US dollars per 1M tokens" + (S.checked ? ", checked " + S.checked : "") + ". Per prompt is an estimate for 1,500 tokens in and 250 out" + (p.id === "openai" ? "." : ", before thinking tokens.");
+    if (!models.length) {
+      list.appendChild(el("p", "empty", "No model list is installed. Run install.sh again to add ai-models.json."));
+      return;
+    }
+    models.forEach(function (m) {
+      var on = (a.provider === p.id && a.text === m.id);
+      var r = el("button", "model"); r.type = "button";
+      r.setAttribute("role", "radio"); r.setAttribute("aria-checked", on ? "true" : "false");
+      r.disabled = !!(a.pinned || !p.present || p.busy);
+      r.appendChild(el("span", "radio"));
+      var body = el("span", "mmain");
+      var l1 = el("span", "mline");
+      l1.appendChild(el("span", "mid", m.id));
+      if (m.isDefault) l1.appendChild(el("span", "tag", "Default"));
+      if (m.vision) l1.appendChild(el("span", "tag", "Screenshots"));
+      body.appendChild(l1);
+      body.appendChild(el("span", "mrole2", m.role));
+      var nums = el("span", "mnum");
+      nums.appendChild(el("span", null, m.price || "Price not listed"));
+      if (m.cost) nums.appendChild(el("span", "mcost", m.cost + " per prompt"));
+      r.appendChild(body); r.appendChild(nums);
+      r.setAttribute("aria-label", m.id + ", " + m.role + ", " + (m.price || "") + (m.cost ? ", about " + m.cost + " per prompt" : ""));
+      r.addEventListener("click", function () { if (!on) post({ type: "use", provider: p.id, model: m.id }); });
+      list.appendChild(r);
+    });
+  }
+
+  function renderFoot() {
+    var w = document.getElementById("writes"); w.textContent = "";
+    var a = S.active, ap = prov(a.provider);
+    if (a.text) { w.appendChild(el("span", "mono", a.text)); w.appendChild(document.createTextNode(" on " + (ap ? ap.label : a.provider))); }
+    else w.textContent = ap ? ap.label : "Not set";
+    if (ap && !ap.present) w.appendChild(document.createTextNode(", needs a key"));
+    document.getElementById("written").textContent = S.writtenFor || "Detected from the app you prompt into";
+  }
+
+  function renderAll() {
+    if (!S) return;
+    if (!prov(view)) view = S.focus || S.active.provider || "openai";
+    var p = prov(view);
+    var al = document.getElementById("alert");
+    al.hidden = !S.statusError; al.textContent = S.statusError || "";
+    renderRail(); renderKey(p); renderModels(p); renderFoot();
+  }
+
+  window.senti = {
+    render: function (state) {
+      if (!state || !Array.isArray(state.providers)) return;
+      S = state;
+      if (state.focus && state.refocus) view = state.focus;
+      state.providers.forEach(function (p) { if (p.busy === null) p.busy = undefined; if (p.saved) { L(p.id).typed = false; L(p.id).invalid = false; } });
+      renderAll();
+    }
+  };
+
+  function submit(viaPaste) {
+    var input = document.getElementById("key"), p = prov(view);
+    if (!p || p.busy) return;
+    var k = input.value.trim();
+    if (!k) { if (!viaPaste && p.present) post({ type: "test", provider: p.id }); return; }
+    var lo = L(p.id);
+    if (!shapeOK(k)) { lo.invalid = true; renderAll(); return; }
+    lo.invalid = false; lo.typed = false;
+    input.value = "";                 // the key leaves the page now; Lua never sends it back
+    p.busy = "saving";
+    post({ type: "save", provider: p.id, key: k });
+    k = null;
+    renderAll();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    var input = document.getElementById("key");
+    input.addEventListener("input", function () {
+      var lo = L(view); lo.typed = input.value.length > 0; lo.invalid = false; renderAll();
+    });
+    input.addEventListener("paste", function () {
+      clearTimeout(pasteTimer);
+      pasteTimer = setTimeout(function () { submit(true); }, 500);
+    });
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); clearTimeout(pasteTimer); submit(false); }
+    });
+    document.getElementById("action").addEventListener("click", function () { clearTimeout(pasteTimer); submit(false); });
+    document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+    document.addEventListener("dragover", function (e) { e.preventDefault(); });
+    document.addEventListener("drop", function (e) { e.preventDefault(); });
+    post({ type: "ready" });
+  });
+})();
+</script>
+</body>
+</html>
+]==]
+
 -- ── Launch/appearance ──────────────────────────────────────────────────
 hs.autoLaunch(true)
 hs.dockIcon(false)
@@ -1342,7 +2147,14 @@ wf.sessSweeper = hs.timer.doEvery(1800, function()
 end)
 wf.runScript({wf.SESSION, "sweep"}, "", nil)   -- and once at launch
 wf.loadRegistry()
-wf.refreshKeys()   -- async; wf.keys stays nil (turns allowed) until it answers
+-- async; wf.keys stays nil (turns allowed) until it answers. On the first run with no key
+-- anywhere, open the key panel once; dictation works without it, so it never reopens.
+wf.refreshKeys(function(st)
+  if not st or wf.prefs.panel_seen then return end
+  for _, p in ipairs(wf.PROVIDERS) do if st.keys[p].present then return end end
+  wf.prefs.panel_seen = true; wf.savePrefs()
+  hs.timer.doAfter(1.5, function() wf.openPanel() end)
+end)
 wf.log("=== init.lua loaded ===")
 
 -- Accessibility is what lets Senti see the hold keys and type. Without it the hotkeys
