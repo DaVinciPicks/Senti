@@ -231,7 +231,11 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$SB/.config/senti/prompts/models" "$SB/.config/senti/eval" "$SB/.cache/senti" "$SB/Library/Logs"
 chmod 700 "$SB/.config/senti" "$SB/.cache/senti"
-cp "$SRC"/senti-*.sh "$SRC/config.sh" "$SB/.config/senti/"
+cp "$SRC"/senti-*.sh "$SB/.config/senti/"
+# The sandbox proves the CODE on the shipped defaults: a tuned config.sh (notes bridge on, a
+# provider or model pin) would override the environment these checks set. Strip those lines.
+/usr/bin/sed -E '/^[[:space:]]*(export[[:space:]]+)?(WF_BRAIN|WF_BRAIN_DIRS|WF_VAULT|WF_BRAIN_MAX|WF_BRAIN_MAP|WF_AI_PROVIDER|WF_TEXT_MODEL|WF_VISION_MODEL)=/d' \
+  "$SRC/config.sh" > "$SB/.config/senti/config.sh"
 for f in replacements.txt brain-map.txt ai-models.json; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$SB/.config/senti/"; done
 cp "$SRC"/prompts/*.md "$SB/.config/senti/prompts/" 2>/dev/null
 cp "$SRC"/prompts/models/*.md "$SB/.config/senti/prompts/models/" 2>/dev/null
