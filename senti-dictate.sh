@@ -85,7 +85,12 @@ start() {
   rm -f "$WF_AUDIO"
   cue "$WF_SOUND_START"
   # -d default input, quiet, 16kHz mono 16-bit signed PCM (Whisper's native format).
-  "$WF_SOX" -d -q -r 16000 -c 1 -b 16 -e signed-integer "$WF_AUDIO" >/dev/null 2>>"$WF_LOG" &
+  # --buffer 2048: sox appends to the WAV in buffer-sized blocks. The default 8192 is
+  # 256 ms of audio, too coarse for the HUD, which reads the file's tail to draw the
+  # real mic level; 2048 lands a block every 64 ms (measured). It goes AFTER -d on
+  # purpose: is_capture_cmd matches "$WF_SOX -d ", so a flag in front of -d would stop
+  # it recognising our own sox, and key-up could no longer stop the recording.
+  "$WF_SOX" -d --buffer 2048 -q -r 16000 -c 1 -b 16 -e signed-integer "$WF_AUDIO" >/dev/null 2>>"$WF_LOG" &
   echo $! >"$WF_PIDFILE"
   log "recording started (pid $!)"
 }

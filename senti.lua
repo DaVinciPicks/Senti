@@ -103,7 +103,8 @@ local HUD_PAD, LABEL_W, LABEL_GAP = 20, 68, 10
 local ACCENT  = { red = 0.302, green = 0.580, blue = 1.000, alpha = 1 }  -- brand blue (toasts, working)
 local VOICE   = { white = 0.97, alpha = 1 }                               -- recording
 local WORKING = ACCENT                                                    -- transcribing / thinking
-wf.hud = { canvas = nil, timer = nil, phase = 0, tone = VOICE, barX = HUD_PAD }
+wf.hud = { canvas = nil, timer = nil, phase = 0, tone = VOICE, barX = HUD_PAD,
+           levels = {}, live = false, seen = false, lastSize = 0, since = 0 }  -- see hudSample
 
 -- Element indices. Named because a bare c[3] is unreadable and the waveform
 -- loop appends after them — inserting an element silently shifts every access.
@@ -152,20 +153,93 @@ local function hudLayout(label)
   c[I_LABEL].text = label or ""
 end
 
--- Two animations off one timer. Recording: a waveform with a centre-weighted
--- envelope, so the middle bars run taller than the edges the way real speech
--- energy does — a flat sine across all bars reads as a loading spinner, not a voice.
--- Working: a travelling wave, which says "busy" without implying it is still
--- hearing you, and always has motion somewhere on the strip so it never looks hung.
+-- Live level: while you speak, the bars draw what the mic actually hears. sox appends
+-- capture.wav in 2048-byte blocks (64 ms of 16 kHz mono s16; --buffer in
+-- senti-dictate.sh) and each new block becomes one bar entering on the right. A mic
+-- macOS has silently muted records zeros with no prompt (see Gotchas); here that shows
+-- as flat bars while you talk, not as an empty result afterwards. Read-only: nothing
+-- is written, logged or cached, and the samples never leave readLevels.
+local WAV_HDR, LEVEL_BLOCK = 44, 2048   -- sox's WAV header; bytes of audio per bar
+local DB_FLOOR, DB_TOP = -55, -15       -- dBFS drawn as the shortest / tallest bar
+-- s for capture.wav to appear before the synthetic fallback. Keyed on the file, not on
+-- audio: sox creates it ~0.24 s after key-down but the first full block lands ~0.45 s
+-- (measured), later on a Bluetooth mic, and a slow mic must rest flat, not fake a voice.
+local LIVE_GRACE = 1.0
+
+-- Whole blocks written since lastSize → their RMS levels (0..1), oldest first, at most
+-- `cap`; the size consumed up to, so a partial block waits for the next tick; and
+-- whether the file exists at all.
+local function readLevels(path, lastSize, cap)
+  local f = io.open(path, "rb")
+  if not f then return {}, 0, false end
+  local size = f:seek("end") or 0
+  if size < lastSize then lastSize = 0 end           -- a new capture replaced the file
+  local blocks = math.min(cap, (size - math.max(WAV_HDR, lastSize)) // LEVEL_BLOCK)
+  if blocks < 1 then f:close(); return {}, lastSize, true end
+  local from = size - blocks * LEVEL_BLOCK
+  from = from - (from - WAV_HDR) % 2                 -- stay on a sample boundary
+  f:seek("set", from)
+  local data = f:read(blocks * LEVEL_BLOCK) or ""
+  f:close()
+  blocks = math.min(blocks, #data // LEVEL_BLOCK)    -- the sweep may truncate mid-read
+  local out, n = {}, LEVEL_BLOCK // 2
+  for b = 0, blocks - 1 do
+    local sum = 0
+    for i = b * LEVEL_BLOCK + 1, (b + 1) * LEVEL_BLOCK - 1, 2 do
+      local s = string.unpack("<i2", data, i)
+      sum = sum + s * s
+    end
+    out[#out + 1] = math.sqrt(sum / n) / 32768
+  end
+  return out, size, true
+end
+
+-- Loudness is logarithmic, so map dBFS, not raw RMS: a linear scale leaves normal
+-- speech on a quiet built-in mic as a barely moving strip.
+local function levelHeight(rms)
+  if rms <= 0 then return 3 end
+  local t = (20 * math.log(rms, 10) - DB_FLOOR) / (DB_TOP - DB_FLOOR)
+  return 3 + 15 * math.max(0, math.min(1, t))
+end
+
+-- Pull any new audio into the bar history. Fails quiet: an unreadable file is the same
+-- as no new audio.
+local function hudSample()
+  local ok, got, size, exists = pcall(readLevels, wf.CACHE .. "/capture.wav", wf.hud.lastSize, NBARS)
+  if not ok then return end
+  wf.hud.lastSize = size
+  if exists then wf.hud.seen = true end
+  if #got == 0 then return end
+  wf.hud.live = true
+  local lv = wf.hud.levels
+  for _, rms in ipairs(got) do table.remove(lv, 1); lv[NBARS] = levelHeight(rms) end
+end
+
+-- Two animations off one timer. Recording: the measured level above. Until the first
+-- audio block lands the bars rest flat; if capture.wav never appears within LIVE_GRACE
+-- (WF_RUN moved it, or sox failed to start) it falls back to a synthetic wave with a
+-- centre-weighted envelope, so the pill never looks hung. Working: a travelling wave,
+-- which says "busy" without implying it is still hearing you, and always has motion
+-- somewhere on the strip so it never looks hung.
 local function hudAnimate()
   local c = wf.hud.canvas
   if not c then return end
   wf.hud.phase = wf.hud.phase + 1
   local working = (wf.hud.tone == WORKING)
+  local waiting = false
+  if not working then
+    hudSample()
+    waiting = not wf.hud.live and
+              (wf.hud.seen or (hs.timer.secondsSinceEpoch() - wf.hud.since) < LIVE_GRACE)
+  end
   for i = 1, NBARS do
     local h
     if working then
       h = 3 + 7 * (0.5 + 0.5 * math.sin(wf.hud.phase * 0.22 - i * 0.7))
+    elseif wf.hud.live then
+      h = wf.hud.levels[i]
+    elseif waiting then
+      h = 3
     else
       -- Floor the envelope at 0.6 so the outer bars stay bars, not dots.
       local env = 0.6 + 0.4 * math.sin(math.pi * (i - 0.5) / NBARS)
@@ -187,6 +261,12 @@ function wf.hud.show(s)
   local c = wf.hud.canvas
   if s == "recording" then
     hudTint(VOICE)
+    -- A fresh history per turn. Start from the current size of any capture.wav still
+    -- on disk, so a previous turn's audio is never drawn as this one's.
+    wf.hud.levels, wf.hud.live, wf.hud.seen = {}, false, false
+    for i = 1, NBARS do wf.hud.levels[i] = 3 end
+    wf.hud.lastSize = hs.fs.attributes(wf.CACHE .. "/capture.wav", "size") or 0
+    wf.hud.since = hs.timer.secondsSinceEpoch()
     -- Plain dictation shows bars only; the AI modes name themselves.
     local labels = { prompt = "Prompt", command = "Command", context = "Context" }
     hudLayout(labels[wf.mode])
