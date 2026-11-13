@@ -89,6 +89,15 @@ IS_SENTI=0; HAS_INIT=0
 if [ "$HAS_INIT" = 1 ] && [ "$IS_SENTI" = 0 ]; then
   echo "  kept ~/.hammerspoon/init.lua: it is not Senti's config"
   [ -n "$NEWEST" ] && echo "  your pre-Senti backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
+elif [ -n "$NEWEST" ] && [ -L "$HSINIT" ]; then
+  # A dotfiles symlink: install.sh copied senti.lua THROUGH the link, so the backup goes
+  # back through it too. mv would replace the link and leave senti.lua in the target.
+  if cat "$NEWEST" > "$HSINIT"; then
+    rm -f "$NEWEST"
+    echo "✓ restored your previous Hammerspoon config from $(basename "$NEWEST") (through the init.lua link)"
+  else
+    echo "  ! could not write through the init.lua link; your backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
+  fi
 elif [ -n "$NEWEST" ]; then
   mv -f "$NEWEST" "$HSINIT"
   echo "✓ restored your previous Hammerspoon config from $(basename "$NEWEST")"
