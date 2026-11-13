@@ -10,9 +10,9 @@
 # digest, the vault and session memory only fire with a real destination and opener.
 #
 # A label names a VARIANT. If eval/variants/<label>.env exists, its KEY=VALUE lines are
-# applied while that side generates (allowed keys only: WF_MODEL_KB, WF_PROMPT_CRAFT,
-# WF_OPERATING_PROMPT, WF_OPERATING_LAYER, SENTI_PROVIDER, SENTI_MODEL, SENTI_EFFORT,
-# WF_EFFORT, WF_TEXT_MODEL). Without a file, a side runs with the current environment.
+# applied while that side generates (allowed keys only: WF_MODEL_KB, WF_KB_FALLBACK,
+# WF_PROMPT_CRAFT, WF_OPERATING_PROMPT, WF_OPERATING_LAYER, SENTI_PROVIDER, SENTI_MODEL,
+# SENTI_EFFORT, WF_EFFORT, WF_TEXT_MODEL). Without a file, a side runs with the current environment.
 # Variant files are parsed, never sourced.
 #
 # `ab` generates N samples (default 3) per case for A, for B, and for A again (A~2), then
@@ -70,7 +70,7 @@ load_variant() {   # load_variant <label> → VARS holds the allowed KEY=VALUE p
     case "$line" in ''|\#*) continue ;; esac
     k="${line%%=*}"
     case "$k" in
-      WF_MODEL_KB|WF_PROMPT_CRAFT|WF_OPERATING_PROMPT|WF_OPERATING_LAYER|SENTI_PROVIDER|SENTI_MODEL|SENTI_EFFORT|WF_EFFORT|WF_TEXT_MODEL)
+      WF_MODEL_KB|WF_KB_FALLBACK|WF_PROMPT_CRAFT|WF_OPERATING_PROMPT|WF_OPERATING_LAYER|SENTI_PROVIDER|SENTI_MODEL|SENTI_EFFORT|WF_EFFORT|WF_TEXT_MODEL)
         VARS+=("$line") ;;
       *) echo "variant ${1}: ignored key '$k'" >&2 ;;
     esac

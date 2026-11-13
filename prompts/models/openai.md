@@ -1,13 +1,17 @@
 ---
 family: openai
-display_name: OpenAI GPT-5.x
-match: gpt-5|gpt5|chatgpt|openai|codex|o3|o4
-frontier: gpt-5.6-sol
-daily: gpt-5.6-terra
-updated: 2026-08-09
+display_name: OpenAI GPT-6 and GPT-5.x
+match: gpt-6|gpt6|gpt-5|gpt5|chatgpt|openai|codex|o3|o4
+frontier: gpt-6-astra
+daily: gpt-6-luna
+updated: 2026-11-13
 ---
 
 ## Prompting rules
+
+(Researched on GPT-5.x, August 2026. The GPT-6 models Senti lists (gpt-6-luna, gpt-6.1-terra,
+gpt-6.1-sol, gpt-6-astra) take the same reasoning_effort scale; nothing here has been re-measured on them yet.)
+
 
 1. Set `reasoning.effort` explicitly on every call — don't rely on the model default (`medium`). Use `low`/`medium` for interactive/latency-sensitive turns, `high`/`xhigh` for hard multi-step or coding tasks, `max` (GPT-5.6 only) for the hardest quality-first work.
 2. Never add "think step by step," "reason through this carefully," or manual chain-of-thought scaffolding. GPT-5.x already runs internal reasoning before answering; explicit CoT requests are redundant at best and create conflicting internal reasoning at worst.
@@ -113,7 +117,7 @@ response = client.responses.create(
 
 ## Inject
 (Compact digest — this is the ONLY section injected into a live prompt. Keep it under ~900 chars; the sections above are human reference. Distilled from the rules and anti-patterns above.)
-- Do NOT add "think step by step" or any hand-written reasoning scaffold: GPT-5.x reasons internally, so explicit CoT wastes reasoning tokens and can conflict with it.
+- Do NOT add "think step by step" or any hand-written reasoning scaffold: GPT-6 and GPT-5.x reason internally, so explicit CoT wastes reasoning tokens and can conflict with it.
 - State each instruction once, unambiguously. Overlapping or contradictory instructions are expensive here — the model spends reasoning tokens reconciling them.
 - Keep the prompt lean. Do not add defensive "just in case" clauses or "be thorough, gather full context" boilerplate; it makes the model over-call tools on simple tasks.
 - Define autonomy explicitly for tool/agent work: what to do without asking vs what needs confirmation.

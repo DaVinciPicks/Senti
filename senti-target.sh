@@ -116,6 +116,24 @@ if [ -n "$CHOSEN" ]; then
   if [ -n "${DELTA// /}" ]; then
     NAME="$MODEL"
     echo "$(date '+%F %T') target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
+  elif [ -n "$MODEL" ] && [ "${WF_KB_FALLBACK:-1}" = "1" ]; then
+    # Nearest older id: a model newer than the KB (claude-opus-5-5 before its section was
+    # written) gets its predecessor's section (claude-opus-5) rather than nothing, and the
+    # log says so, so a stale KB is visible. Drop one trailing "-part" at a time, never
+    # below family-plus-one-part (claude-opus), which would match a different generation.
+    OLDER="$MODEL"
+    while :; do
+      case "$OLDER" in *-*-*) OLDER="${OLDER%-*}" ;; *) OLDER=""; break ;; esac
+      case "$OLDER" in *-*-*) ;; *) OLDER=""; break ;; esac
+      DELTA="$(model_section "$CHOSEN" "$OLDER")"
+      [ -n "${DELTA// /}" ] && break
+    done
+    if [ -n "$OLDER" ] && [ -n "${DELTA// /}" ]; then
+      NAME="$MODEL"
+      echo "$(date '+%F %T') target: fallback model '$OLDER' for '$MODEL'" >>"$WF_LOG" 2>/dev/null
+    else
+      DELTA=""
+    fi
   fi
   OUT="$OUT
 
