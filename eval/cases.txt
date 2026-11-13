@@ -1,9 +1,25 @@
-# Senti prompt-mode eval cases — diverse rough spoken ideas. Lines starting with # are skipped.
-help me write a cover letter for a software engineering job
-make a python script to rename photos by the date they were taken
-i need to email my team that the deadline is slipping a week
-explain quantum computing to my mom
-come up with some names for my new coffee shop
-analyze this contract and flag anything risky
-help me negotiate a higher salary for a job offer
-build a react component for a todo list with add and delete
+# Senti prompt-mode eval cases: idea|app hint|window title
+# Lines starting with # are skipped. The hint is the frontmost app name; the title is its
+# window title (Claude Code's terminal title ends in "claude"). Each idea runs against two
+# destinations: a chat app (ChatGPT) and an agentic coding tool (Claude Code in a terminal).
+# The last three are heavy turns: they open with "think hard" or "today let's work on", so
+# the window title and session memory ride the call as fenced reference data.
+help me write a cover letter for a software engineering job|ChatGPT|
+help me write a cover letter for a software engineering job|Terminal|workbench — ⠐ Draft a job application — claude
+make a python script to rename photos by the date they were taken|ChatGPT|
+make a python script to rename photos by the date they were taken|Terminal|workbench — ⠐ Photo renamer — claude
+i need to email my team that the deadline is slipping a week|ChatGPT|
+i need to email my team that the deadline is slipping a week|Terminal|workbench — ⠐ Release notes — claude
+explain quantum computing to my mom|ChatGPT|
+explain quantum computing to my mom|Terminal|workbench — ⠐ Write explainer docs — claude
+come up with some names for my new coffee shop|ChatGPT|
+come up with some names for my new coffee shop|Terminal|workbench — ⠐ Brand naming — claude
+analyze this contract and flag anything risky|ChatGPT|
+analyze this contract and flag anything risky|Terminal|workbench — ⠐ Review vendor contract — claude
+help me negotiate a higher salary for a job offer|ChatGPT|
+help me negotiate a higher salary for a job offer|Terminal|workbench — ⠐ Offer negotiation notes — claude
+build a react component for a todo list with add and delete|ChatGPT|
+build a react component for a todo list with add and delete|Terminal|workbench — ⠐ Todo app frontend — claude
+think hard about how to cache the eval results so reruns are cheap|Terminal|workbench — ⠐ Speed up the eval harness — claude
+today let's work on making the payment retries idempotent so a double click never charges twice|Terminal|workbench — ⠐ Payment retries — claude
+think hard about moving user settings from a json file to sqlite without losing anyone's data|ChatGPT|
