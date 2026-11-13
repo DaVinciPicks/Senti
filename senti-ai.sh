@@ -310,11 +310,15 @@ def extract(d):
         if d.get("stop_reason") == "refusal":
             cat = (d.get("stop_details") or {}).get("category", "unspecified")
             return "", 14, "%s declined the request (category %s)" % (LABEL, scrub(cat)), u
+        if d.get("stop_reason") == "max_tokens":   # cut off: half a prompt must not be pasted
+            return "", 17, "%s stopped at the token limit (stop_reason max_tokens)" % LABEL, u
         text = "".join(b.get("text", "") for b in d.get("content", []) if b.get("type") == "text")
         if not text.strip():
             return "", 17, "%s returned no text (stop_reason %s)" % (LABEL, d.get("stop_reason")), u
         return text, 0, "", u
     ch = (d.get("choices") or [{}])[0]
+    if ch.get("finish_reason") == "length":       # cut off: half a prompt must not be pasted
+        return "", 17, "%s stopped at the token limit (finish_reason length)" % LABEL, u
     c = (ch.get("message") or {}).get("content") or ""
     if isinstance(c, list):
         c = "".join(x.get("text", "") for x in c if isinstance(x, dict))
