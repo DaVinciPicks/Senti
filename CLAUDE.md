@@ -22,7 +22,8 @@ screenshot — to cheap cloud APIs.
 - **The prompting knowledge base lives in `prompts/`** and ships with the repo. It was a
   separate repo (`senti-kb`) from 2026-08-19 to 2026-10-17 and was merged back with its
   history. An earlier plan treated it as a paid artifact to split out before going public;
-  that plan was dropped on 2026-11-11. The AI modes need the user's own API key to run.
+  that plan was dropped on 2026-11-11. The AI modes need the user's own API key (OpenAI,
+  Anthropic or OpenRouter) to run.
 
 ## Repo → live system (the mental model that matters most)
 
@@ -30,10 +31,11 @@ This repo is the **source**. It is not where the app runs. `./install.sh` deploy
 
 | Repo file | Deploys to |
 |---|---|
-| `senti-*.sh`, `config.sh`, `replacements.txt`, `prompts/`, `eval/` | `~/.config/senti/` |
+| `senti-*.sh`, `config.sh`, `ai-models.json`, `replacements.txt`, `prompts/`, `eval/` | `~/.config/senti/` |
 | `senti.lua` | `~/.hammerspoon/init.lua` |
 | `io.senti.server.plist` (with `__HOME__` substituted) | `~/Library/LaunchAgents/` |
 | `app/` | `~/Applications/Senti.app` |
+| `uninstall.sh` | stays in the repo; removes all of the above after asking |
 
 **Workflow: edit files in this repo, then run `./install.sh` to deploy.** Don't hand-edit
 `~/.config/senti/*` or `~/.hammerspoon/init.lua` as the primary change — those are
@@ -49,12 +51,22 @@ Scripts and `senti.lua` are code — always overwritten.)
 - **Script naming:** `senti-<role>.sh`. Env vars are prefixed **`WF_`** and the Lua global
   is **`wf`** — these are *legacy from the "Whisper Flow" name and kept intentionally*.
   Don't mass-rename them; it touches every file for no user-visible gain.
-- **Secrets:** one OpenAI key at `~/.config/senti/openai-key` (mode 600), gitignored.
+- **Secrets:** one key per provider in the **macOS Keychain** (service `io.senti`, account
+  `openai` / `anthropic` / `openrouter`), written and read only by `senti-key.sh`. A mode-600
+  file `~/.config/senti/<provider>-key` (gitignored) is the fallback when no Keychain item
+  exists; `senti-key.sh migrate` (run by install.sh) moves an old file into the Keychain and
+  deletes it only after a byte-exact read-back. Programs running as the user can still read
+  the key; that is inside the threat model (same-uid code is trusted), so never claim the
+  Keychain makes it unreadable to other software.
 - **The argv rule (load-bearing):** the key **and every piece of user speech** travel in
   the **environment (`SENTI_IN`), never argv** — `ps -Ao args` is readable by every process
   on the box. This applies at *every* layer: `senti.lua` → script (via `hs.task:setEnvironment`),
   script → script (`SENTI_IN="$X" bash …`), and script → python. Fixing only the innermost
   call is the bug that shipped once already — the wrapper's own command line leaked.
+  Keychain writes obey it too: the command reaches `security -i` on **stdin**, built by the
+  bash builtin `printf` (never `/usr/bin/printf`, never `security add-generic-password -w KEY`
+  on a command line), and reads come back on stdout into a variable. The key charset is
+  validated (`^[A-Za-z0-9._-]{8,512}$`) so it cannot break the `security -i` line.
   `senti-selftest.sh` asserts it with a canary. **When writing that assertion, never pipe the
   canary into `grep`** — grep's own argv then contains it and `ps` catches the test itself
   (a false positive that flaps). Snapshot `ps` into a variable and match with a shell `case`.
@@ -79,8 +91,9 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ gpt-6-luna   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-6-luna (reads a downscaled screenshot)
+   prompt/command ─▶ senti-ai.sh   ─▶ OpenAI | Anthropic | OpenRouter   [+ operating layer]
+   context/prompt+screen ─▶ senti-vision.sh ─▶ senti-ai.sh with SENTI_IMG (downscaled screenshot)
+   provider, model, key ◀─ senti-key.sh (ai.pref, Keychain io.senti, ai-models.json)
    prompt mode also ─▶ senti-target.sh ─▶ prompts/models/*.md (tailor to the destination model)
                    └─▶ senti-session.sh ─▶ ~/.cache/senti/sessions/<window-id>.tsv  (per-window memory)
 ```
@@ -90,7 +103,8 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 | Script | Role |
 |---|---|
 | `senti-dictate.sh` | record / transcribe / clean — the only path that stays 100% local |
-| `senti-ai.sh` | THE single OpenAI call — text and vision (`SENTI_IMG` makes it a vision request) |
+| `senti-ai.sh` | THE single AI call for all 3 providers — text and vision (`SENTI_IMG`), typed exit codes, `last-request.json` |
+| `senti-key.sh` | keys (`set` / `test` / `clear` / `status` / `use` / `migrate`) and provider+model resolution |
 | `senti-vision.sh` | screenshot + instruction → prompt assembly, delegates the call to senti-ai.sh |
 | `senti-lib.sh` | shared `senti_prompt_context` — craft + brain + session + target for BOTH prompt paths |
 | `senti-prompt.sh` | rough idea → optimised prompt (fallback path — see path parity) |
@@ -98,21 +112,52 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 | `senti-judge.sh` | prompt quality: legacy 0-10 `score` + discriminating pairwise `compare` |
 | `senti-target.sh` | frontmost app → which model's guidance digest to inject |
 | `senti-session.sh` | per-window session memory (`note` / `recall` / `sweep`) |
-| `senti-brain.sh` | Obsidian vault → capped project digest (+ lazy luna refresh) |
-| `senti-eval.sh` | offline harness over `eval/cases.txt` |
+| `senti-brain.sh` | Obsidian vault → capped project digest; `--preview` shows what would be sent |
+| `senti-eval.sh` | eval harness over `eval/cases.txt`; `ab <A> <B>` with a base-vs-base row |
 | `senti-selftest.sh` | the full check suite — run before believing anything works |
 | `senti-model.sh` | Fast/Accurate whisper model switch |
 | `app/make-icon.sh` | SVG → resvg → iconutil (no Pillow, no Python) |
+| `uninstall.sh` (repo only) | asks, then removes the LaunchAgent, restores `init.lua`, removes app, cache, logs; asks again for keys and models |
 
 - **Engine:** `whisper-cpp` (brew) kept warm in Metal by launchd `io.senti.server`
   (`senti-serve.sh`). base.en (Fast ~0.2s) / large-v3-turbo-q5 (Accurate). Model choice
   in `~/.cache/senti/model.pref` via `senti-model.sh`.
 - **Recording:** `sox -d` → 16 kHz mono WAV, stopped with **SIGINT** (finalizes the header).
-- **AI text + vision:** both go to **`gpt-6-luna`** (`senti-ai.sh` / `senti-vision.sh`) since
-  2026-10-17: $0.10/$0.50 per 1M vs gpt-5.6-luna's $0.20/$1.20, and it beat 5.6-luna 5-0-3
-  pairwise on the 8 eval cases while costing ~1/3 per text call at the same latency.
-  One provider, one key, no fallback chain. Text runs at `reasoning_effort: none`, vision
-  and the judge at `low`. Earlier measurements (5.6-luna, with the KB layer): text ≈
+  `start` spawns sox first and sweeps orphans afterwards, detached (the sweep used to delay
+  the start of recording by 0.15 s). `audio_ctx=768` applies below 14 s (768 frames of 20 ms
+  cover 15.36 s; identical words to 14.61 s, lost ending at 16.17 s, measured 13 Nov 2026).
+- **AI providers:** one adapter (`senti-ai.sh`), three providers, one key each:
+  - **OpenAI** (default, `gpt-6-luna`, the only provider with a passed live call): chat
+    completions, `reasoning_effort`, `max_completion_tokens` 4000.
+  - **Anthropic** (default `claude-opus-5-5`): messages API, `anthropic-version: 2026-10-21`,
+    system block with `cache_control`, `output_config.effort`, `max_tokens` 8000 (thinking
+    counts toward it), NO `temperature`, NO prefill, NO `thinking` field (all 400 on the
+    current models). Refusal fallbacks on for Opus/Sonnet (`fallbacks: "default"` + beta
+    `server-side-fallback-2026-07-01`; Haiku has none). `stop_reason: "refusal"` → exit 14.
+  - **OpenRouter** (default `openai/gpt-6-luna`): `reasoning: {effort, exclude: true}` and
+    `provider: {data_collection: "deny"}` always; `WF_OPENROUTER_ZDR=1` adds `zdr`; no
+    attribution headers.
+  - Provider and model resolve as a **pair** from the single highest tier that names either:
+    `SENTI_PROVIDER`/`SENTI_MODEL` env → `WF_AI_PROVIDER`/`WF_TEXT_MODEL`/`WF_VISION_MODEL`
+    in config.sh → `ai.pref` (menu; strict `key=value`, never sourced) → auto (first provider
+    with a key). A model alone implies its provider (`claude-*` Anthropic, `/` OpenRouter).
+  - `ai-models.json` is the one registry (providers, models, prices, allowed efforts,
+    `available`). The adapter clamps effort to what the model accepts (Claude has no
+    `none`; `gpt-6.1-sol` / `gpt-6-astra` reject it), so no call wastes a 400.
+  - Exit codes, kept by every wrapper and mapped to notices in senti.lua: 10 no key,
+    11 key refused (401/403; the log gets a fixed string, never the provider's message),
+    12 quota, 13 model not offered, 14 declined, 15 network, 16 server error, 17 empty
+    answer, 18 request rejected. Redirects are refused (the key never follows one).
+  - `SENTI_AI_DRYRUN=1` prints the request with `[key]` and `<N bytes>`: no key, no network.
+  - One `ai:` log line per call, counts only (provider, model, effort, ms, tokens, key
+    source). `~/.cache/senti/last-request.json` (600) names the parts of the last request
+    (speech, selection, window_title, session, vault, target_digest) with counts, never text.
+  - Anthropic and OpenRouter are tested offline (dry runs, a bogus key → 401 → exit 11,
+    13 Nov 2026) until the owner's live check; `available: false` in the registry until then.
+- **AI text + vision on OpenAI:** both go to **`gpt-6-luna`** since 2026-10-17: $0.10/$0.50
+  per 1M vs gpt-5.6-luna's $0.20/$1.20, and it beat 5.6-luna 5-0-3 pairwise on the 8 eval
+  cases while costing ~1/3 per text call at the same latency. Text runs at
+  `reasoning_effort: none`, vision and the judge at `low`. Earlier measurements (5.6-luna, with the KB layer): text ≈
   $0.0005/call, vision ≈ $0.0004 — gpt-6-luna should be roughly a third to a half of that
   (estimated from price and the A/B, not yet measured with the KB layer); vs gpt-4o-mini
   vision at 3.3s, **37k tokens** and $0.0056 (it tokenizes images far more expensively).
@@ -124,8 +169,12 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   - Reasoning tokens count against `max_completion_tokens` — leave headroom or you get an
     empty string back with no error.
   - **Output dominates cost** (~6x input price), so trimming what the model *writes* beats
-    trimming what you send. Prompt caching does NOT engage here: our prompt is ~650 tokens,
-    under OpenAI's 1024-token cache minimum.
+    trimming what you send. Prompt caching DOES engage: the system prompt (operating layer +
+    craft + target digest) is about 5,500 characters, roughly 1,400 tokens, over OpenAI's
+    1,024-token minimum, and a heavy turn on 13 Nov 2026 logged `in=1401 cache_read=1179`.
+    Anthropic's minimum is 512 tokens on the 5.5 models, and its system block is marked
+    `cache_control`. Keep per-turn content (the fence, the idea) in the user message so the
+    system prefix stays byte-stable.
   - Prepends `prompts/operating.md` when `WF_OPERATING_LAYER=1`.
 - **Model-aware prompting:** `senti-target.sh` maps the frontmost app (free, local, no
   extra API call) to a knowledge file in `prompts/models/` and injects only that file's
@@ -139,14 +188,25 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 - **Second brain (Obsidian):** `senti-brain.sh` maps the window-title project to a vault note
   (allowlist is narrow and configured locally; exceptions in `brain-map.txt`), digests
   it (`## Senti` section wins, else `## For future Claude`, else first lines), caps at
-  `WF_BRAIN_MAX`, logs every injection. A lazy background luna call (~$0.001) writes a tighter
-  digest to `~/.cache/senti/brain/` — refreshed only when stale AND the project is actually
-  used, so there's no cron and untouched projects are never sent anywhere. The digest DOES
-  ride the API call: that's the feature and the risk — never widen the allowlist to `People/`
-  or the vault root, and keep the privacy self-test checks passing. Never commit a real vault path here.
-- **Eval:** `senti-eval.sh` scores `eval/cases.txt` via `senti-judge.sh score` (absolute 0-10 —
-  saturates around 8, fine for regression, useless for ranking); `senti-judge.sh compare` is
-  the discriminating pairwise judge (order-swapped, disagreement = TIE) for real A/Bs.
+  `WF_BRAIN_MAX`. The digest rides only HEAVY turns (opening "think hard" or "today let's
+  work on"). The log says `brain: prepared '<note>' N chars` when it is built (at key-down,
+  nothing sent) and `sent: vault '<note>' N chars` only when it joins a request.
+  `senti-brain.sh --preview <project>` prints, locally, what would be sent and to which
+  provider. There is NO background upload: the lazy "refresh" that sent the digest to the
+  model to compress it was deleted 13 Nov 2026 (it had not run since 17 Oct), and
+  `senti-session.sh sweep` deletes its old `~/.cache/senti/brain/*.md` leftovers. The digest
+  DOES ride the API call: that's the feature and the risk — never widen the allowlist to
+  `People/` or the vault root, and keep the privacy self-test checks passing. Never commit a
+  real vault path here.
+- **Eval:** `eval/cases.txt` is `idea|app hint|window title` (8 ideas x ChatGPT and Claude
+  Code, plus 3 heavy turns). `senti-eval.sh ab <A> <B>` generates 3 samples per side per case
+  and judges them with `senti-judge.sh compare` (order-swapped, disagreement = TIE, told the
+  destination, pinned to openai gpt-6-luna at low), and ALWAYS prints a base-vs-base row of
+  the same size: the noise floor. On 13 Nov 2026 that floor was 24-13-20 (64% non-tie wins
+  for a config against itself), so only a change well clear of it is real. Variants live in
+  `eval/variants/<label>.env` (parsed, allowed keys only). A failed call is FAIL, a failed
+  judge JERR, never a score. `senti-eval.sh <label>` keeps the legacy absolute 0-10 score
+  (saturates around 8; regression only).
 
 ## Modes / hotkeys
 
@@ -181,14 +241,21 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   Model output is *typed* (⌘V), never executed. The fence brackets are stripped from the
   untrusted body so a title cannot close it early. Self-test asserts both (with a heavy-intent
   probe — a light idea never sends the title, so it proved nothing).
-- **The vault bridge has one gate** — `brain_digest()` in `senti-brain.sh`. Both the read path
-  AND the background refresh upload go through it (`## Senti` section → cap). Never send a raw
-  note. The bridge is off unless `WF_BRAIN=1`, and it reads only the folders listed in
-  `WF_BRAIN_DIRS` (no default list), never `People/`. `brain-map.txt` entries obey it too (no `..`, no absolute paths, no escaping symlinks). The
-  key-down prefetch never triggers the background refresh upload; only a real prompt turn can.
+- **The vault bridge has one gate** — `brain_digest()` in `senti-brain.sh` (`## Senti`
+  section → cap). Every path that can send note text goes through it; there is no background
+  upload any more. Never send a raw note. The bridge is off unless `WF_BRAIN=1`, and it reads
+  only the folders listed in `WF_BRAIN_DIRS` (no default list), never `People/`.
+  `brain-map.txt` entries obey it too (no `..`, no absolute paths, no escaping symlinks).
+- **Keys:** Keychain first (`security` calls run under a perl `alarm`, so a locked keychain
+  costs seconds and exit 19, never a hung dictation), mode-600 file as the fallback. Lua never
+  calls `security`: it reads presence from `senti-key.sh status --json` and writes through
+  `senti-key.sh set` over `hs.task` with the key in `SENTI_IN`. On 401/403 the log gets a
+  fixed string and every logged provider message is scrubbed of key-shaped text.
 - **Verbatim stays local:** verbatim turns are never written to session memory, because
   recall rides prompt-mode API calls. Pasted text is marked transient + concealed so clipboard
-  managers skip it; Universal Clipboard (Handoff) can still sync it — no public opt-out here.
+  managers skip it. Universal Clipboard (Handoff) can still sync it to your other devices.
+  macOS does have a public opt-out (`NSPasteboard` current-host-only writes, reachable from a
+  small Swift helper); Senti does not use it yet.
 - **Known, accepted:** whisper-server's `/load` endpoint is unauthenticated (CORS `*`), so any
   local account or a page reaching 127.0.0.1:8090 can make it load a bad model and exit;
   launchd restarts it. Denial of service only — it cannot read audio.
@@ -220,17 +287,25 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   on the WAV path, not the pidfile) clears leftovers on every `start`/`cancel`. Census hidden
   disk with `lsof +L1`.
 - **Image downscale uses `sips`**, not PIL — `/usr/bin/python3` has no Pillow.
+- **`security -i` exits 0 even when the command failed** (measured: a missing keychain path).
+  Only a read-back proves a Keychain write. And a read from a LOCKED keychain blocks on a
+  password dialog: always go through `_sk_run` (perl `alarm`) in senti-key.sh. Tests use a
+  throwaway keychain (`SENTI_KEYCHAIN=<path>`) rather than trusting a fake HOME to keep
+  `security` away from the login keychain, and `launchctl` ignores HOME entirely.
 - **`$HOME` may contain a space:** quote every path in `hs.execute(...)`; the plist uses a
   `__HOME__` placeholder that `install.sh` substitutes (never hard-code a home path).
 
 ## Test / debug
 
 ```bash
-bash ~/.config/senti/senti-selftest.sh          # full suite: engine, config, keys, icons, live API, ps-leak, sessions, brain
+bash ~/.config/senti/senti-selftest.sh          # full suite: engine, transcription, config, keys, icons, live API, ps-leak, then the sandbox checks
+bash senti-selftest.sh --ci                     # from a checkout: offline sandbox only (throwaway HOME + keychain); CI runs this
+bash ~/.config/senti/senti-key.sh status        # provider, model, key presence and source (never the key)
 bash ~/.config/senti/senti-dictate.sh server    # → server up/down
 hs -c 'return wf.diag()'                        # state / eventtap / mic / model
 tail -f ~/Library/Logs/senti.log                # runtime log
-bash ~/.config/senti/senti-eval.sh baseline        # score the 8 eval cases
+bash ~/.config/senti/senti-eval.sh ab base kb     # A/B two variants, with the base-vs-base noise row
+SENTI_AI_DRYRUN=1 SENTI_PROVIDER=anthropic SENTI_IN=hi bash ~/.config/senti/senti-ai.sh   # request shape, no key, no network
 ```
 
 Diagnostics no longer rely on `hs -c` (ipc is off by default — see Security model). Use the
