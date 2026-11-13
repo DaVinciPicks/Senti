@@ -267,6 +267,8 @@ cmd_set() {
   elif [ -t 0 ]; then
     printf 'Paste your %s API key (it stays hidden), then press Return: ' "$(senti_provider_label "$p")" >&2
     IFS= read -rs k; echo >&2
+  elif [ -n "${SENTI_IN+set}" ]; then
+    k=""     # SENTI_IN set but empty (an app's empty key field): "no key given", never a wait on stdin
   else
     k="$(cat)"
   fi
