@@ -37,7 +37,8 @@
 # keychain file (contract-keychain.md "Test isolation"), and SENTI_SECURITY=<path> swaps
 # the security binary (a missing path proves the file fallback).
 #
-# Exit codes: 0 ok, 2 usage or an invalid key, 10 no key, 11 rejected, 15 network,
+# Exit codes: 0 ok, 1 nothing was saved (the file write failed, or an older Keychain key
+# could not be replaced), 2 usage or an invalid key, 10 no key, 11 rejected, 15 network,
 # 16 unverified, 19 Keychain locked or unavailable (the key file is used instead).
 
 SENTI_PROVIDERS="openai anthropic openrouter"
@@ -299,7 +300,7 @@ cmd_set() {
     if ! _sk_kc_del "$p" || _sk_kc_get "$p" >/dev/null; then
       echo "could not replace the older $p key in the Keychain, and Senti would keep using it; nothing was saved. Unlock the Keychain (or remove the io.senti $p item in Keychain Access) and try again." >&2
       _sk_log "set $p failed: an older Keychain item could not be replaced"
-      exit 19
+      exit 1     # not 19: 19 promises the key file is used, and here nothing was saved
     fi
   fi
   write_private "$(senti_key_file "$p")" "$k" || { echo "could not write $(senti_key_file "$p")" >&2; exit 1; }
