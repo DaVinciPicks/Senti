@@ -36,7 +36,10 @@ WF_MODEL_ACCURATE="$WF_MODELS_DIR/ggml-large-v3-turbo-q5_0.bin"
 WF_MODEL_FAST="$WF_MODELS_DIR/ggml-base.en.bin"
 WF_MODEL_PREF="$HOME/.cache/senti/model.pref"
 if [ -z "${WF_MODEL:-}" ]; then
-  _wf_pref=""; [ -f "$WF_MODEL_PREF" ] && IFS= read -r _wf_pref < "$WF_MODEL_PREF"   # builtin: no spawn
+  # builtin read: no spawn. It returns 1 on an empty file or a last line with no newline,
+  # and senti-serve.sh sources this under set -e, so the || true is load-bearing.
+  _wf_pref=""
+  if [ -f "$WF_MODEL_PREF" ]; then IFS= read -r _wf_pref < "$WF_MODEL_PREF" || true; fi
   case "$_wf_pref" in
     fast) WF_MODEL="$WF_MODEL_FAST" ;;
     *)    WF_MODEL="$WF_MODEL_ACCURATE" ;;

@@ -300,6 +300,16 @@ for v in $BARE; do
 done
 [ -z "$MISS" ] && ok "every bare \${WF_*} deref is unconditionally defined in config.sh" \
                || bad "bare deref with no config.sh definition:$MISS"
+# senti-serve.sh (the launchd server) sources config.sh under set -euo pipefail. A model.pref
+# that is empty or has no trailing newline once killed it before exec, and KeepAlive looped it.
+PH="$SBT/prefhome"; mkdir -p "$PH/.cache/senti"; PREFBAD=""
+for pv in empty nonl; do
+  if [ "$pv" = empty ]; then : > "$PH/.cache/senti/model.pref"; else printf 'fast' > "$PH/.cache/senti/model.pref"; fi
+  PR="$(HOME="$PH" /bin/bash -euo pipefail -c 'unset WF_MODEL; source "$1"; echo "reached ${WF_MODEL##*/}"' _ "$CFG/config.sh" 2>/dev/null)"
+  case "$pv:$PR" in empty:"reached "*|nonl:"reached ggml-base.en.bin") ;; *) PREFBAD="$PREFBAD $pv" ;; esac
+done
+[ -z "$PREFBAD" ] && ok "config.sh survives set -e with an empty model.pref or one with no newline" \
+                  || bad "config.sh dies under set -e or misreads model.pref:$PREFBAD"
 
 echo "── model registry (ai-models.json) ──"
 REGCHK="$(/usr/bin/python3 - "$CFG/ai-models.json" <<'PY' 2>&1
