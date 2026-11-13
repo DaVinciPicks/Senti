@@ -367,6 +367,62 @@ function wf.writtenForLabel(note)
   return name .. ", detected in your last prompt"
 end
 
+-- last-request.json → what the "What the last AI request sent" window shows. Untrusted
+-- input: every string is cleaned and capped, unknown sources get a neutral label, and
+-- nothing is copied that the contract does not name.
+local PART_LABEL = { speech = "What you said", selection = "Selected text", window_title = "Window title",
+                     session = "Earlier turns in this window", vault = "Notes from your vault",
+                     target_digest = "Guidance for the destination model" }
+local MODE_LABEL = { prompt = "Prompt", command = "Command", context = "Context" }
+local function thousands(n)
+  local s = tostring(math.floor(n + 0.5))
+  local out = s:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (out:gsub("^,", ""))
+end
+wf.thousands = thousands
+function wf.lastRequestView(t, labelFor)
+  if type(t) ~= "table" then return { empty = true } end
+  local rows = {}
+  local function add(k, v) if v and v ~= "" then rows[#rows + 1] = { k = k, v = v } end end
+  if type(t.ts) == "number" then add("When", os.date("%d %b %Y, %H:%M:%S", math.floor(t.ts)))
+  else add("When", wf.cleanText(t.ts, 40)) end
+  add("Mode", MODE_LABEL[t.mode] or wf.cleanText(t.mode, 20))
+  local prov = wf.isProvider(t.provider) and t.provider or nil
+  local plabel = prov and ((labelFor and labelFor(prov)) or wf.PROVIDER_INFO[prov].label) or wf.cleanText(t.provider, 30)
+  local host = (type(t.host) == "string" and t.host:match("^[%w%.%-]+$")) and t.host or nil
+  add("Sent to", plabel and (plabel .. (host and (" at " .. host) or "")) or host)
+  local model = wf.validId(t.model) and t.model or nil
+  local effort = (type(t.effort) == "string" and t.effort:match("^%a+$")) and t.effort or nil
+  add("Model", model and (model .. (effort and (", effort " .. effort) or "")) or nil)
+  if type(t.screenshot) == "boolean" then add("Screenshot", t.screenshot and "Yes, a downscaled copy of your screen" or "No") end
+  if type(t.result) == "string" then
+    local code = tonumber(t.result:match("^exit:(%d+)$"))
+    local ms = (type(t.ms) == "number" and t.ms >= 0) and string.format(" in %.1f s", t.ms / 1000) or ""
+    if t.result == "ok" then add("Result", "Answered" .. ms)
+    elseif code then add("Result", "Failed with exit " .. code .. ms)
+    else add("Result", wf.cleanText(t.result, 30)) end
+  end
+  if type(t.tokens) == "table" then
+    local tk = t.tokens
+    local parts = {}
+    if type(tk["in"]) == "number" then parts[#parts + 1] = thousands(tk["in"]) .. " in" end
+    if type(tk.out) == "number" then parts[#parts + 1] = thousands(tk.out) .. " out" end
+    if type(tk.cache_read) == "number" and tk.cache_read > 0 then parts[#parts + 1] = thousands(tk.cache_read) .. " from cache" end
+    if #parts > 0 then add("Tokens", table.concat(parts, ", ")) end
+  end
+  local list = {}
+  for _, part in ipairs(type(t.parts) == "table" and t.parts or {}) do
+    if type(part) == "table" and #list < 20 then
+      list[#list + 1] = {
+        label = PART_LABEL[part.source] or "Other context",
+        note = wf.cleanText(part.note, 60),
+        chars = (type(part.chars) == "number" and part.chars >= 0) and (thousands(part.chars) .. " characters") or nil,
+      }
+    end
+  end
+  return { empty = false, rows = rows, parts = list }
+end
+
 -- ~/.config/senti/ui.pref: strict key=value lines, never sourced or executed.
 function wf.parseUIPref(text)
   local p = { prompt_screen = true, panel_seen = false }
@@ -1129,53 +1185,43 @@ function wf.panelMessage(raw)
   end
 end
 
+-- A locked-down window for Senti's own inline pages (the key panel, the last request).
 -- Navigation policy: the inline page loads once; after that every navigation, response,
 -- new window and auth challenge is refused. Before the first load only non-web schemes
--- pass, so even a mistake cannot point the panel at a remote site.
-local function panelPolicy(action, _, info)
-  if action ~= "navigationAction" and action ~= "navigationResponse" then return false end
-  if wf.panel.loaded then
-    wf.log("panel: refused a navigation")
-    return false
-  end
-  local url = ""
-  if type(info) == "table" then
-    local req = info.request or (info.response and { URL = info.response.URL }) or {}
-    url = tostring(req.URL or "")
-  end
-  if url:find("^%a[%w+.-]*:") and not url:find("^about:") then
-    local scheme = url:match("^(%a[%w+.-]*):"):lower()
+-- pass, so even a mistake cannot point the window at a remote site. `slot` holds
+-- { view, uc, loaded } on wf.* so Lua's GC cannot collect the window or its handler.
+local function lockedPolicy(slot)
+  return function(action, _, info)
+    if action ~= "navigationAction" and action ~= "navigationResponse" then return false end
+    if slot.loaded then wf.log("webview: refused a navigation"); return false end
+    local url = ""
+    if type(info) == "table" then
+      local req = info.request or (info.response and { URL = info.response.URL }) or {}
+      url = tostring(req.URL or "")
+    end
+    local scheme = (url:match("^(%a[%w+.-]*):") or ""):lower()
     if scheme == "http" or scheme == "https" or scheme == "ftp" or scheme == "file"
        or scheme == "javascript" or scheme == "data" then return false end
+    return true
   end
-  return true
 end
 
-function wf.openPanel(focus)
-  wf.panel.focus = focus
-  if wf.panel.view then
-    wf.panel.view:show()
-    hs.focus()
-    local w = wf.panel.view:hswindow(); if w then w:focus() end
-    wf.refreshKeys(function() wf.panelRefresh(focus) end)
-    return
-  end
-  wf.loadRegistry()
+function wf.lockedWebview(slot, w, h, title, html, onMessage, onLoad, onFail)
   local scr = hs.screen.mainScreen():frame()
-  local h = math.min(PANEL_H, scr.h - 40)
-  local rect = { x = scr.x + (scr.w - PANEL_W) / 2, y = scr.y + (scr.h - h) / 2, w = PANEL_W, h = h }
+  h = math.min(h, scr.h - 40)
+  local rect = { x = scr.x + (scr.w - w) / 2, y = scr.y + (scr.h - h) / 2, w = w, h = h }
   local uc = hs.webview.usercontent.new("senti")
   uc:setCallback(function(msg)
-    local ok, err = pcall(wf.panelMessage, msg)
-    if not ok then wf.log("panel: handler error " .. tostring(err)) end
+    local ok, err = pcall(onMessage, msg)
+    if not ok then wf.log("webview: handler error " .. tostring(err)) end
   end)
   local v = hs.webview.new(rect, { javaScriptEnabled = true, javaScriptCanOpenWindowsAutomatically = false,
                                    developerExtrasEnabled = false, privateBrowsing = true }, uc)
-  if not v then wf.log("panel: could not create the webview"); wf.promptKeyDialog(focus); return end
-  wf.panel.view, wf.panel.uc, wf.panel.loaded = v, uc, false
+  if not v then wf.log("webview: could not create '" .. title .. "'"); if onFail then onFail() end; return nil end
+  slot.view, slot.uc, slot.loaded = v, uc, false
   v:windowStyle({ "titled", "closable", "fullSizeContentView" })
   v:titleVisibility("hidden")
-  v:windowTitle("Senti AI provider and key")
+  v:windowTitle(title)
   v:allowTextEntry(true)
   v:allowNewWindows(false)
   v:allowGestures(false)
@@ -1183,23 +1229,76 @@ function wf.openPanel(focus)
   v:deleteOnClose(true)
   v:darkMode(true)
   v:shadow(true)
-  v:policyCallback(panelPolicy)
+  v:policyCallback(lockedPolicy(slot))
   v:navigationCallback(function(action)
     if action == "didFinishNavigation" then
-      wf.panel.loaded = true
-      wf.panelRefresh(wf.panel.focus)
+      slot.loaded = true
+      if onLoad then onLoad() end
     elseif action == "didFailNavigation" or action == "didFailProvisionalNavigation" then
-      wf.log("panel: page failed to load, falling back to the plain dialog")
+      wf.log("webview: '" .. title .. "' failed to load")
+      if onFail and slot.view then slot.view:delete(); onFail() end
     end
   end)
   v:windowCallback(function(action)
-    if action == "closing" then wf.panel.view, wf.panel.uc, wf.panel.loaded = nil, nil, false end
+    if action == "closing" then slot.view, slot.uc, slot.loaded = nil, nil, false end
   end)
-  v:html(wf.PANEL_HTML)
+  v:html(html)
   v:show()
   hs.focus()
-  local w = v:hswindow(); if w then w:focus() end
+  local win = v:hswindow(); if win then win:focus() end
+  return v
+end
+
+local function raise(slot)
+  slot.view:show()
+  hs.focus()
+  local w = slot.view:hswindow(); if w then w:focus() end
+end
+
+function wf.openPanel(focus)
+  wf.panel.focus = focus
+  if wf.panel.view then
+    raise(wf.panel)
+    wf.refreshKeys(function() wf.panelRefresh(focus) end)
+    return
+  end
+  wf.loadRegistry()
+  wf.lockedWebview(wf.panel, PANEL_W, PANEL_H, "Senti AI provider and key", wf.PANEL_HTML, wf.panelMessage,
+    function() wf.panelRefresh(wf.panel.focus) end,
+    function() wf.promptKeyDialog(wf.panel.focus) end)
   wf.refreshKeys()
+end
+
+-- ── "What the last AI request sent" (UI-5) ─────────────────────────────
+-- Renders ~/.cache/senti/last-request.json: counts, names and the destination of the
+-- last AI call. That file never holds speech, prompt or output text, so neither does
+-- this window. The values are untrusted data and reach the page as JSON for textContent.
+wf.lastReq = wf.lastReq or {}
+function wf.openLastRequest()
+  local raw = readFile(wf.LASTREQ, 65536)
+  local ok, t = pcall(hs.json.decode, raw or "")
+  local reg = wf.registry or wf.loadRegistry()
+  local view = wf.lastRequestView((ok and type(t) == "table") and t or nil,
+                                  function(p) return (reg.providers[p] or {}).label end)
+  local function push()
+    local okj, js = pcall(hs.json.encode, view)
+    if okj and js and wf.lastReq.view then
+      wf.lastReq.view:evaluateJavaScript("window.senti && window.senti.render(" .. js .. ")")
+    end
+  end
+  if wf.lastReq.view then raise(wf.lastReq); push(); return end
+  wf.lockedWebview(wf.lastReq, 560, 700, "What the last AI request sent", wf.LASTREQ_HTML,
+    function(msg)
+      local body = (type(msg) == "table" and msg.body ~= nil) and msg.body or msg
+      if type(body) == "table" and body.type == "ready" then wf.lastReq.loaded = true; push()
+      elseif type(body) == "table" and body.type == "close" and wf.lastReq.view then wf.lastReq.view:delete() end
+    end, push,
+    function()   -- no webview: say it in a toast instead
+      if view.empty then wf.notify("No AI request yet.") return end
+      local lines = {}
+      for _, r in ipairs(view.rows) do lines[#lines + 1] = r.k .. ": " .. r.v end
+      wf.notify(table.concat(lines, "\n"), 10)
+    end)
 end
 
 -- Fallback when the panel cannot open: a native secure prompt (secureField = true).
@@ -1588,6 +1687,7 @@ local function aiMenu()
       wf.notify(wf.prefs.prompt_screen and "Prompt mode will read a screenshot again."
                 or "Prompt mode will not take a screenshot. Context mode still does.", nil, wf.TONE.ok)
     end }
+  items[#items + 1] = { title = "What the last AI request sent", fn = function() wf.openLastRequest() end }
   items[#items + 1] = { title = "-" }
   items[#items + 1] = { title = "Add a key in a plain dialog…", fn = function() wf.promptKeyDialog() end }
   return items
@@ -2218,6 +2318,100 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     document.addEventListener("dragover", function (e) { e.preventDefault(); });
     document.addEventListener("drop", function (e) { e.preventDefault(); });
     post({ type: "ready" });
+  });
+})();
+</script>
+</body>
+</html>
+]==]
+
+-- "What the last AI request sent" page: same tokens and lockdown as the key panel.
+wf.LASTREQ_HTML = [==[
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<title>What the last AI request sent</title>
+<style>
+:root { color-scheme: dark; --bg: #0B0B0E; --rail: #111116; --raise: #18181F; --line: rgba(255,255,255,0.08);
+  --blue: #4C9BFF; --mono: ui-monospace, "SF Mono", Menlo, monospace; }
+* { box-sizing: border-box; margin: 0; }
+html, body { height: 100%; }
+body { background: var(--bg); color: #fff; font: 13px/1.45 -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased; display: grid; grid-template-rows: auto 1fr auto; overflow: hidden;
+  user-select: none; -webkit-user-select: none; cursor: default; }
+::selection { background: rgba(76,155,255,0.45); }
+.head { padding: 38px 28px 16px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.15; }
+.lede { margin-top: 6px; text-wrap: pretty; }
+main { overflow-y: auto; padding: 18px 28px 22px; }
+main::-webkit-scrollbar { width: 8px; }
+main::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.14); border-radius: 4px; }
+dl { display: grid; grid-template-columns: 112px 1fr; }
+dt, dd { padding: 9px 0; border-bottom: 1px solid var(--line); }
+dt { font-weight: 600; }
+dd { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; margin-top: 24px; }
+.sub { margin-top: 4px; }
+ul { list-style: none; padding: 0; margin-top: 10px; border-top: 1px solid var(--line); }
+li { display: grid; grid-template-columns: 1fr auto; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+li .note { display: block; font-family: var(--mono); overflow-wrap: anywhere; }
+li .n { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.empty { display: grid; place-items: center; height: 100%; text-align: center; padding: 24px; }
+.empty .bars { display: inline-flex; gap: 3px; align-items: center; height: 18px; margin-bottom: 14px; }
+.empty .bars i { width: 3px; border-radius: 2px; background: var(--blue); }
+.empty h2 { margin-top: 0; }
+.empty p { margin-top: 6px; max-width: 40ch; text-wrap: pretty; }
+.foot { border-top: 1px solid var(--line); padding: 12px 28px; background: var(--rail); text-wrap: pretty; }
+.foot code { font-family: var(--mono); white-space: nowrap; }
+</style>
+</head>
+<body>
+<header class="head">
+  <h1>What the last AI request sent</h1>
+  <p class="lede">The destination, the model and how much of each source went with it. Senti keeps counts and names here, never the text.</p>
+</header>
+<main id="main" aria-live="polite"></main>
+<footer class="foot">Read from <code>~/.cache/senti/last-request.json</code>, which the next AI request overwrites. Dictation never writes to it.</footer>
+<script>
+(function () {
+  "use strict";
+  function el(tag, cls, text) { var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+  window.senti = {
+    render: function (v) {
+      var m = document.getElementById("main"); m.textContent = "";
+      if (!v || v.empty) {
+        var e = el("div", "empty"), inner = el("div");
+        var b = el("span", "bars"); b.setAttribute("aria-hidden", "true");
+        [6, 12, 18, 12, 6].forEach(function (h) { var i = el("i"); i.style.height = h + "px"; b.appendChild(i); });
+        inner.appendChild(b);
+        inner.appendChild(el("h2", null, "No AI request yet"));
+        inner.appendChild(el("p", null, "Hold right Command to turn a rough idea into a prompt. Afterwards this window shows what went with it."));
+        e.appendChild(inner); m.appendChild(e); return;
+      }
+      var dl = el("dl");
+      (v.rows || []).forEach(function (r) { dl.appendChild(el("dt", null, r.k)); dl.appendChild(el("dd", null, r.v)); });
+      m.appendChild(dl);
+      var parts = Array.isArray(v.parts) ? v.parts : [];
+      m.appendChild(el("h2", null, "What went with it"));
+      m.appendChild(el("p", "sub", parts.length ? "Sizes only. The words themselves are not stored." : "No parts were recorded for this request."));
+      if (parts.length) {
+        var ul = el("ul");
+        parts.forEach(function (p) {
+          var li = el("li"), left = el("span");
+          left.appendChild(el("span", null, p.label));
+          if (p.note) left.appendChild(el("span", "note", p.note));
+          li.appendChild(left); li.appendChild(el("span", "n", p.chars || ""));
+          ul.appendChild(li);
+        });
+        m.appendChild(ul);
+      }
+    }
+  };
+  document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+  document.addEventListener("DOMContentLoaded", function () {
+    try { window.webkit.messageHandlers.senti.postMessage({ type: "ready" }); } catch (e) {}
   });
 })();
 </script>
