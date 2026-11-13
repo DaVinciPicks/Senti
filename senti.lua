@@ -641,7 +641,7 @@ function wf.handleTranscript(raw, turn, clipOnly)
     -- a permission that was fine.
     wf.setState("idle"); wf.sweepCache()
     pcall(function() hs.sound.getByName("Basso"):play() end)
-    wf.notify("Transcription failed — the whisper engine errored or timed out.\nTry again, or menu bar → Restart engine", 5, wf.TONE.warn)
+    wf.notify("Transcription failed. The whisper engine errored or timed out.\nTry again, or menu bar → Restart engine", 5, wf.TONE.warn)
     return
   end
   if raw == "" then
@@ -833,7 +833,7 @@ local function menu()
   local tapOn = wf.flagWatcher and wf.flagWatcher:isEnabled()
   local curModel = hs.execute(wf.BASH .. " '" .. wf.MODELSH .. "' current"):gsub("%s+","")
   return {
-    { title = "Senti — local dictation", disabled = true },
+    { title = "Senti: local dictation", disabled = true },
     { title = serverUp and "● engine: running" or "○ engine: STOPPED", disabled = true },
     { title = tapOn and "● hold-to-talk: armed" or "○ hold-to-talk: OFF", disabled = true },
     { title = "-" },
