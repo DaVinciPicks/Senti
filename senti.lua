@@ -28,12 +28,11 @@ wf.SESSION  = wf.HOME .. "/.config/senti/senti-session.sh"
 -- 22px image that Retina displays scaled up, which is why the icon looked blurry.
 wf.MENUICON = wf.HOME .. "/.config/senti/menubar/mic@2x.png"
 wf.COMMAND = wf.HOME .. "/.config/senti/senti-command.sh"
-wf.AIKEY   = wf.HOME .. "/.config/senti/openai-key"
--- True when the AI modes have a key to use (a non-empty key file).
-function wf.hasAIKey()
-  local a = hs.fs.attributes(wf.AIKEY)
-  return a ~= nil and a.mode == "file" and (a.size or 0) > 0
-end
+wf.KEYSH   = wf.HOME .. "/.config/senti/senti-key.sh"      -- the ONE key writer/reader (Keychain)
+wf.MODELS  = wf.HOME .. "/.config/senti/ai-models.json"    -- provider + model registry
+wf.UIPREF  = wf.HOME .. "/.config/senti/ui.pref"           -- app-ui settings (prompt_screen, panel_seen)
+wf.LASTREQ = wf.HOME .. "/.cache/senti/last-request.json"  -- counts and names of the last AI call, no content
+wf.LEGACYKEY = wf.HOME .. "/.config/senti/openai-key"      -- read only when senti-key.sh is missing
 wf.VISION  = wf.HOME .. "/.config/senti/senti-vision.sh"
 wf.CTXPRE  = wf.HOME .. "/.config/senti/senti-lib.sh"   -- run directly = prefetch context
 wf.SELFILE = wf.HOME .. "/.cache/senti/selection.txt"
@@ -65,6 +64,249 @@ wf.held  = nil       -- keycode of the hold-key currently down, or nil
 wf.targetHint = ""   -- frontmost app at capture time → which model we're prompting for
 wf.sessKey    = ""   -- focused WINDOW id → distinguishes your parallel terminals
 wf.sessLabel  = ""   -- that window's title → carries project + current task for free
+
+-- ── BEGIN pure helpers ────────────────────────────────────────────────
+-- Providers, keys, models and notices. Nothing in this block calls hs.* or touches the
+-- disk, so the scratch tests load it alone with a stub table. Keys never pass through
+-- here: Lua only ever sees presence and the last 4 characters, from
+-- `senti-key.sh status --json`. Lua never calls `security` itself.
+wf.PROVIDERS = { "openai", "anthropic", "openrouter" }
+-- Fallbacks for a missing or broken ai-models.json. key_url checked 13 Nov 2026
+-- (console.anthropic.com now redirects to platform.claude.com). `domains` is the
+-- allowlist a key_url from the registry must sit under before Senti opens it.
+wf.PROVIDER_INFO = {
+  openai     = { label = "OpenAI",     host = "api.openai.com",
+                 key_url = "https://platform.openai.com/api-keys", domains = { "openai.com" } },
+  anthropic  = { label = "Anthropic",  host = "api.anthropic.com",
+                 key_url = "https://platform.claude.com/settings/keys", domains = { "anthropic.com", "claude.com" } },
+  openrouter = { label = "OpenRouter", host = "openrouter.ai",
+                 key_url = "https://openrouter.ai/settings/keys", domains = { "openrouter.ai" } },
+}
+
+function wf.isProvider(p) return type(p) == "string" and wf.PROVIDER_INFO[p] ~= nil end
+
+-- Same id pattern as ai.pref: ^[A-Za-z0-9._:/-]{1,80}$
+function wf.validId(id)
+  return type(id) == "string" and #id >= 1 and #id <= 80 and not id:find("[^%w%._:/%-]")
+end
+
+-- The shape senti-key.sh accepts: ^[A-Za-z0-9._-]{8,512}$ (anything else could break the
+-- `security -i` command line, so the panel refuses it before a process ever sees it).
+function wf.validKeyShape(k)
+  return type(k) == "string" and #k >= 8 and #k <= 512 and not k:find("[^%w%._%-]")
+end
+
+-- Short, printable, single-line text from an untrusted file (registry, last request).
+function wf.cleanText(v, max)
+  if type(v) ~= "string" then return nil end
+  v = v:gsub("[%c]", " "):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  if #v > (max or 80) then v = v:sub(1, max or 80) end
+  return v
+end
+
+-- A key page URL is opened only when it is https and its host sits under the provider's
+-- own domain. The page itself never supplies a URL; Lua looks it up by provider.
+function wf.safeKeyURL(url, provider)
+  local info = wf.PROVIDER_INFO[provider]
+  if not info or type(url) ~= "string" or #url > 200 then return nil end
+  local host = url:match("^https://([%w%.%-]+)/[%w%-%._~/%?=&#]*$")
+  if not host then return nil end
+  host = host:lower()
+  for _, d in ipairs(info.domains) do
+    if host == d or host:sub(-(#d + 1)) == "." .. d then return url end
+  end
+  return nil
+end
+
+local KEY_SOURCES = { keychain = true, file = true }
+local ACTIVE_SOURCES = { env = true, ["config.sh"] = true, ["ai.pref"] = true, auto = true }
+
+-- `senti-key.sh status --json` → a normalized table, or nil + reason. `decode` is
+-- hs.json.decode in the app and a test decoder in the scratch tests.
+function wf.parseKeyStatus(text, decode)
+  if type(text) ~= "string" or text == "" then return nil, "empty" end
+  local ok, t = pcall(decode, text)
+  if not ok or type(t) ~= "table" then return nil, "not json" end
+  local out = { keys = {}, active = nil }
+  local keys = type(t.keys) == "table" and t.keys or {}
+  for _, p in ipairs(wf.PROVIDERS) do
+    local k = type(keys[p]) == "table" and keys[p] or {}
+    local e = { present = (k.present == true) }
+    if e.present then
+      e.source = KEY_SOURCES[k.source] and k.source or "file"
+      if type(k.last4) == "string" and #k.last4 <= 4 and not k.last4:find("[^%w%._%-]") then
+        e.last4 = k.last4
+      end
+      if type(k.mode) == "string" and k.mode:match("^%d%d%d%d?$") then e.mode = k.mode end
+    end
+    out.keys[p] = e
+  end
+  local a = type(t.active) == "table" and t.active or nil
+  if a and wf.isProvider(a.provider) then
+    out.active = {
+      provider = a.provider,
+      text_model = wf.validId(a.text_model) and a.text_model or nil,
+      vision_model = wf.validId(a.vision_model) and a.vision_model or nil,
+      source = ACTIVE_SOURCES[a.source] and a.source or "auto",
+    }
+  end
+  return out
+end
+
+local function num(v) return (type(v) == "number" and v >= 0 and v < 10000) and v or nil end
+
+-- ai-models.json → { checked, unit, providers = {id → info}, models = { … } }.
+-- Unknown providers and malformed rows are dropped; a broken file leaves the built-in
+-- provider list and no models, so the panel still offers keys.
+function wf.parseRegistry(text, decode)
+  local reg = { providers = {}, models = {} }
+  for _, p in ipairs(wf.PROVIDERS) do
+    local f = wf.PROVIDER_INFO[p]
+    reg.providers[p] = { id = p, label = f.label, host = f.host, key_url = f.key_url,
+                         default = nil, available = (p == "openai") }
+  end
+  local t
+  if type(text) == "string" and text ~= "" then
+    local ok, v = pcall(decode, text)
+    if ok and type(v) == "table" then t = v end
+  end
+  if not t then return reg, false end
+  reg.checked = wf.cleanText(t.checked, 20)
+  reg.unit = wf.cleanText(t.unit, 60)
+  local ps = type(t.providers) == "table" and t.providers or {}
+  for _, p in ipairs(wf.PROVIDERS) do
+    local src, dst = ps[p], reg.providers[p]
+    if type(src) == "table" then
+      dst.label = wf.cleanText(src.label, 30) or dst.label
+      if type(src.host) == "string" and src.host:match("^[%w%.%-]+$") then dst.host = src.host end
+      dst.key_url = wf.safeKeyURL(src.key_url, p) or dst.key_url
+      if wf.validId(src.default) then dst.default = src.default end
+      if type(src.available) == "boolean" then dst.available = src.available end
+    end
+  end
+  for _, m in ipairs(type(t.models) == "table" and t.models or {}) do
+    if type(m) == "table" and wf.isProvider(m.provider) and wf.validId(m.id) then
+      reg.models[#reg.models + 1] = {
+        provider = m.provider, id = m.id,
+        role = wf.cleanText(m.role, 80) or "",
+        input = num(m.input), output = num(m.output),
+        vision = (m.vision == true),
+      }
+    end
+  end
+  return reg, true
+end
+
+function wf.modelsFor(reg, provider)
+  local out = {}
+  for _, m in ipairs((reg and reg.models) or {}) do
+    if m.provider == provider then out[#out + 1] = m end
+  end
+  return out
+end
+
+function wf.findModel(reg, provider, id)
+  for _, m in ipairs(wf.modelsFor(reg, provider)) do if m.id == id then return m end end
+  return nil
+end
+
+-- Which provider and models the AI modes will use. senti-key.sh resolves this already
+-- (env > config.sh > ai.pref > auto); Lua mirrors only the auto rule for when the status
+-- is not known yet: the first provider with a key, else OpenAI.
+function wf.resolveActive(status, reg)
+  local a = status and status.active
+  local r = { source = "auto" }
+  if a then
+    r.provider, r.text_model, r.vision_model, r.source = a.provider, a.text_model, a.vision_model, a.source
+  else
+    r.provider = "openai"
+    for _, p in ipairs(wf.PROVIDERS) do
+      if status and status.keys[p] and status.keys[p].present then r.provider = p; break end
+    end
+  end
+  local def = reg and reg.providers[r.provider] and reg.providers[r.provider].default
+  r.text_model = r.text_model or def
+  r.vision_model = r.vision_model or def
+  r.pinned = (r.source == "env" or r.source == "config.sh")
+  return r
+end
+
+-- Prices: at least 2 decimals, up to 3 when the registry has them ($0.825).
+function wf.fmtPrice(v)
+  if not v then return "?" end
+  local s = string.format("%.3f", v):gsub("0$", "")
+  return s
+end
+
+function wf.priceLine(m)
+  if not (m and m.input and m.output) then return "Price not listed" end
+  return "$" .. wf.fmtPrice(m.input) .. " in, $" .. wf.fmtPrice(m.output) .. " out per 1M tokens"
+end
+
+-- An estimate, labelled as one: about 1,500 tokens in and 250 out per prompt rewrite
+-- (lead plan section 5, b1 4.10), list prices, nothing measured. Claude also bills
+-- thinking tokens, which this leaves out, so it says so.
+function wf.costEstimate(m)
+  if not (m and m.input and m.output) then return nil end
+  local c = (m.input * 1500 + m.output * 250) / 1e6
+  if c <= 0 then return "Free" end
+  local d = math.max(2, 1 - math.floor(math.log(c, 10)))
+  local s = "About $" .. string.format("%." .. d .. "f", c) .. " per prompt"
+  if m.provider == "anthropic" or m.id:find("^anthropic/") then s = s .. ", plus thinking" end
+  return s .. " (estimate)"
+end
+
+-- Exit codes 10 to 19 from senti-ai.sh / senti-key.sh → the notice the user sees.
+-- Each template is kept as one literal string (lead plan section 4 item 6, keychain
+-- contract): <P> is the provider label, <id> the model id.
+wf.NOTICE = {
+  [10] = "Add a <P> key to use this mode. AI provider and key is in the menu bar. What you said is on the clipboard.",
+  [11] = "<P> did not accept the key. Check it in AI provider and key.",
+  [12] = "<P> says the account is out of quota or credit.",
+  [13] = "<P> does not offer the model <id>. Pick another in the menu bar.",
+  [14] = "The model declined this request. What you said is on the clipboard.",
+  [15] = "Senti could not reach <P>. What you said is on the clipboard.",
+  [16] = "<P> had a server error. Try again in a moment.",
+  [17] = "The answer came back empty. Try a shorter request.",
+  [18] = "<P> rejected the request.",
+  [19] = "The macOS Keychain is locked or unavailable; Senti will use the key file instead",
+}
+wf.NOTICE_OTHER = "The request failed. Check your network and your key in AI provider and key."
+local CLIP_LINE = "What you said is on the clipboard."
+local SEL_LINE = "Your selection is unchanged."
+
+-- mode "command" restores the user's own clipboard and leaves the selection alone, so it
+-- must never claim the words are on the clipboard. Every other AI mode hands them back.
+function wf.noticeFor(code, label, model, mode)
+  local t = wf.NOTICE[code] or wf.NOTICE_OTHER
+  t = t:gsub("<P>", function() return label or "The provider" end)
+       :gsub("<id>", function() return model or "you picked" end)
+  t = t:gsub("^Add a ([AEIOU])", "Add an %1")   -- "an OpenAI key", "an Anthropic key"
+  t = t:gsub(" " .. CLIP_LINE:gsub("%.", "%%.") .. "$", "")
+  if code == 19 then t = t .. "." end
+  return t .. "\n" .. ((mode == "command") and SEL_LINE or CLIP_LINE)
+end
+
+-- `senti-key.sh test` → one of the panel's states. The JSON line wins; the exit code is
+-- the fallback when the line is missing.
+wf.TEST_LABEL = { connected = "Connected", unverified = "Could not verify", rejected = "Rejected",
+                  network = "No network", none = "No key saved", keychain = "Keychain locked",
+                  error = "Test failed" }
+local TEST_BY_RESULT = { ok = "connected", unverified = "unverified", rejected = "rejected",
+                         network = "network", no_key = "none" }
+local TEST_BY_CODE = { [0] = "connected", [10] = "none", [11] = "rejected", [15] = "network",
+                       [16] = "unverified", [19] = "keychain" }
+function wf.testState(code, stdout, decode)
+  local line = type(stdout) == "string" and stdout:match("(%b{})") or nil
+  if line and decode then
+    local ok, t = pcall(decode, line)
+    if ok and type(t) == "table" and TEST_BY_RESULT[t.result] then
+      return TEST_BY_RESULT[t.result], (t.model_listed == false)
+    end
+  end
+  return TEST_BY_CODE[code] or "error", false
+end
+-- ── END pure helpers ──────────────────────────────────────────────────
 
 -- ── Logging (so one test press reveals exactly where it breaks) ─────────
 function wf.log(msg)
@@ -491,7 +733,7 @@ function wf.runCommand(command, turn)
       if exitCode ~= 0 or out == "" then
         wf.log("command: AI request failed (exit " .. tostring(exitCode) .. "), selection left unchanged")
         wf.restoreClipboard(prevClip, hs.pasteboard.changeCount())
-        wf.notify("The command didn't run. Check your network or OpenAI key.\nYour selection is unchanged.", 5, wf.TONE.warn)
+        wf.notify(wf.aiNotice(exitCode ~= 0 and exitCode or 17, "command", false), 6, wf.TONE.warn)
         return
       end
       if wf.focusMoved() then
@@ -561,6 +803,94 @@ function wf.runScript(args, spoken, cb)
   return t
 end
 
+-- ── Keys and AI settings (cached; nothing here runs on key-down) ─────────
+-- wf.keys is the parsed `senti-key.sh status --json`, refreshed at startup and after every
+-- set, clear, use or migrate. Lua never reads a key and never calls `security`: the key
+-- helper owns the Keychain. A key typed into the panel goes straight into one hs.task's
+-- environment (SENTI_IN) and is never stored in a Lua global, a URL, a log line or the
+-- pasteboard.
+wf.keys = nil          -- nil until the first status answer (or when the helper is missing)
+wf.keyTests = {}       -- provider → { state, at } from the last `test`
+wf.registry = nil      -- parsed ai-models.json
+
+local function readFile(path, max)
+  local f = io.open(path, "r")
+  if not f then return nil end
+  local s = f:read(max or 65536); f:close()
+  return s
+end
+
+function wf.loadRegistry()
+  local ok, reg = pcall(wf.parseRegistry, readFile(wf.MODELS, 262144), hs.json.decode)
+  wf.registry = ok and reg or wf.parseRegistry(nil, hs.json.decode)
+  return wf.registry
+end
+
+function wf.active()
+  return wf.resolveActive(wf.keys, wf.registry or wf.loadRegistry())
+end
+
+function wf.providerLabel(p)
+  local reg = wf.registry or wf.loadRegistry()
+  return (reg.providers[p or ""] or {}).label or "The provider"
+end
+
+-- Run senti-key.sh with a minimal environment. `key` (only for `set`) rides SENTI_IN,
+-- the same channel speech uses; argv carries only the verb and the provider.
+function wf.keyTask(args, key, cb)
+  if not hs.fs.attributes(wf.KEYSH) then
+    wf.log("keys: senti-key.sh is missing (re-run install.sh)")
+    if cb then cb(127, "", "") end
+    return nil
+  end
+  local argv = { wf.KEYSH }
+  for _, a in ipairs(args) do argv[#argv + 1] = a end
+  local t = hs.task.new(wf.BASH, function(code, out, err)
+    if cb then cb(code, out or "", err or "") end
+  end, argv)
+  if not t then if cb then cb(126, "", "") end; return nil end
+  local env = { HOME = wf.HOME, PATH = "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                SENTI_IN = key or "" }
+  local kc = os.getenv("SENTI_KEYCHAIN")   -- test keychains only; unset in normal use
+  if kc and kc ~= "" then env.SENTI_KEYCHAIN = kc end
+  t:setEnvironment(env)
+  t:start()
+  return t
+end
+
+function wf.refreshKeys(cb)
+  wf.keyTask({ "status", "--json" }, nil, function(code, out)
+    local st = (code == 0) and wf.parseKeyStatus(out, hs.json.decode) or nil
+    wf.keys = st
+    if not st then wf.log("keys: status unavailable (exit " .. tostring(code) .. ")") end
+    if wf.panelRefresh then wf.panelRefresh() end
+    if cb then cb(st) end
+  end)
+end
+
+-- True when the active provider has a key. When the status is unknown (helper missing,
+-- bad JSON, Keychain trouble) the turn runs anyway and senti-ai.sh's exit 10 says what is
+-- missing, rather than blocking a working setup on a status hiccup. An install that
+-- predates senti-key.sh keeps the old check on the openai-key file.
+function wf.hasAIKey()
+  if wf.keys then
+    local a = wf.active()
+    return wf.keys.keys[a.provider] ~= nil and wf.keys.keys[a.provider].present == true
+  end
+  if not hs.fs.attributes(wf.KEYSH) then
+    local a = hs.fs.attributes(wf.LEGACYKEY)
+    return a ~= nil and a.mode == "file" and (a.size or 0) > 0
+  end
+  return true
+end
+
+-- The notice for a failed AI turn, named for the provider that failed.
+function wf.aiNotice(code, mode, vision)
+  local a = wf.active()
+  local model = vision and a.vision_model or a.text_model
+  return wf.noticeFor(code, wf.providerLabel(a.provider), model, mode)
+end
+
 -- ── Transcription pipeline ─────────────────────────────────────────────
 -- Poll briefly for the async screenshot — a very short utterance can outrun the
 -- ~200ms screencapture. cb(true) if it appears within ~1s, else cb(false).
@@ -584,7 +914,7 @@ function wf.runVision(raw, kind, turn)
       -- Don't throw the user's words away with the failed request.
       wf.log("vision failed (exit " .. tostring(exitCode) .. ") — words left on the clipboard")
       wf.setPrivateClipboard(raw)
-      wf.notify("The request failed. Check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
+      wf.notify(wf.aiNotice(exitCode, kind, true), 6, wf.TONE.warn)
     else
       wf.insert((out or ""):gsub("%s+$", ""))
     end
@@ -671,13 +1001,13 @@ function wf.handleTranscript(raw, turn, clipOnly)
     wf.notify("Recording ran 2.5 minutes, so it was stopped.\nThe transcript is on the clipboard.", 5, wf.TONE.warn)
     return
   end
-  -- Prompt, Command and Context call OpenAI with the user's own key. Without one, say
-  -- so and hand the words back on the clipboard rather than typing them as if the mode
-  -- had worked (and never paste raw speech over a Command selection).
+  -- Prompt, Command and Context call the active provider with the user's own key. Without
+  -- one, say so and hand the words back on the clipboard rather than typing them as if the
+  -- mode had worked (and never paste raw speech over a Command selection).
   if wf.mode ~= "verbatim" and not wf.hasAIKey() then
     wf.setState("idle"); wf.setPrivateClipboard(raw); wf.sweepCache()
-    wf.log("ai mode " .. tostring(wf.mode) .. ": no OpenAI key, words left on the clipboard")
-    wf.notify("This mode needs your OpenAI API key in\n~/.config/senti/openai-key\nWhat you said is on the clipboard.", 6, wf.TONE.warn)
+    wf.log("ai mode " .. tostring(wf.mode) .. ": no key for " .. wf.active().provider .. ", words left on the clipboard")
+    wf.notify(wf.noticeFor(10, wf.providerLabel(wf.active().provider), nil, "prompt"), 6, wf.TONE.warn)
     return
   end
   -- AI modes can outlive the 75s watchdog; keep the words so it can hand them back.
@@ -708,7 +1038,7 @@ function wf.handleTranscript(raw, turn, clipOnly)
           wf.setState("idle"); wf.sweepCache()
           if exitCode ~= 0 then
             wf.setPrivateClipboard(raw)
-            wf.notify("The request failed. Check your network or OpenAI key.\nWhat you said is on the clipboard.", 5, wf.TONE.warn)
+            wf.notify(wf.aiNotice(exitCode, "prompt", false), 6, wf.TONE.warn)
             return
           end
           wf.insert(stdout)
@@ -1011,6 +1341,8 @@ wf.sessSweeper = hs.timer.doEvery(1800, function()
   wf.runScript({wf.SESSION, "sweep"}, "", nil)
 end)
 wf.runScript({wf.SESSION, "sweep"}, "", nil)   -- and once at launch
+wf.loadRegistry()
+wf.refreshKeys()   -- async; wf.keys stays nil (turns allowed) until it answers
 wf.log("=== init.lua loaded ===")
 
 -- Accessibility is what lets Senti see the hold keys and type. Without it the hotkeys
