@@ -1400,23 +1400,27 @@ function wf.handleTranscript(raw, turn, clipOnly)
   elseif wf.mode == "command" then
     wf.runCommand(raw, turn)           -- raw = the spoken instruction
   elseif wf.mode == "prompt" then
+    local function textPath()                    -- no screen → text-only prompt path
+      wf.hud.show("thinking")
+      wf.runScript({wf.PROMPTS}, raw, function(exitCode, stdout)
+        if wf.staleTurn(turn) then return end
+        wf.pending = nil
+        wf.setState("idle"); wf.sweepCache()
+        if exitCode ~= 0 then
+          wf.setPrivateClipboard(raw)
+          wf.notify(wf.aiNotice(exitCode, "prompt", false), 6, wf.TONE.warn)
+          return
+        end
+        wf.insert(stdout)
+      end)
+    end
+    -- "Use a screenshot in Prompt" off: no capture was taken, so don't wait a second for
+    -- a file that will never come.
+    if not wf.shotThisTurn then wf.log("prompt: screenshot off, text path"); textPath(); return end
     wf.awaitShot(4, function(has)
       if wf.staleTurn(turn) then return end
       if has then wf.runVision(raw, "prompt", turn)   -- screen context → context-aware prompt
-      else                                       -- no screen → text-only prompt path
-        wf.hud.show("thinking")
-        wf.runScript({wf.PROMPTS}, raw, function(exitCode, stdout)
-          if wf.staleTurn(turn) then return end
-          wf.pending = nil
-          wf.setState("idle"); wf.sweepCache()
-          if exitCode ~= 0 then
-            wf.setPrivateClipboard(raw)
-            wf.notify(wf.aiNotice(exitCode, "prompt", false), 6, wf.TONE.warn)
-            return
-          end
-          wf.insert(stdout)
-        end)
-      end
+      else textPath() end
     end)
   else
     wf.setState("idle"); wf.insert(raw); wf.sweepCache()
@@ -1522,10 +1526,15 @@ function wf.endCapture(clipOnly)
 end
 
 -- Snapshot the screen now (for prompt + context modes), then start capturing.
+-- Prompt mode skips the capture entirely when "Use a screenshot in Prompt" is off; Context
+-- mode always captures (the screen is what it is for). Decided once per turn, at key-down.
 function wf.snapAndCapture(mode)
   if wf.state ~= "idle" then return end
   os.remove(wf.SHOT)   -- clear any stale shot so a failed capture can't reuse an old screen
-  hs.task.new("/usr/sbin/screencapture", nil, {"-x", "-m", wf.SHOT}):start()
+  wf.shotThisTurn = (mode ~= "prompt") or (wf.prefs and wf.prefs.prompt_screen ~= false)
+  if wf.shotThisTurn then
+    hs.task.new("/usr/sbin/screencapture", nil, {"-x", "-m", wf.SHOT}):start()
+  end
   wf.beginCapture(mode)
 end
 
@@ -1570,6 +1579,15 @@ local function aiMenu()
   items[#items + 1] = { title = "Model", menu = models }
   local have = wf.keys and wf.keys.keys[a.provider] and wf.keys.keys[a.provider].present
   items[#items + 1] = { title = "Test key", disabled = not have, fn = function() wf.testKey(a.provider, true) end }
+  items[#items + 1] = { title = "-" }
+  items[#items + 1] = { title = "Use a screenshot in Prompt", checked = (wf.prefs.prompt_screen ~= false),
+    tooltip = "On: right Command also sends a downscaled screenshot so the prompt fits what is on screen. Off: text only.",
+    fn = function()
+      wf.prefs.prompt_screen = not (wf.prefs.prompt_screen ~= false); wf.savePrefs()
+      wf.log("prefs: prompt_screen=" .. (wf.prefs.prompt_screen and "1" or "0"))
+      wf.notify(wf.prefs.prompt_screen and "Prompt mode will read a screenshot again."
+                or "Prompt mode will not take a screenshot. Context mode still does.", nil, wf.TONE.ok)
+    end }
   items[#items + 1] = { title = "-" }
   items[#items + 1] = { title = "Add a key in a plain dialog…", fn = function() wf.promptKeyDialog() end }
   return items
