@@ -859,6 +859,38 @@ function wf.notify(msg, secs, tone)
 end
 wf.TONE = { info = T_INFO, warn = T_WARN, ok = T_OK }
 
+-- The AI request in flight (senti-prompt.sh, senti-vision.sh or senti-command.sh), so Esc
+-- and the watchdog can stop it. hs.task:terminate() alone is not enough: it signals only
+-- the outer bash, and the python child that makes the request carries on and sends (tested
+-- with real processes on 13 Nov). So stop the whole tree: freeze each level before listing
+-- its children (a frozen parent cannot start a new one), then TERM and CONT them all. argv
+-- carries only pids, never `kill 0` (the task may share Hammerspoon's process group).
+-- A request already on the wire cannot be called back, so no notice claims nothing was sent.
+wf.aiTask = nil
+local KILL_TREE = [[
+all=""; front="$1"; depth=0
+while [ -n "$front" ] && [ $depth -lt 8 ]; do
+  all="$all $front"; next=""
+  for p in $front; do kill -STOP "$p" 2>/dev/null; next="$next $(/usr/bin/pgrep -P "$p")"; done
+  front=$(echo $next); depth=$((depth + 1))
+done
+kill -TERM $all 2>/dev/null; kill -CONT $all 2>/dev/null; exit 0
+]]
+wf.KILL_TREE = KILL_TREE
+function wf.stopAITask()
+  local t = wf.aiTask
+  wf.aiTask = nil
+  if not t then return end
+  local okR, running = pcall(function() return t:isRunning() end)
+  if okR and running == false then return end
+  local okP, pid = pcall(function() return t:pid() end)
+  if okP and type(pid) == "number" and pid > 1 then
+    local k = hs.task.new(wf.BASH, nil, { "-c", KILL_TREE, "senti-stop", string.format("%d", pid) })
+    if k and k:start() then wf.log("ai: stopped the request in flight"); return end
+  end
+  pcall(function() t:terminate() end)
+end
+
 -- Abandon the turn in flight: bumping the id makes its late callback drop its result
 -- instead of pasting into whatever app is focused by then. Don't lose the user's words with
 -- the turn: give back what they had copied (command mode cleared it to read the selection),
@@ -866,11 +898,15 @@ wf.TONE = { info = T_INFO, warn = T_WARN, ok = T_OK }
 function wf.abandonTurn()
   local abandoned = wf.turn
   wf.turn = (wf.turn or 0) + 1
+  wf.stopAITask()                               -- nothing more goes out for this turn
   local p = wf.pending
   wf.pending = nil
   if p and p.turn ~= abandoned then p = nil end   -- left over from an earlier turn
   if p and p.clip then
     wf.restoreClipboard(p.clip, hs.pasteboard.changeCount())
+    -- runCommand's copy poll may still be waiting for Cmd+C. This count lets it tell a
+    -- copy that lands after this restore (undo it) from the restore itself (ignore it).
+    wf.cmdRestore = { turn = abandoned, count = hs.pasteboard.changeCount() }
   elseif p and p.raw then
     wf.setPrivateClipboard(p.raw); return "words"
   end
@@ -895,6 +931,7 @@ function wf.cancelTurn()
     local back = wf.abandonTurn()
     wf.log("esc: working turn abandoned")
     wf.setState("idle")
+    wf.sweepCache()   -- the stale callback skips its sweep; no newer turn owns these files yet
     wf.hud.flash("Cancelled", 1)
     if back == "words" then wf.notify("Cancelled. What you said is on the clipboard.") end
   end
@@ -936,6 +973,7 @@ function wf.setState(s)
         if wf.abandonTurn() == "words" then msg = msg .. "\nWhat you said is on the clipboard." end
         wf.notify(msg, 5, wf.TONE.warn)
         wf.setState("idle")
+        wf.sweepCache()
       end
     end)
   elseif s == "recording" then
@@ -1034,6 +1072,7 @@ end
 -- Command Mode: transform the current selection (or generate at cursor) by voice.
 function wf.runCommand(command, turn)
   wf.hud.show("thinking")
+  if wf.cmdPoll then wf.cmdPoll:stop(); wf.cmdPoll = nil end   -- an abandoned turn's poll
   local prevClip = wf.saveClipboard()
   -- If this turn is abandoned, the watchdog restores this clipboard (see setState).
   if wf.pending and wf.pending.turn == turn then wf.pending.clip = prevClip end
@@ -1046,12 +1085,28 @@ function wf.runCommand(command, turn)
   local waited, poll = 0, nil
   poll = hs.timer.doEvery(0.04, function()
     waited = waited + 0.04
+    if turn ~= wf.turn then
+      -- Esc or the watchdog abandoned this turn and put the user's clipboard back. Read
+      -- nothing and send nothing: that restore moved the change count too, so reading now
+      -- would take the user's own clipboard for a selection and upload it. Until the window
+      -- closes, undo a copy that lands late, unless a newer turn has started since.
+      local r = wf.cmdRestore
+      if r and r.turn == turn and wf.turn == turn + 1 and hs.pasteboard.changeCount() ~= r.count then
+        wf.restoreClipboard(prevClip, hs.pasteboard.changeCount())
+        r.count = hs.pasteboard.changeCount()
+        wf.log("command: a copy that landed after Esc was undone")
+      end
+      if waited >= 0.8 then poll:stop(); if wf.cmdPoll == poll then wf.cmdPoll = nil end end
+      return
+    end
     if hs.pasteboard.changeCount() == before and waited < 0.8 then return end
-    poll:stop()
+    poll:stop(); wf.cmdPoll = nil
     local sel = hs.pasteboard.getContents() or ""
     local f = io.open(wf.SELFILE, "w"); if f then f:write(sel); f:close() end
     wf.log("command: " .. #command .. " chars on " .. #sel .. " selected chars")  -- not the text itself
-    wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(exitCode, out)
+    local task
+    task = wf.runScript({wf.COMMAND, "", wf.SELFILE}, command, function(exitCode, out)
+      if wf.aiTask == task then wf.aiTask = nil end
       -- Stale: a newer turn may own selection.txt now; the sweep removes ours.
       if wf.staleTurn(turn) then return end
       os.remove(wf.SELFILE)                    -- selected text is the user's content; don't leave it on disk
@@ -1074,7 +1129,9 @@ function wf.runCommand(command, turn)
       wf.log("command: applied " .. #out .. " chars")
       hs.timer.doAfter(0.5, function() wf.restoreClipboard(prevClip, ours) end)
     end)
+    wf.aiTask = task
   end)
+  wf.cmdPoll = poll
 end
 
 -- ── Cache hygiene ──────────────────────────────────────────────────────
@@ -1575,7 +1632,9 @@ end
 function wf.runVision(raw, kind, turn)
   wf.hud.show("thinking")
   -- Target hint + session identity ride the env via runScript; argv carries only paths/kind.
-  wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
+  local task
+  task = wf.runScript({wf.VISION, "", wf.SHOT, kind}, raw, function(exitCode, out)
+    if wf.aiTask == task then wf.aiTask = nil end
     -- Stale: no sweep — a newer turn may be mid-flight on capture.wav / screen.png.
     if wf.staleTurn(turn) then return end
     wf.pending = nil
@@ -1590,6 +1649,7 @@ function wf.runVision(raw, kind, turn)
     end
     wf.sweepCache()   -- the screenshot is a picture of your screen; don't let it linger
   end)
+  wf.aiTask = task
 end
 
 -- A result belongs to the turn that started it. The 'working' watchdog abandons a turn
@@ -1699,7 +1759,9 @@ function wf.handleTranscript(raw, turn, clipOnly)
   elseif wf.mode == "prompt" then
     local function textPath()                    -- no screen → text-only prompt path
       wf.hud.show("thinking")
-      wf.runScript({wf.PROMPTS}, raw, function(exitCode, stdout)
+      local task
+      task = wf.runScript({wf.PROMPTS}, raw, function(exitCode, stdout)
+        if wf.aiTask == task then wf.aiTask = nil end
         if wf.staleTurn(turn) then return end
         wf.pending = nil
         wf.setState("idle"); wf.sweepCache()
@@ -1710,6 +1772,7 @@ function wf.handleTranscript(raw, turn, clipOnly)
         end
         wf.insert(stdout)
       end)
+      wf.aiTask = task
     end
     -- "Use a screenshot in Prompt" off: no capture was taken, so don't wait a second for
     -- a file that will never come.
