@@ -83,6 +83,15 @@ _sk_log() { printf '%s key: %s\n' "$(date '+%F %T')" "$*" >>"${WF_LOG:-/dev/null
 
 # ── Keychain primitives ─────────────────────────────────────────────────────────────
 _sk_sec() { printf '%s' "${SENTI_SECURITY:-/usr/bin/security}"; }
+# A test keychain path must survive the `security -i` line intact. `security -i` splits that
+# line on spaces, and on 13 Nov a probe with a spaced path wrote its test item into the LOGIN
+# keychain. So any whitespace, quote or backslash in SENTI_KEYCHAIN makes every Keychain call
+# refuse (19, the file fallback) rather than risk reaching the user's own keychain.
+_sk_kc_path_ok() {
+  [ -n "${SENTI_KEYCHAIN:-}" ] || return 0
+  case "$SENTI_KEYCHAIN" in *[[:space:]]*|*'"'*|*"'"*|*'\'*) return 1 ;; esac
+  return 0
+}
 # Bounded call: _sk_run <seconds> <security args...>. alarm survives exec, so a security
 # that blocks on a locked keychain is killed (exit 142) instead of hanging the caller.
 _sk_run() {
@@ -91,7 +100,7 @@ _sk_run() {
 }
 # _sk_kc_get <provider> → key on stdout. 0 found, 1 no item, 19 locked or unavailable.
 _sk_kc_get() {
-  [ -x "$(_sk_sec)" ] || return 19
+  _sk_kc_path_ok && [ -x "$(_sk_sec)" ] || return 19
   local v rc
   v="$(_sk_run 5 find-generic-password -s "$SENTI_KC_SERVICE" -a "$1" -w ${SENTI_KEYCHAIN:+"$SENTI_KEYCHAIN"} 2>/dev/null </dev/null)"
   rc=$?
@@ -106,10 +115,9 @@ _sk_kc_get() {
 # the read-back is the only evidence the key is stored.
 _sk_kc_put() {
   local p="$1" k="$2" label back
-  [ -x "$(_sk_sec)" ] || return 19
+  _sk_kc_path_ok && [ -x "$(_sk_sec)" ] || return 19
   label="Senti $(senti_provider_label "$p") API key"
   if [ -n "${SENTI_KEYCHAIN:-}" ]; then
-    case "$SENTI_KEYCHAIN" in *'"'*|*'\'*|*$'\n'*) return 19 ;; esac
     printf 'add-generic-password -U -s %s -a %s -l "%s" -w %s "%s"\n' \
       "$SENTI_KC_SERVICE" "$p" "$label" "$k" "$SENTI_KEYCHAIN" | _sk_run 10 -i >/dev/null 2>&1
   else
@@ -122,7 +130,7 @@ _sk_kc_put() {
 }
 # 0 deleted or nothing there, 19 locked or unavailable.
 _sk_kc_del() {
-  [ -x "$(_sk_sec)" ] || return 19
+  _sk_kc_path_ok && [ -x "$(_sk_sec)" ] || return 19
   _sk_run 5 delete-generic-password -s "$SENTI_KC_SERVICE" -a "$1" ${SENTI_KEYCHAIN:+"$SENTI_KEYCHAIN"} >/dev/null 2>&1 </dev/null
   case "$?" in 0|44) return 0 ;; *) return 19 ;; esac
 }

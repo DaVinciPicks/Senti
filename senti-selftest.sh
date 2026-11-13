@@ -457,6 +457,18 @@ FP="$(/usr/bin/stat -f '%Lp' "$CFG/openrouter-key" 2>/dev/null)"
 [ "$RC" = 19 ] && [ "$FP" = 600 ] && ok "no Keychain: the key goes to a mode 600 file and set exits 19" || bad "file fallback: exit $RC mode ${FP:-none}"
 R2="$(SENTI_SECURITY=/nonexistent bash -c 'source "$HOME/.config/senti/config.sh"; source "$1"; senti_key_read openrouter; [ "$SENTI_KEY_VALUE" = "$2" ] && echo "$SENTI_KEY_SOURCE"' _ "$KEY" "$C3")"
 [ "$R2" = file ] && ok "the read path falls back to the file when there is no Keychain item" || bad "file fallback read gave '$R2'"
+# A SENTI_KEYCHAIN path with a space once sent a test item to the LOGIN keychain (security -i
+# splits on spaces). Every Keychain call must refuse it. The security binary here is a stub
+# that only logs, so even a broken guard cannot reach a real keychain.
+mkdir -p "$SBT/kstub"
+printf '#!/bin/bash\necho called >> "%s/kstub/calls"\nexit 1\n' "$SBT" > "$SBT/kstub/security"; chmod +x "$SBT/kstub/security"
+C4="$(canary spc)"
+SENTI_SECURITY="$SBT/kstub/security" SENTI_KEYCHAIN="$SBT/sp ace/t.keychain-db" SENTI_IN="$C4" bash "$KEY" set anthropic >/dev/null 2>&1; RC=$?
+SENTI_SECURITY="$SBT/kstub/security" SENTI_KEYCHAIN="$SBT/sp ace/t.keychain-db" bash "$KEY" status >/dev/null 2>&1
+SENTI_SECURITY="$SBT/kstub/security" SENTI_KEYCHAIN="$SBT/sp ace/t.keychain-db" bash "$KEY" clear anthropic >/dev/null 2>&1
+[ "$RC" = 19 ] && [ ! -e "$SBT/kstub/calls" ] && ok "a SENTI_KEYCHAIN path with a space is refused (set exits 19, security never runs)" \
+  || bad "spaced SENTI_KEYCHAIN: set exit $RC, security calls: $(wc -l < "$SBT/kstub/calls" 2>/dev/null || echo 0)"
+/bin/rm -f "$CFG/anthropic-key"
 bash "$KEY" use anthropic claude-haiku-5-5 >/dev/null 2>&1
 PP="$(/usr/bin/stat -f '%Lp' "$CFG/ai.pref" 2>/dev/null)"
 [ "$(cat "$CFG/ai.pref" 2>/dev/null | head -2 | tr '\n' ' ')" = "provider=anthropic text_model=claude-haiku-5-5 " ] && [ "$PP" = 600 ] \
