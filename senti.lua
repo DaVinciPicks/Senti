@@ -1933,7 +1933,7 @@ local function aiMenu()
     local have = k and k.present
     provs[#provs + 1] = {
       title = info.label .. (info.available and "" or " (New)") .. ":  "
-              .. (have and ("key ending …" .. (k.last4 or "")) or "needs a key"),
+              .. (have and ("key ending …" .. (k.last4 or "")) or (wf.keys and "needs a key" or "key status unknown")),
       checked = (a.provider == p), disabled = a.pinned,
       fn = function() if have then wf.useModel(p, nil) else wf.openPanel(p) end end }
   end
@@ -2564,7 +2564,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     var a = S.active, ap = prov(a.provider);
     if (a.text) { w.appendChild(el("span", "mono", a.text)); w.appendChild(document.createTextNode(" on " + (ap ? ap.label : a.provider))); }
     else w.textContent = ap ? ap.label : "Not set";
-    if (ap && !ap.present) w.appendChild(document.createTextNode(", needs a key"));
+    if (ap && !ap.present) w.appendChild(document.createTextNode(ap.unknown ? ", key status unknown" : ", needs a key"));
     document.getElementById("written").textContent = S.writtenFor || "Detected from the app you prompt into";
   }
 
