@@ -1731,18 +1731,31 @@ function wf.handleTranscript(raw, turn, clipOnly)
     wf.notify("Recording ran 2.5 minutes, so it was stopped.\nThe transcript is on the clipboard.", 5, wf.TONE.warn)
     return
   end
-  -- Prompt, Command and Context call the active provider with the user's own key. Without
-  -- one, say so and hand the words back on the clipboard rather than typing them as if the
-  -- mode had worked (and never paste raw speech over a Command selection).
+  -- AI modes can outlive the 75s watchdog; keep the words so it (or Esc) can hand them back.
+  if wf.mode ~= "verbatim" then wf.pending = { turn = turn, raw = raw } end
+  -- Prompt, Command and Context call the active provider with the user's own key. The
+  -- cached status can be stale: a key set from Terminal (install.sh suggests
+  -- `senti-key.sh set`) never tells this process. So a cached "no key" is never the last
+  -- word: re-read the status once, now at key-up (the key-down path spawns nothing for
+  -- keys), and decide on the answer. Only then say so and hand the words back on the
+  -- clipboard, rather than typing them as if the mode had worked (and never paste raw
+  -- speech over a Command selection).
   if wf.mode ~= "verbatim" and not wf.hasAIKey() then
-    wf.setState("idle"); wf.setPrivateClipboard(raw); wf.sweepCache()
-    wf.log("ai mode " .. tostring(wf.mode) .. ": no key for " .. wf.active().provider .. ", words left on the clipboard")
-    wf.notify(wf.noticeFor(10, wf.providerLabel(wf.active().provider), nil, "prompt"), 6, wf.TONE.warn)
+    wf.refreshKeys(function()
+      if wf.staleTurn(turn) then return end
+      if wf.hasAIKey() then wf.log("keys: status re-read, a key is there now"); wf.runAIMode(raw, turn); return end
+      wf.pending = nil
+      wf.setState("idle"); wf.setPrivateClipboard(raw); wf.sweepCache()
+      wf.log("ai mode " .. tostring(wf.mode) .. ": no key for " .. wf.active().provider .. ", words left on the clipboard")
+      wf.notify(wf.noticeFor(10, wf.providerLabel(wf.active().provider), nil, "prompt"), 6, wf.TONE.warn)
+    end)
     return
   end
-  -- AI modes can outlive the 75s watchdog; keep the words so it can hand them back.
-  if wf.mode ~= "verbatim" then wf.pending = { turn = turn, raw = raw } end
+  wf.runAIMode(raw, turn)
+end
 
+-- The mode dispatch after the key gate (verbatim included).
+function wf.runAIMode(raw, turn)
   if wf.mode == "context" then
     wf.awaitShot(4, function(has)
       if wf.staleTurn(turn) then return end
@@ -1956,6 +1969,9 @@ end
 
 wf.bar = hs.menubar.new()
 local function menu()
+  -- Re-read the key status in the background each time the menu opens, so a key set or
+  -- cleared from Terminal shows up by the next open (this one is built from the cache).
+  wf.refreshKeys()
   local serverUp = hs.execute(wf.BASH .. " '" .. wf.DICTATE .. "' server"):gsub("%s+","") == "up"
   local tapOn = wf.flagWatcher and wf.flagWatcher:isEnabled()
   local curModel = hs.execute(wf.BASH .. " '" .. wf.MODELSH .. "' current"):gsub("%s+","")
