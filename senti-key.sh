@@ -234,7 +234,13 @@ usage() {
   exit 2
 }
 need_provider() { senti_provider_ok "${1:-}" || { echo "unknown provider '${1:-}': use openai, anthropic or openrouter" >&2; exit 2; }; }
-last4() { local k="$1"; printf '%s' "${k:$((${#k} > 4 ? ${#k} - 4 : 0))}"; }
+# A key that fails the charset (a hand-edited file key) shows as ????: its tail could hold a
+# quote or backslash that breaks status --json, and a short one would print whole.
+last4() {
+  local k="$1"
+  senti_key_ok "$k" || { printf '????'; return 0; }
+  printf '%s' "${k:$((${#k} - 4))}"
+}
 
 # Atomic, private file write: umask 077, temp file in the same dir, mode 600, then rename.
 write_private() {   # write_private <path> <content>
