@@ -5,7 +5,7 @@ The 3 AI modes (Prompt, Command and Context) send text, and sometimes a screensh
 provider you chose, and only when you use them.
 
 This page lists exactly what leaves your Mac, what Senti reads, what it stores and for how long. It
-describes the code in this repository as of 13 November 2026.
+describes the code in this repository as of 14 November 2026.
 
 ## What leaves your Mac
 
@@ -13,12 +13,14 @@ describes the code in this repository as of 13 November 2026.
 |---|---|---|
 | **Dictate** (hold right ⌥) | Nothing. The audio goes to the speech server on `127.0.0.1`, on your Mac. | nowhere |
 | **Prompt** (hold right ⌘) | Your words. Senti's own instructions (from `prompts/`), including guidance for the model you are about to paste into, which names that model. A downscaled screenshot when **Use a screenshot in Prompt** is on (the default) and Hammerspoon has Screen Recording permission. | your provider |
-| **Prompt, heavy turn** | Everything above, plus a fenced block of context: the project and task from the window title, this window's recent Senti turns, and your notes digest if notes are on. See the next section. | your provider |
+| **Prompt, heavy turn** | Everything above, plus fenced blocks of context: the project and task from the window title, this window's recent Senti turns, and your notes digests if notes are on. See the next section. | your provider |
+| **Prompt, heavy turn, Notion on** | A read of the Notion page you mapped to this project. The request carries the page id and your Notion token, nothing from your speech, screen or window title. | `api.notion.com` |
 | **Command** (hold Fn) | Your words and the text you selected, if any. No screenshot. | your provider |
 | **Context** (⌃⌥V) | Your words and a downscaled screenshot. Context always takes one, because reading the screen is what it is for. | your provider |
 
 "Your provider" is the one host of the provider you picked: `api.openai.com`, `api.anthropic.com`
-or `openrouter.ai`. Your API key goes only to that host.
+or `openrouter.ai`. Your API key goes only to that host. Your Notion token goes only to
+`api.notion.com`, and only when the Notion source is on.
 
 The screenshot is of your main display, shrunk with `sips` so its long edge is 1536 pixels
 (`WF_SHOT_PX` in `config.sh`) and saved as JPEG. If `sips` fails, the original PNG is sent instead.
@@ -43,12 +45,26 @@ On a heavy turn Senti adds:
   `WF_BRAIN_DIRS`. Senti picks the note for the current project and sends its `## Senti` section. A
   note without one sends its `## For future Claude` section, or else its first 10 lines. The digest is
   capped at 700 bytes (`WF_BRAIN_MAX`). Add a `## Senti` section to a note to decide exactly what
-  can leave. To see what would be sent, without sending anything, run
-  `bash ~/.config/senti/senti-brain.sh --preview <project>`.
+  can leave. A `Senti` heading at another level (`#`, `###`) works the same way, and its section ends
+  at the next heading of the same or a higher level.
+- **One retrieved note**, only if you also set `WF_BRAIN_RETRIEVE=1`: the note in the same project
+  folder whose words best match what you said, digested by the same rules and capped at 700 bytes.
+  Notes under `People/`, in hidden folders and symlinked notes are never considered, and nothing from
+  another project folder can be picked.
+- **Your Notion page digest**, only if you turned Notion on with `WF_BRAIN_NOTION=1`, stored a token
+  and mapped the project to a page in `brain-map.txt`. The page goes through the same rules (a heading
+  named `Senti` wins), capped at 700 bytes.
 
-Senti prepares this block locally when you press right ⌘, before you speak. Nothing is sent until a
-heavy turn's request goes out. Each part that joins a request is written to the log as a count, for
-example `sent: vault 'Note.md' 412 chars`.
+To see what would be sent, without sending anything to your AI provider, run
+`bash ~/.config/senti/senti-brain.sh --preview <project>`. With Notion on, this reads the mapped page
+from Notion.
+
+Senti prepares the window title, session and Obsidian part locally when you press right ⌘, before you
+speak. Nothing is sent until a heavy turn's request goes out. The retrieved note and the Notion read
+happen only on a heavy turn, after you stop speaking: never at key-down. A Notion read that fails or
+takes longer than `WF_NOTION_TIMEOUT` (2.5 seconds) adds nothing. Each part that joins a request is
+written to the log as a count, for example `sent: vault 'Note.md' 412 chars`,
+`sent: vault 'Other.md' 300 chars (retrieved)` or `sent: notion 'Notion page 1a2b3c4d' 380 chars`.
 
 ### OpenRouter
 
@@ -66,7 +82,8 @@ Each provider sets its own rules for API data:
 - OpenRouter: [Privacy policy](https://openrouter.ai/privacy) and
   [provider logging](https://openrouter.ai/docs/guides/privacy/provider-logging)
 
-These links opened on 13 November 2026.
+These links opened on 13 November 2026. A Notion read sends Notion nothing it does not already hold:
+the page is yours, in your workspace.
 
 ## What Senti reads on your Mac
 
@@ -80,17 +97,20 @@ Some of this is sent, as the tables above say. The rest never leaves the Mac.
 - The git branch of `~/code/<project>`, read from `.git/HEAD`, plus your `replacements.txt`. These
   become a short spelling hint for the local speech server and never leave the Mac.
 - The text you select, in Command mode, which is sent as listed above.
-- The notes folders you list, if notes are on.
+- The notes folders you list, if notes are on. With retrieval on, a heavy turn reads every note in
+  those folders on your Mac to rank them; only the picked note's digest is sent.
+- The Notion pages you mapped in `brain-map.txt`, if Notion is on, read on heavy turns only.
 - Your clipboard, held in memory during a paste or a Command turn so it can be put back. It is never sent or saved.
 
 ## What Senti stores, and for how long
 
 | Where | What | How long |
 |---|---|---|
-| macOS Keychain, service `io.senti` | Your API key for each provider | Until you remove it (the key panel, `senti-key.sh clear <provider>`, or `uninstall.sh`) |
-| `~/.config/senti/<provider>-key` | Your key, only when the Keychain was locked or unavailable. Mode 600, plain text | Until you remove it |
+| macOS Keychain, service `io.senti` | Your API key for each provider, and your Notion token (account `notion`) | Until you remove it (the key panel, `senti-key.sh clear <provider>` or `clear notion`, or `uninstall.sh`) |
+| `~/.config/senti/<provider>-key`, `notion-key` | Your key or token, only when the Keychain was locked or unavailable. Mode 600, plain text | Until you remove it |
 | `~/.config/senti/ai.pref`, `ui.pref` | Your provider, model and screenshot choices | Until you change them |
-| `~/.cache/senti/capture.wav`, `screen.png`, `screen-small.jpg`, `selection.txt`, `ctx-*` | The audio, screenshot, selected text and prepared context of the current turn | Deleted at the end of each turn, when Senti starts, and every 60 seconds while it is idle |
+| `~/.cache/senti/capture.wav`, `screen.png`, `screen-small.jpg`, `selection.txt`, `ctx-*` | The audio, screenshot, selected text and prepared context of the current turn. `ctx-shot.jpg` is the screenshot shrunk at key-down | Deleted at the end of each turn, when Senti starts, and every 60 seconds while it is idle |
+| `~/.cache/senti/brain/notion-<page id>.txt` | The digest of a mapped Notion page, after the rules above (never the whole page). Mode 600 | Reused for 10 minutes (`WF_NOTION_TTL_MIN`), then deleted at the next read, the next right ⌘ press, or the session sweep at launch and every 30 minutes. All are deleted once Notion is turned off |
 | `~/.cache/senti/sessions/<window>.tsv` | Session memory: Prompt, Command and Context turns, 200 characters each, at most 12 per window. Mode 600 | Turns older than 24 hours are never recalled. Files are deleted 24 hours after their last turn, at launch and every 30 minutes while Senti runs |
 | `~/.cache/senti/last-request.json` | Names and counts from the last AI request. Mode 600. No speech, prompt or answer text | Replaced by the next AI request |
 | `~/Library/Logs/senti.log` | Events, character counts, note file names. Mode 600. Transcripts only if you set `WF_DEBUG=1` | Never rotated |
@@ -114,6 +134,9 @@ target model's name, never the text. Dictation never writes to it.
 ## Turning things off
 
 - **Notes:** leave `WF_BRAIN` unset, or set `WF_BRAIN=0`, in `~/.config/senti/config.sh`.
+  `WF_BRAIN_RETRIEVE=0` keeps the main note and turns off the retrieved one.
+- **Notion:** leave `WF_BRAIN_NOTION` unset, or set it to 0. Remove the token with
+  `bash ~/.config/senti/senti-key.sh clear notion`.
 - **Screenshots in Prompt:** turn off **AI → Use a screenshot in Prompt** in the menu bar. Context
   mode still takes one, since that is its job; don't use ⌃⌥V if you want none.
 - **History and window title in Prompt:** don't open a turn with "think hard" or "today let's work
@@ -136,6 +159,10 @@ with your Keychain items, and about the speech models. See the README's Uninstal
 
 ## Changes
 
+- **14 November 2026 (1.1, unreleased):** Notion added as a second notes source beside Obsidian, off
+  by default, with its token in the Keychain. Optional retrieval of one more note from the project's
+  vault folder, off by default. Both send only on heavy turns. The screenshot is now shrunk at
+  key-down; the image that is sent is unchanged.
 - **13 November 2026 (1.1, unreleased):** Anthropic and OpenRouter added as providers. Keys moved to
   the macOS Keychain. The background step that sent a notes digest to the model to shorten it was
   deleted, so there is no background upload, and old digests it left in `~/.cache/senti/brain/` are

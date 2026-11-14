@@ -52,7 +52,10 @@ Scripts and `senti.lua` are code — always overwritten.)
   is **`wf`** — these are *legacy from the "Whisper Flow" name and kept intentionally*.
   Don't mass-rename them; it touches every file for no user-visible gain.
 - **Secrets:** one key per provider in the **macOS Keychain** (service `io.senti`, account
-  `openai` / `anthropic` / `openrouter`), written and read only by `senti-key.sh`. A mode-600
+  `openai` / `anthropic` / `openrouter`), written and read only by `senti-key.sh`. The Notion token
+  is account `notion` with the same set/clear/status/migrate/fallback rules, but it is NOT a
+  provider: it lives in `SENTI_KEY_ACCOUNTS`, never in `SENTI_PROVIDERS` (the auto tier loops over
+  that), `use`/`test` refuse it, and `status --json` reports it under `tokens`, not `keys`. A mode-600
   file `~/.config/senti/<provider>-key` (gitignored) is the fallback when no Keychain item
   exists; `senti-key.sh migrate` (run by install.sh) moves an old file into the Keychain and
   deletes it only after a byte-exact read-back. Programs running as the user can still read
@@ -95,7 +98,10 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
    context/prompt+screen ─▶ senti-vision.sh ─▶ senti-ai.sh with SENTI_IMG (downscaled screenshot)
    provider, model, key ◀─ senti-key.sh (ai.pref, Keychain io.senti, ai-models.json)
    prompt mode also ─▶ senti-target.sh ─▶ prompts/models/*.md (tailor to the destination model)
-                   └─▶ senti-session.sh ─▶ ~/.cache/senti/sessions/<window-id>.tsv  (per-window memory)
+                   ├─▶ senti-session.sh ─▶ ~/.cache/senti/sessions/<window-id>.tsv  (per-window memory)
+                   └─▶ senti-brain.sh   ─▶ Obsidian hub note (key-down)
+                                          + heavy turns only: --retrieve (FTS5, same project folder)
+                                                              --notion (api.notion.com, mapped page)
 ```
 
 **Script map** (all deploy to `~/.config/senti/`):
@@ -104,15 +110,15 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 |---|---|
 | `senti-dictate.sh` | record / transcribe / clean — the only path that stays 100% local |
 | `senti-ai.sh` | THE single AI call for all 3 providers — text and vision (`SENTI_IMG`), typed exit codes, `last-request.json` |
-| `senti-key.sh` | keys (`set` / `test` / `clear` / `status` / `use` / `migrate`) and provider+model resolution |
+| `senti-key.sh` | keys and the Notion token (`set` / `test` / `clear` / `status` / `use` / `migrate`) and provider+model resolution |
 | `senti-vision.sh` | screenshot + instruction → prompt assembly, delegates the call to senti-ai.sh |
-| `senti-lib.sh` | shared `senti_prompt_context` — craft + brain + session + target for BOTH prompt paths |
+| `senti-lib.sh` | shared prompt context for BOTH prompt paths (craft + brain + session + target), the heavy-turn extras (retrieval, Notion), and the key-down prefetch (context + screenshot downscale) |
 | `senti-prompt.sh` | rough idea → optimised prompt (fallback path — see path parity) |
 | `senti-command.sh` | transform selected text by voice |
 | `senti-judge.sh` | prompt quality: legacy 0-10 `score` + discriminating pairwise `compare` |
 | `senti-target.sh` | frontmost app → which model's guidance digest to inject |
 | `senti-session.sh` | per-window session memory (`note` / `recall` / `sweep`) |
-| `senti-brain.sh` | Obsidian vault → capped project digest; `--preview` shows what would be sent |
+| `senti-brain.sh` | notes → capped digests through ONE gate: Obsidian hub (default), `--retrieve`, `--notion`; `--preview` shows what would be sent |
 | `senti-eval.sh` | eval harness over `eval/cases.txt`; `ab <A> <B>` with a base-vs-base row |
 | `senti-selftest.sh` | the full check suite — run before believing anything works |
 | `senti-model.sh` | Fast/Accurate whisper model switch |
@@ -187,7 +193,7 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   (`senti-session.sh`) + target-model guidance (`senti-target.sh`). Best mode was DELETED
   2026-08-09 — it was unreachable from the live path, never once measured better than one
   call, and bet 2x latency on sampling variance instead of context quality. Don't rebuild it.
-- **Second brain (Obsidian):** `senti-brain.sh` maps the window-title project to a vault note
+- **Second brain (Obsidian; Notion and retrieval below):** `senti-brain.sh` maps the window-title project to a vault note
   (allowlist is narrow and configured locally; exceptions in `brain-map.txt`), digests
   it (`## Senti` section wins, else `## For future Claude`, else first lines), caps at
   `WF_BRAIN_MAX`. The digest rides only HEAVY turns (opening "think hard" or "today let's
@@ -196,7 +202,33 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   written as the request is built, so a turn that then stops (no key, a dry run) still shows it:
   it can over-report, never under-report.
   `senti-brain.sh --preview <project>` prints, locally, what would be sent and to which
-  provider. There is NO background upload: the lazy "refresh" that sent the digest to the
+  provider (with Notion on it reads the mapped page).
+  The gate (`BRAIN_GATE_PL`, a perl program in senti-brain.sh) takes a `Senti` heading at any level
+  and ends the section at the next heading of the same or a higher level; on existing `## Senti`
+  notes it is byte-identical to the old regex gate (13 parity cases, 14 Nov 2026).
+- **Retrieval (`WF_BRAIN_RETRIEVE=1`, off by default):** one more note per heavy turn, the best
+  SQLite FTS5 bm25 match for the utterance among notes in the SAME project folder (the hub's folder,
+  never a listed folder itself), above `WF_BRAIN_RETRIEVE_MIN` (3). The corpus is the gate's batch
+  mode over every listed note (NUL-separated paths on stdin); python (`RANK_PY`, code on argv, query
+  in `SENTI_Q`) only ranks and prints a path; the sent text comes from `brain_digest` on that path.
+  In memory, nothing at rest. Runs in `senti_ctx_for_intent` after transcription, never at key-down.
+  Calibrated on a 76-note synthetic vault (8/8 right picks at bm25 7.5 to 19.5, weakest cross-match
+  2.8). A/B on 12 heavy cases x 3 samples (14 Nov 2026): W-L-T 2-29-5 against base-vs-base
+  11-17-8: retrieval LOST, though a note-only fact reached 28/33 retrieval prompts vs 3/33 base.
+  Untested explanations: the judge sees only the idea, not the notes, so grounded specifics may read
+  as unrequested additions; the retrieval prompts are also longer (2,305 vs 1,794 words over 36
+  outputs), and one (c04) added examples found in no note. Off by default until an A/B (ideally with
+  a judge that is shown the notes) clears the noise row.
+- **Notion (`WF_BRAIN_NOTION=1`, off by default, beside Obsidian):** `brain-map.txt` lines
+  `project|notion:<id or notion.so URL>` (or `project = notion:...`); the id is reduced to 32 hex and
+  the URL built from it alone, never `/v1/search`. `senti-brain.sh --notion` reads
+  `GET /v1/blocks/{id}/children` (Notion-Version `2026-03-11`, paginated up to 5 pages, plus the
+  children of a toggle heading named Senti) in `python3 -I` with token and id in env, no redirects,
+  one `setitimer` deadline (`WF_NOTION_TIMEOUT` 2.5 s, clamped 0.5 to 3). Heavy turns only, in the
+  background beside retrieval and the cached block. The gated digest is cached in
+  `~/.cache/senti/brain/notion-<id>.txt` for `WF_NOTION_TTL_MIN` (10) min; the read path, the
+  key-down prefetch and `senti-session.sh sweep` expire it (all of them when Notion is off).
+  `WF_NOTION_API` (tests) accepts only api.notion.com or loopback; the self-test drives a mock. There is NO background upload: the lazy "refresh" that sent the digest to the
   model to compress it was deleted 13 Nov 2026 (it had not run since 17 Oct), and
   `senti-session.sh sweep` deletes its old `~/.cache/senti/brain/*.md` leftovers. The digest
   DOES ride the API call: that's the feature and the risk — never widen the allowlist to
@@ -260,6 +292,11 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   managers skip it. Universal Clipboard (Handoff) can still sync it to your other devices.
   macOS does have a public opt-out (`NSPasteboard` current-host-only writes, reachable from a
   small Swift helper); Senti does not use it yet.
+- **Notion and retrieval:** both run only on heavy turns after transcription (never in the key-down
+  prefetch), each in its own nonce fence, each logged as `sent:` and named in `last-request.json`
+  (`parts()` reads every fence). The Notion token never leaves `api.notion.com`; the retrieval query
+  never touches argv. The self-test pins all of it, and a mutation run (14 Nov 2026) showed the
+  checks fail when scoping, the People/ rule, the TTL, argv hygiene or the screenshot reuse breaks.
 - **Known, accepted:** whisper-server's `/load` endpoint is unauthenticated (CORS `*`), so any
   local account or a page reaching 127.0.0.1:8090 can make it load a bad model and exit;
   launchd restarts it. Denial of service only — it cannot read audio.
@@ -296,6 +333,16 @@ hostile input, not a remote attacker. Verified defenses — don't regress them:
   password dialog: always go through `_sk_run` (perl `alarm`) in senti-key.sh. Tests use a
   throwaway keychain (`SENTI_KEYCHAIN=<path>`) rather than trusting a fake HOME to keep
   `security` away from the login keychain, and `launchctl` ignores HOME entirely.
+- **Never name a shell function `log`:** macOS has `/usr/bin/log`, so the self-test's xtrace argv
+  check (`xargv`) counts a call to it as an external command and flags any canary in its arguments.
+  senti-brain.sh uses `blog`.
+- **`find "$root" ! -path '*/.*'` matches the WHOLE path:** a vault under any hidden folder (or this
+  repo's `.claude/` scratch) loses every note. Prune hidden names below the root instead:
+  `find "$root" -mindepth 1 -name '.*' -prune -o -type f -name '*.md' -print0`.
+- **Prompt screenshot:** taken at key-down (senti.lua) and now also downscaled there by the prefetch
+  (`ctx-shot.jpg` + `ctx-shot.sig`: inode, size, ns mtime, target px). senti-vision.sh reuses it
+  only on an exact signature match, else runs sips in the background while it assembles the prompt.
+  sips output is deterministic, so the bytes sent are unchanged.
 - **`$HOME` may contain a space:** quote every path in `hs.execute(...)`; the plist uses a
   `__HOME__` placeholder that `install.sh` substitutes (never hard-code a home path).
 

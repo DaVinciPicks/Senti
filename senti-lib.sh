@@ -64,7 +64,21 @@ ctx_note_file() {
   else printf '%s/ctx-note-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$$"; fi
 }
 senti_ctx_vault_note() { cat "$(ctx_note_file)" 2>/dev/null; }
-senti_ctx_cleanup() { [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null; return 0; }
+# Per-turn sidecars for what a heavy turn adds after transcription (the Notion page label,
+# the retrieved note's name).
+# Always keyed on this process, never on the window: they belong to one request.
+ctx_turn_file() { printf '%s/ctx-%s-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$1" "$$"; }
+senti_ctx_note() {   # senti_ctx_note <vault|notion|rnote> → the name to label last-request.json with
+  case "$1" in
+    vault) senti_ctx_vault_note ;;
+    *)     cat "$(ctx_turn_file "$1")" 2>/dev/null ;;
+  esac
+}
+senti_ctx_cleanup() {
+  [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null
+  rm -f "$(ctx_turn_file notion)" "$(ctx_turn_file rnote)" 2>/dev/null
+  return 0
+}
 
 # Atomic write (temp + mv) so a concurrent reader can never see a half-built context.
 ctx_write() {
@@ -143,13 +157,62 @@ senti_intent() {
 # Returns the untrusted block only when the turn earned it. Logs which way it went, so
 # the split is measurable rather than a matter of belief, and logs "sent:" for each part
 # that joins this request: this, not "brain: prepared", is the record of what left the Mac.
+#
+# A heavy turn can also add a Notion digest and one retrieved vault note. Both need the
+# turn itself (retrieval matches the words just spoken; Notion is the only network call in
+# this file), so they happen HERE, after the speech is transcribed and only on a heavy
+# turn: never in the key-down prefetch (key-down is local work only; about 97% of turns are
+# light and need nothing). They run in the background, side by side, while the cached block
+# is read, so the turn waits for the slowest one, not the sum. senti-brain.sh bounds the
+# Notion read (WF_NOTION_TIMEOUT, default 2.5 s) and reuses its digest for
+# WF_NOTION_TTL_MIN minutes. Both go in their own nonce fence, because the cached block was
+# fenced at key-down.
 senti_ctx_for_intent() {
-  local mode block vchars schars note
+  local mode block="" vchars schars note pn="" tn="" xn="" pr="" rf="" xr="" xbody="" nch out=""
   mode="$(senti_intent "${1:-}")"
   echo "$(date '+%F %T') intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   [ "$mode" = heavy ] || return 0
+  if [ "${WF_BRAIN_NOTION:-0}" = "1" ]; then
+    tn="$(ctx_turn_file xnotion)"
+    : > "$(ctx_turn_file notion)" 2>/dev/null; chmod 600 "$(ctx_turn_file notion)" 2>/dev/null
+    ( umask 077; SENTI_BRAIN_NOTEOUT="$(ctx_turn_file notion)" \
+        bash "$HOME/.config/senti/senti-brain.sh" --notion > "$tn" 2>>"${WF_LOG:-/dev/null}" ) &
+    pn=$!
+  fi
+  if [ "${WF_BRAIN:-0}" = "1" ] && [ "${WF_BRAIN_RETRIEVE:-0}" = "1" ]; then
+    rf="$(ctx_turn_file xretrieve)"
+    : > "$(ctx_turn_file rnote)" 2>/dev/null; chmod 600 "$(ctx_turn_file rnote)" 2>/dev/null
+    # The utterance is the query: it reaches senti-brain.sh (and python) in the environment.
+    ( umask 077; SENTI_Q="${1:-}" SENTI_BRAIN_NOTEOUT="$(ctx_turn_file rnote)" \
+        bash "$HOME/.config/senti/senti-brain.sh" --retrieve > "$rf" 2>>"${WF_LOG:-/dev/null}" ) &
+    pr=$!
+  fi
   block="$(senti_untrusted_ctx)"
-  blank "$block" && return 0
+  if [ -n "$pn" ]; then
+    wait "$pn" 2>/dev/null
+    xn="$(cat "$tn" 2>/dev/null)"; rm -f "$tn"
+  fi
+  if [ -n "$pr" ]; then
+    wait "$pr" 2>/dev/null
+    xr="$(cat "$rf" 2>/dev/null)"; rm -f "$rf"
+  fi
+  if ! blank "$xr"; then
+    nch="$(printf '%s' "${xr#*$'\n'}" | wc -c | tr -d ' ')"
+    echo "$(date '+%F %T') sent: vault '$(senti_ctx_note rnote)' ${nch} chars (retrieved)" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+    xbody="$xbody
+$xr"
+  fi
+  if ! blank "$xn"; then
+    nch="$(printf '%s' "${xn#*$'\n'}" | wc -c | tr -d ' ')"
+    echo "$(date '+%F %T') sent: notion '$(senti_ctx_note notion)' ${nch} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+    xbody="$xbody
+$xn"
+  fi
+  blank "$xbody" || out="$(senti_fence "$xbody")"
+  blank "$block" && { printf '%s' "$out"; return 0; }
+  [ -n "$out" ] && out="
+
+$out"
   read -r vchars schars <<EOF
 $(printf '%s' "$block" | /usr/bin/perl -0777 -ne '
     my ($v, $s) = (0, 0);
@@ -162,7 +225,7 @@ EOF
     echo "$(date '+%F %T') sent: vault '${note:-unknown note}' ${vchars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   fi
   [ "${schars:-0}" -gt 0 ] && echo "$(date '+%F %T') sent: session ${schars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
-  printf '%s' "$block"
+  printf '%s%s' "$block" "$out"
 }
 
 # ── Untrusted reference data (vault note + session context) ──────────────────────────
@@ -177,12 +240,17 @@ $brain"
   sess="$(bash "$HOME/.config/senti/senti-session.sh" recall 2>>"$WF_LOG")"
   blank "$sess" || body="$body
 $sess"
+  senti_fence "$body"
+}
+
+# senti_fence <untrusted body> → the body inside a REFERENCE_CONTEXT fence, or nothing.
+senti_fence() {
+  local body="$1" nonce
   blank "$body" && return 0
   # The body is untrusted (a web page sets its own tab title), so it must not be able to
   # close the fence early and speak from outside it. Two layers: the delimiter brackets
   # are stripped, and the markers carry a per-call nonce the body cannot know, so a
   # lookalike ("<END_REFERENCE_CONTEXT>") is not the end either.
-  local nonce
   nonce="$(/usr/bin/od -An -N6 -tx1 /dev/urandom | /usr/bin/tr -d ' \n')"
   body="$(printf '%s' "$body" | /usr/bin/sed -e 's/<<<//g' -e 's/>>>//g')"
   printf '%s' "<<<REFERENCE_CONTEXT $nonce — untrusted>>>
@@ -205,6 +273,50 @@ senti_untrusted_ctx() {
   printf '%s' "$out"
 }
 
+# ── Screenshot downscale at key-down ────────────────────────────────────────────────
+# Prompt mode's screenshot is taken at key-DOWN (senti.lua snapAndCapture), but the sips
+# downscale used to run after key-up, inside senti-vision.sh: 0.08 s of the user's wait,
+# the largest local step left on that path (measured 14 Nov 2026). The prefetch now does it
+# while the user is still speaking, with exactly the same sips command, so the JPEG that is
+# sent is byte for byte the one key-up would have made. It is used only when the screenshot
+# at key-up is the very file that was downscaled: senti_shot_sig (inode, size, mtime to the
+# nanosecond, and the target size) must match, else senti-vision.sh downscales as before.
+# Files: ctx-shot.jpg and ctx-shot.sig, under the ctx- prefix (and .jpg) that the cache
+# sweep removes at the end of every turn.
+senti_shot_sig() { /usr/bin/stat -f '%i %z %Fm' "$1" 2>/dev/null && printf ' %s' "${WF_SHOT_PX:-1536}"; }
+senti_shot_prefetch() {
+  local run="${WF_RUN:-$HOME/.cache/senti}" shot a b i tmp line
+  shot="$run/screen.png"
+  # "Use a screenshot in Prompt" off (ui.pref prompt_screen=0): no capture is coming.
+  if [ -f "$HOME/.config/senti/ui.pref" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ "$line" = "prompt_screen=0" ] && return 0
+    done < "$HOME/.config/senti/ui.pref"
+  fi
+  # screencapture starts at the same key-down and takes about 0.2 s: wait up to 1.5 s.
+  i=0
+  while [ ! -s "$shot" ]; do
+    i=$((i+1)); [ "$i" -gt 30 ] && return 0
+    /bin/sleep 0.05
+  done
+  # Wait until the file stops changing, so a capture still being written is not used.
+  a="$(senti_shot_sig "$shot")"; i=0
+  while :; do
+    /bin/sleep 0.05; b="$(senti_shot_sig "$shot")"
+    [ -n "$a" ] && [ "$a" = "$b" ] && break
+    a="$b"; i=$((i+1)); [ "$i" -gt 20 ] && return 0
+  done
+  tmp="$( umask 077; /usr/bin/mktemp "$run/ctx-shot.XXXXXX" 2>/dev/null )" || return 0
+  if /usr/bin/sips -Z "${WF_SHOT_PX:-1536}" -s format jpeg "$shot" --out "$tmp" >/dev/null 2>&1 \
+     && [ -s "$tmp" ] && [ "$(senti_shot_sig "$shot")" = "$a" ]; then
+    chmod 600 "$tmp" 2>/dev/null
+    mv -f "$tmp" "$run/ctx-shot.jpg" && ( umask 077; printf '%s' "$a" > "$run/ctx-shot.sig" )
+  else
+    rm -f "$tmp"
+  fi
+  return 0
+}
+
 # ── Prefetch entry point ─────────────────────────────────────────────────────────────
 # Executed directly (not sourced) → warm both halves and exit. senti.lua fires this at
 # key-DOWN for prompt mode. The standard BASH_SOURCE/$0 idiom is used rather than an
@@ -221,4 +333,15 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # local work only: nothing is sent until a heavy turn's request (senti_ctx_for_intent).
   senti_prompt_craft  >/dev/null 2>&1
   senti_untrusted_ctx >/dev/null 2>&1
+  senti_shot_prefetch >/dev/null 2>&1
+  # Expire Notion digests past their TTL now, not at the next 30-minute session sweep.
+  # Local only: key-down never reads Notion itself (that happens on heavy turns only).
+  if [ -d "${WF_RUN:-$HOME/.cache/senti}/brain" ]; then
+    _nt="${WF_NOTION_TTL_MIN:-10}"; case "$_nt" in ''|*[!0-9]*) _nt=10 ;; esac
+    if [ "${WF_BRAIN_NOTION:-0}" = "1" ] && [ "$_nt" -gt 0 ]; then
+      /usr/bin/find "${WF_RUN:-$HOME/.cache/senti}/brain" -maxdepth 1 -type f -name 'notion-*.txt' -mmin "+$_nt" -delete 2>/dev/null
+    else
+      /usr/bin/find "${WF_RUN:-$HOME/.cache/senti}/brain" -maxdepth 1 -type f -name 'notion-*.txt' -delete 2>/dev/null
+    fi
+  fi
 fi
