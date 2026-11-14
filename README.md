@@ -107,7 +107,9 @@ What `install.sh` does, in order:
    first saved as `init.lua.pre-senti.<date>-<time>` in the same folder.
 5. Installs a LaunchAgent (`io.senti.server`) that keeps the speech server running on `127.0.0.1`,
    and `~/Applications/Senti.app`, a menu-bar launcher.
-6. Offers to add an AI key (see below) when none is stored yet. This step is skipped with `--yes`.
+6. Moves a key file left by an older install into the Keychain (`senti-key.sh migrate`; the file is
+   deleted only after the Keychain copy reads back the same). Then it offers to add an AI key (see
+   below) when none is stored yet. The offer is skipped with `--yes`; the move is not.
 
 `./install.sh --yes` installs missing pieces without asking. Running it again later updates Senti.
 When a release changes the config schema (1.1 does: v8 to v9), `install.sh` saves your old file as
