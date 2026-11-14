@@ -20,7 +20,7 @@ This repository is the source. `./install.sh` copies it into place:
 Edit files here, then run `./install.sh` again. Don't edit the installed copies: the next install
 overwrites the scripts and `init.lua`. `replacements.txt`, `brain-map.txt` and `eval/cases.txt` are
 installed only when missing, so your local tuning survives. `config.sh` is installed when missing,
-and also when a release changes the config schema (1.1 does: v8 to v9): `install.sh` then saves the
+and also when a release changes the config schema (1.1 does: v8 to v10): `install.sh` then saves the
 old file as `config.sh.v<N>.bak` and installs the new one, and you copy your personal settings back
 from it. If you change the schema, bump `WF_CONFIG_VERSION` in `config.sh`.
 

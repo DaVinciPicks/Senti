@@ -161,8 +161,10 @@ WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 # WF_BRAIN_MAX=700                            # digest cap, chars
 # Retrieval, also off by default: on a heavy turn, add ONE more note from the same project
 # folder, the best keyword match (SQLite FTS5, in memory, nothing stored) for what you said,
-# capped at WF_BRAIN_MAX like the main note. Needs WF_BRAIN=1. It found the right note for 8
-# of 8 test requests on a synthetic vault; whether it makes prompts better is not proven.
+# capped at WF_BRAIN_MAX like the main note. Needs WF_BRAIN=1. On a synthetic vault it found
+# the right note for 8 of 8 test requests and put a note fact into 28 of 33 prompts, but an A/B
+# judge that does not see the notes preferred prompts without it (W-L-T 2-29-5 against 11-17-8
+# for base against itself, 14 Nov 2026), so it stays off.
 # WF_BRAIN_RETRIEVE=1
 # WF_BRAIN_RETRIEVE_MIN=3                     # bm25 score a note needs to be added (higher = stricter)
 

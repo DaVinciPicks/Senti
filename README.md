@@ -40,8 +40,9 @@ at your cursor.
   are 4 separate contexts. Open a turn with **"think hard"** or **"today let's work on"** and Senti
   adds the window title's project and task and your recent turns in that window. Every other turn
   stays lean and sends none of that.
-- **It can use your notes, if you turn that on.** If you keep an Obsidian vault, a heavy turn can add
-  a short digest of the note for the project you are in. See [Your notes](#your-notes-if-you-want-them).
+- **It can use your notes, if you turn that on.** If you keep an Obsidian vault or Notion pages, a
+  heavy turn can add a short digest of your notes for the project you are in. See
+  [Second brain](#second-brain).
 
 Every AI mode also gets `prompts/operating.md` prepended, a short set of rules that keeps the output
 brief.
@@ -70,8 +71,9 @@ from letting go of the key until the text is ready to paste:
   release's speedups.
 
 A prompt rewrite with `gpt-6-luna` took about 2 seconds without a screenshot (median of 5 runs). With
-a screenshot it took 2.3 to 3.6 seconds (median 2.6, 3 runs with a synthetic screenshot, measured
-before this release's changes). Almost all of that is the AI model's own time.
+a screenshot it took 1.9 to 3.1 seconds (median 2.5, 15 runs with a synthetic screenshot, 14 November
+2026). Almost all of that is the AI model's own time. The screenshot is now shrunk while you are still
+speaking, which took about 0.07 seconds off Senti's own work after you let go of the key.
 
 The speech model stays loaded so dictation starts fast. On the same Mac the speech server used about
 716 MB of memory with the default model (`footprint`, 13 November 2026).
@@ -241,23 +243,54 @@ Models and prices change. To check whether your key can use a model right now:
 bash ~/.config/senti/senti-key.sh test openai --model gpt-6.1-terra   # look for "model_listed":true
 ```
 
-## Your notes, if you want them
+## Second brain
 
-This is off unless you turn it on. If you keep an Obsidian vault, a heavy Prompt turn (one that
-opens with "think hard" or "today let's work on") can add a short digest of your note for the project
-you are in. Senti reads only the folders you list (so don't list one that holds notes about
-people), and sends the note's `## Senti` section if it has one, otherwise its `## For future Claude` section, otherwise its first 10 lines,
-capped at 700 bytes.
-Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
-Each digest that joins a request is written to the log. To turn it on, add
-to `~/.config/senti/config.sh`:
+Prompt mode can ground a heavy turn (one that opens with "think hard" or "today let's work on") in
+your own notes. There are 2 sources, Obsidian and Notion. Both are off until you turn them on, and you
+can use either or both. No other turn sends anything from your notes.
+
+**Obsidian.** Senti reads only the vault folders you list, so don't list one that holds notes about
+people. It picks the note for the project in the window title and sends its `## Senti` section if it
+has one, otherwise its `## For future Claude` section, otherwise its first 10 lines, capped at 700
+bytes. Notes and folders that resolve outside the listed folders, including through symlinks, are
+ignored. Add to `~/.config/senti/config.sh`:
 
 ```bash
 WF_BRAIN=1
 WF_BRAIN_DIRS=$'Projects\nWork'   # vault folders Senti may read, one per line
 ```
 
-To see what would be sent, without sending it: `bash ~/.config/senti/senti-brain.sh --preview <project>`.
+`WF_BRAIN_RETRIEVE=1` also adds one more note from the same project folder: the one whose words best
+match what you said, found by a keyword search on your Mac (nothing is indexed to disk), capped at
+700 bytes. It is off by default. On 12 test requests over a sample vault it put a fact from the
+right note into 28 of 33 prompts (3 of 33 without it), but a judge that compares prompts without
+seeing the notes preferred the prompts without it: 2 wins, 29 losses, 5 ties, against 11 wins, 17
+losses and 8 ties for the same setup compared with itself.
+
+**Notion.** Senti reads only the pages you map to a project, and a Notion connection can only read
+pages you shared with it.
+
+1. In Notion's Developer portal, create an internal connection for your workspace and give it read
+   access to content. Copy its API token from the Configuration tab. (A personal access token also
+   works, but it can read every page you can, so an internal connection is the safer choice.)
+2. Share each page with it: on the page, open the ••• menu, choose Connections, then + Add connection.
+3. Store the token in your macOS Keychain. Senti asks for it with the input hidden:
+   `bash ~/.config/senti/senti-key.sh set notion`
+4. Map the page to a project in `~/.config/senti/brain-map.txt`, one line per project:
+   `myproject|notion:https://www.notion.so/My-Page-0123456789abcdef0123456789abcdef`
+5. Turn it on in `~/.config/senti/config.sh`: `WF_BRAIN_NOTION=1`
+
+On a heavy turn in a mapped project, Senti reads the page from Notion after you stop speaking. That
+request carries the page id and your token, nothing from your speech or window title, and Senti never
+uses Notion's search. The page goes through the same rules as an Obsidian note (a heading named Senti
+wins), and the result is kept for 10 minutes so the next heavy turn does not wait. A read that fails
+or takes longer than 2.5 seconds sends nothing from Notion.
+
+**What leaves your Mac.** Each digest goes to your AI provider inside that heavy turn's request,
+marked as reference data. The log records each one as a count, for example
+`sent: vault 'Note.md' 412 chars` or `sent: notion 'Notion page 1a2b3c4d' 380 chars`. To see what would
+be sent, without sending anything to your AI provider: `bash ~/.config/senti/senti-brain.sh --preview <project>`
+(this reads the mapped Notion page from Notion).
 
 ## Privacy and security
 
@@ -316,7 +349,7 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
    context/prompt+screen ─▶ senti-vision.sh ─▶ senti-ai.sh (with a downscaled screenshot)
    prompt mode also ─▶ senti-target.sh (which model you are pasting into)
                    ├─▶ senti-session.sh (this window's recent turns, heavy turns only)
-                   └─▶ senti-brain.sh  (your Obsidian note for this project, if on)
+                   └─▶ senti-brain.sh  (your Obsidian note and Notion page for this project, if on)
 ```
 
 - `senti-serve.sh`: the warm whisper.cpp server (launchd `io.senti.server`).
@@ -337,7 +370,8 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 ## Config
 
 `~/.config/senti/config.sh` holds the settings: language (`WF_LANG`), efforts (`WF_EFFORT`,
-`WF_VISION_EFFORT`), screenshot size (`WF_SHOT_PX`) and the notes bridge (`WF_BRAIN`). 2 more are read
+`WF_VISION_EFFORT`), screenshot size (`WF_SHOT_PX`) and the notes sources (`WF_BRAIN`,
+`WF_BRAIN_RETRIEVE`, `WF_BRAIN_NOTION`). 2 more are read
 from it but have no line there until you add one: the silence threshold (`WF_SILENCE_THOLD`, default
 0.005) and the operating layer (`WF_OPERATING_LAYER=0` turns it off). Edit
 `replacements.txt` for vocabulary fixes (for example "cloud md" to `CLAUDE.md`) and

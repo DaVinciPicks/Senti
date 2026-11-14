@@ -36,9 +36,11 @@ port to the network: the speech server listens on `127.0.0.1` only.
 Each line names the code that does it, so you can check it.
 
 - **Nothing sensitive on a command line.** Your speech, the system prompt (it can hold your session
-  history and notes digest), window titles and API keys travel between Hammerspoon, the scripts and
-  Python in environment variables, never in argv (`senti.lua`, `wf.runScript`; `senti-ai.sh`, the
-  `SENTI_*` variables passed to Python). When `senti-target.sh` looks for the Claude Code session
+  history and notes digest), window titles, API keys and the Notion token travel between Hammerspoon,
+  the scripts and Python in environment variables, never in argv (`senti.lua`, `wf.runScript`;
+  `senti-ai.sh`, the `SENTI_*` variables passed to Python). The retrieval query (what you said) reaches
+  its Python ranker in `SENTI_Q`, and note paths and digests reach it on standard input
+  (`senti-brain.sh`). When `senti-target.sh` looks for the Claude Code session
   file of the project named in the window title, it matches file names with a bash glob loop inside
   the shell, so window titles never go on a command line. The self-test runs canary strings through
   these paths and fails if one shows up in a `ps` snapshot (`senti-selftest.sh`).
@@ -48,8 +50,11 @@ Each line names the code that does it, so you can check it.
   key is encrypted on disk and Senti sends it only to that provider. Programs running as you can
   still read it. When the Keychain is locked or unavailable, the key falls back to a file at
   `~/.config/senti/<provider>-key`, mode 600, inside a mode 700 folder. That file is plain text.
-- **No redirects with a key.** Requests that carry a key refuse HTTP redirects, so the key never
-  follows a redirect to another host (`senti-ai.sh`, `senti-key.sh`, class `NoRedirect`).
+  The Notion token is stored the same way (account `notion`, fallback file `notion-key`) and is sent
+  only to `api.notion.com`. It is not an AI provider: provider resolution, `use` and `test` refuse it.
+- **No redirects with a key.** Requests that carry a key or the Notion token refuse HTTP redirects,
+  so a credential never follows a redirect to another host (`senti-ai.sh`, `senti-key.sh`,
+  `senti-brain.sh`, class `NoRedirect`).
 - **Prompt-injection fence.** Untrusted text (the window title, session history, your notes digest,
   the text you selected) goes in the user message inside a fenced block with a random marker, made new each time the context is prepared.
   The model is told the block is data and never instructions, and the fence brackets are stripped
@@ -62,21 +67,34 @@ Each line names the code that does it, so you can check it.
   Lua inside Hammerspoon, which holds the Accessibility, Microphone and Screen Recording permissions.
   Senti loads it only when `~/.cache/senti/allow-ipc` exists, for debugging (`senti.lua`, top of
   file).
-- **Short life for sensitive files.** Audio, screenshots, selected text and prepared prompt context
-  in `~/.cache/senti` are deleted by name pattern at the end of every turn, when Senti starts, and
-  every 60 seconds while it is idle (`senti.lua`, `wf.sweepSensitive` and `wf.sweepCache`). Same-user
-  code can read them while they exist, so the defence is how short that time is.
+- **Short life for sensitive files.** Audio, screenshots (including the copy shrunk at key-down,
+  `ctx-shot.jpg`), selected text and prepared prompt context in `~/.cache/senti` are deleted by name
+  pattern at the end of every turn, when Senti starts, and every 60 seconds while it is idle
+  (`senti.lua`, `wf.sweepSensitive` and `wf.sweepCache`). Same-user code can read them while they
+  exist, so the defence is how short that time is.
 - **The log holds no speech.** `~/Library/Logs/senti.log` is mode 600 and records character counts,
   not transcripts or window titles. Full text is logged only if you set `WF_DEBUG=1`
   (`senti-dictate.sh`). API error lines are scrubbed of anything shaped like a key (`senti-ai.sh`,
   `scrub`).
-- **Notes have one gate.** When the notes feature is on, every path that sends note text goes
-  through `brain_digest()` in `senti-brain.sh`, which takes only the `## Senti` section (or a capped
-  fallback) and never a whole note. It searches only the folders you list in `WF_BRAIN_DIRS`, and
-  checks every note and folder by its resolved real path against those folders.
-  Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
-  The log says "ignored (outside the allowlist)" when that happens. The bridge is off unless
-  `WF_BRAIN=1`.
+- **Notes have one gate.** When a notes source is on, every path that sends note text goes through
+  `brain_digest()` in `senti-brain.sh`, which takes only the `Senti` section (or a capped fallback)
+  and never a whole note: Obsidian notes, the retrieved note and Notion pages alike. It searches only
+  the folders you list in `WF_BRAIN_DIRS`, and checks every note and folder by its resolved real path
+  against those folders. Notes and folders that resolve outside the listed folders, including through
+  symlinks, are ignored. The log says "ignored (outside the allowlist)" when that happens. The bridge
+  is off unless `WF_BRAIN=1`.
+- **Retrieval stays in the project.** With `WF_BRAIN_RETRIEVE=1`, the in-memory index holds what the
+  gate would send for each listed note, never a raw body, and nothing is written to disk. Only a note
+  inside the matched project's folder can be picked, which Python and then the shell each check
+  against the resolved listed folders; symlinks, hidden folders and anything under `People/` are never
+  indexed. Every query word is quoted, so search operators in speech are never parsed.
+- **Notion reads are scoped and bounded.** Senti reads only pages mapped in `brain-map.txt`. The
+  request path is built from the page id's 32 hex characters alone, the search endpoint is never
+  called, and `WF_NOTION_API` (for tests) accepts only `api.notion.com` or a loopback address. One
+  deadline (`WF_NOTION_TIMEOUT`, at most 3 seconds) covers the whole read; a failure sends nothing and
+  logs a reason, never page text. Reads happen only on heavy turns, after transcription. Only the
+  gated digest is cached (`~/.cache/senti/brain/notion-<id>.txt`, mode 600) and it expires after
+  `WF_NOTION_TTL_MIN` minutes.
 - **Checked model download.** `install.sh` checks the default speech model against its published
   SHA-256 and deletes a download that does not match.
 
@@ -93,6 +111,9 @@ Each line names the code that does it, so you can check it.
   sent instead (`senti-vision.sh`).
 - **The optional Fast model download has no checksum.** The `curl` line in the README for
   `ggml-base.en.bin` does not verify the file.
+- **A Notion digest lives on disk for a while.** It is reused for `WF_NOTION_TTL_MIN` (10) minutes so
+  heavy turns do not wait on Notion, and deleted at the next read, the next Prompt key press or the
+  session sweep (at launch and every 30 minutes) after that. It holds only what the gate allows.
 
 ## Supply chain
 
@@ -101,12 +122,14 @@ Each line names the code that does it, so you can check it.
 - The default speech model comes from Hugging Face and is checked against a SHA-256 in `install.sh`.
 - At run time Senti calls only the AI provider you chose: when you use an AI mode, and when it checks
   a key (`senti-key.sh test`), which reads the provider's free model or key list. The self-test and
-  the eval scripts call the same provider when you run them.
+  the eval scripts call the same provider when you run them. With the Notion source on, it also calls
+  `api.notion.com` to read the pages you mapped, on heavy Prompt turns and in `--preview`.
 
 ## Scope
 
-In scope: a key or speech reaching a command line, a log, a file that outlives its turn, or a host
-other than your chosen provider; injection that changes what Senti types; a cache file that the sweep
+In scope: a key, the Notion token or speech reaching a command line, a log, a file that outlives its
+turn, or a host other than your chosen provider (or `api.notion.com` for the Notion token); note text
+that skips the gate or comes from outside your listed folders or mapped pages; injection that changes what Senti types; a cache file that the sweep
 misses.
 
 Out of scope: an attacker who already runs code as your macOS user; physical access to a Mac that is
