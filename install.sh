@@ -122,15 +122,17 @@ done
 # --------------------------------------------------------------------------------
 
 mkdir -p "$CFG" "$HOME/.cache/senti" "$HOME/Library/Logs" "$LA" "$HOME/Applications"
-# ~/.config/senti holds the API key (600) plus your dictionary, vault map, and prompt
-# KB. Tighten the dir itself to 700 so nothing here is world-readable — defense in
-# depth even though the key file is already 600.
+# ~/.config/senti holds your dictionary, vault map, prompt KB, ai.pref and (only where the
+# Keychain is unavailable) a mode-600 key file. Tighten the dir itself to 700 so nothing
+# here is world-readable.
 chmod 700 "$CFG" "$HOME/.cache/senti" 2>/dev/null || true
 
 echo "→ scripts, config, dictionary, prompts"
 # Scripts are code — always update.
 cp "$HERE"/senti-*.sh "$CFG"/
 chmod +x "$CFG"/senti-*.sh
+# The model registry (providers, models, prices, allowed efforts) — code, always update.
+cp "$HERE/ai-models.json" "$CFG/"
 mkdir -p "$CFG/prompts"; cp "$HERE"/prompts/*.md "$CFG/prompts/" 2>/dev/null || true
 # Model-aware prompting knowledge base — code, always update.
 mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/models/" 2>/dev/null || true
@@ -140,7 +142,7 @@ mkdir -p "$CFG/prompts/models"; cp "$HERE"/prompts/models/*.md "$CFG/prompts/mod
 # Check the SOURCE, not the deployed copy: the previous install's files would keep
 # this check quiet while KB updates stop.
 if [ ! -f "$HERE/prompts/models/_techniques.md" ]; then
-  echo "  ! no prompting knowledge base in $HERE/prompts — AI modes will run WITHOUT model guidance."
+  echo "  ! no prompting knowledge base in $HERE/prompts, so AI modes will run without model guidance."
 fi
 # Eval cases are user-tunable — install only if missing.
 mkdir -p "$CFG/eval"; [ -f "$CFG/eval/cases.txt" ] || cp "$HERE/eval/cases.txt" "$CFG/eval/" 2>/dev/null || true
@@ -168,7 +170,7 @@ else
     cp "$CFG/config.sh" "$CFG/config.sh.v$HAVE.bak"
     cp "$HERE/config.sh" "$CFG/config.sh"
     echo "  ! config.sh schema v$HAVE → v$WANT: yours saved to config.sh.v$HAVE.bak"
-    echo "    (re-apply any personal tuning from the .bak — model IDs are no longer set there)"
+    echo "    Copy your personal settings back from the .bak. Model IDs are no longer set there."
   fi
 fi
 
@@ -181,9 +183,10 @@ echo "→ microphone-permission helper (Swift/AVFoundation)"
 if /usr/bin/xcode-select -p >/dev/null 2>&1 && command -v swiftc >/dev/null 2>&1; then
   swiftc -O "$HERE/senti-mic-auth.swift" -o "$CFG/senti-mic-auth" \
     -framework AVFoundation -framework Foundation \
-    || echo "  warning: mic helper failed to build — permission prompts will not appear"
+    || echo "  warning: the microphone helper failed to build, so the Microphone permission prompt cannot appear"
 else
-  echo "  warning: swiftc not found (install Xcode CLT) — mic helper not built"
+  echo "  warning: swiftc not found, so the microphone helper was not built and the Microphone permission prompt cannot appear."
+  echo "    Install the Xcode Command Line Tools (xcode-select --install), then run install.sh again."
 fi
 
 echo "→ Hammerspoon config"
@@ -202,7 +205,7 @@ echo "→ warm-whisper launchd service"
 launchctl unload "$LA/io.senti.server.plist" 2>/dev/null || true
 sed "s|__HOME__|$HOME|g" "$HERE/io.senti.server.plist" > "$LA/io.senti.server.plist"
 launchctl load "$LA/io.senti.server.plist" \
-  || echo "  ! launchctl load failed — run: launchctl bootstrap gui/$(id -u) $LA/io.senti.server.plist"
+  || echo "  ! launchctl load failed. Run: launchctl bootstrap gui/$(id -u) $LA/io.senti.server.plist"
 
 echo "→ icons (vector → resvg → iconutil)"
 bash "$HERE/app/make-icon.sh"
@@ -230,8 +233,41 @@ if [ -d "$DESKAPP" ] || [ -d "$OLDDESKAPP" ]; then
   echo "  ✓ Desktop copy refreshed"
 fi
 
+echo "→ AI provider key (optional: dictation never needs one)"
+# Keys live in the macOS Keychain (service io.senti). An older install kept the key in
+# ~/.config/senti/<provider>-key: move it across. The plaintext file is deleted only after
+# the Keychain copy reads back byte for byte; on any failure the file stays and still works.
+bash "$CFG/senti-key.sh" migrate || true
+HAS_KEY=0
+bash "$CFG/senti-key.sh" status --json 2>/dev/null | /usr/bin/grep -q '"present":true' && HAS_KEY=1
+# Offered only on a terminal and never with --yes: a scripted install must not stop to ask.
+# senti-key.sh reads the key from a hidden prompt (read -s), so it never reaches shell
+# history, a command line or the screen.
+if [ "$HAS_KEY" = 0 ] && [ "$ASSUME_YES" = 0 ] && [ -t 0 ]; then
+  echo "    Prompt, Command and Context modes send text to an AI provider with your own key."
+  echo "    1) OpenAI   2) Anthropic (Claude, new)   3) OpenRouter (new)   Return) skip"
+  printf '  Which provider? '; read -r KCHOICE || KCHOICE=""
+  case "$KCHOICE" in 1) KPROV=openai ;; 2) KPROV=anthropic ;; 3) KPROV=openrouter ;; *) KPROV="" ;; esac
+  if [ -n "$KPROV" ]; then
+    if bash "$CFG/senti-key.sh" set "$KPROV"; then KRC=0; else KRC=$?; fi
+    if [ "$KRC" = 0 ] || [ "$KRC" = 19 ]; then
+      HAS_KEY=1
+      bash "$CFG/senti-key.sh" use "$KPROV" >/dev/null || true
+      bash "$CFG/senti-key.sh" test "$KPROV" || echo "  ! the key could not be verified now; Senti will still try it"
+    fi
+  fi
+fi
+
 echo ""
 echo "✅ Senti installed."
-echo "   1) Open Hammerspoon (or run: open -a Hammerspoon) — grant Accessibility if asked."
+echo "   1) Open Hammerspoon (or run: open -a Hammerspoon) and grant Accessibility if asked."
 echo "   2) Menu bar icon → Grant / test microphone → click Allow."
-echo "   3) Hold right ⌥ and speak. AI modes need an OpenAI key at $CFG/openai-key."
+echo "   3) Hold right ⌥ and speak."
+if [ "$HAS_KEY" = 1 ]; then
+  echo "   AI key: stored. Check it with: bash ~/.config/senti/senti-key.sh status"
+else
+  echo "   AI modes are optional. Add a key any time (it is typed into a hidden prompt and"
+  echo "   stored in your macOS Keychain): bash ~/.config/senti/senti-key.sh set openai"
+  echo "   (or anthropic, or openrouter)."
+fi
+echo "   To remove Senti later: ./uninstall.sh"

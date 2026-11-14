@@ -1,226 +1,347 @@
 <p align="center">
-  <img src="assets/senti-icon.png" width="160" alt="Senti logo: a white ribbon S on a blue circle">
+  <img src="assets/senti-icon.png" width="160" alt="Senti logo: a geometric white S on a blue circle">
 </p>
 
 <h1 align="center">Senti</h1>
 
-<p align="center">Free, local speech-to-text for macOS. Hold a key, speak, and your words are typed
-into whatever app you're in. Audio never leaves your Mac.</p>
+<p align="center"><b>Say a rough idea. Paste a clear prompt.</b><br>
+Free, local speech-to-text for macOS.</p>
 
 <p align="center"><a href="https://usesenti.io">usesenti.io</a></p>
 
+<p align="center"><a href="https://github.com/Leonardo-Engineering/Senti/actions/workflows/ci.yml"><img src="https://github.com/Leonardo-Engineering/Senti/actions/workflows/ci.yml/badge.svg" alt="CI status"></a></p>
+
+Hold a key and speak. Senti types what you said into the app you are in, or turns a rough spoken
+idea into a prompt written for the AI model you are about to paste it into. Dictation runs on your
+Mac and your audio never leaves it.
+
+Senti is free and MIT licensed, with no account.
+
 *Senti* is Italian for "listen."
 
-I built it because I wanted to speak naturally, keep audio processing local, improve my prompts,
-and work inside the applications I already use. I also wanted to avoid another subscription.
+## Prompt mode: a prompt written for where it is going
 
-## Why
+Hold right ⌘, say what you want in your own words, and let go. Senti writes a prompt and pastes it
+at your cursor.
 
-Transcription runs on a local [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server bound to
-`127.0.0.1`, so your voice never touches the network. The model stays loaded in memory, which is why
-dictation comes back in about 0.2 to 0.8 seconds. While you aren't speaking, Senti uses almost no
-CPU.
+- **It writes for the model in front of you.** Ask for the same thing in Claude and in ChatGPT and
+  you get 2 different prompts. Each follows that model maker's own guidance. The Claude guidance, for
+  example, asks for XML tags when a prompt mixes instructions, context and examples; the OpenAI
+  guidance asks for a lean prompt with no hand-written "think step by step". The guidance lives in
+  `prompts/models/*.md`, distilled from 90 linked sources across OpenAI, Anthropic, Google,
+  open-weight models and prompting research. Edit those files and the behavior changes.
+- **It knows where you are.** Senti reads the name of the app in front and its window title, and in
+  a Claude Code terminal it reads the model name from Claude Code's own session file. All of this is
+  local and costs no extra API call.
+- **It can see your screen.** With **Use a screenshot in Prompt** on (the default), Prompt mode also
+  sends a downscaled screenshot so the prompt fits what you are working on. Turn it off in the menu
+  bar for text only.
+- **It remembers each window, when you ask it to.** A session is a window, so 4 Claude Code terminals
+  are 4 separate contexts. Open a turn with **"think hard"** or **"today let's work on"** and Senti
+  adds the window title's project and task and your recent turns in that window. Every other turn
+  stays lean and sends none of that.
+- **It can use your notes, if you turn that on.** If you keep an Obsidian vault, a heavy turn can add
+  a short digest of the note for the project you are in. See [Your notes](#your-notes-if-you-want-them).
 
-Dictation is free. The optional AI modes call `gpt-6-luna` ($0.10 / $0.50 per million tokens) with
-your own key. A prompt rewrite takes about 2 seconds and costs a fraction of a cent. Stronger models
-are listed under [Bring your own AI](#bring-your-own-ai).
+Every AI mode also gets `prompts/operating.md` prepended, a short set of rules that keeps the output
+brief.
 
 ## Modes
 
 | Gesture | Mode | What it does |
 |---|---|---|
 | Hold **right ⌥** | **Dictate** | Types exactly what you say. Fully local. |
-| Hold **right ⌘** | **Prompt** | Turns a rough spoken idea into a prompt written for the model you're about to paste into. Reads a screenshot for context, and falls back to text only if Screen Recording isn't granted. |
-| Hold **Fn** | **Command** | Transforms your selected text by voice ("make this a bullet list", "fix grammar"). With no selection, it writes at the cursor. |
+| Hold **right ⌘** | **Prompt** | Turns a rough spoken idea into a prompt for the model you are about to paste into. Adds a screenshot when that setting is on and Hammerspoon has Screen Recording permission; otherwise text only. |
+| Hold **Fn** | **Command** | Transforms the text you selected by voice ("make this a bullet list", "fix the grammar"). Sends your words and the selection. With no selection, it writes at the cursor. |
 | **⌃⌥V** | **Context** | Takes a screenshot plus your instruction, then drafts a reply, edit or answer at the cursor. |
 | `⌃⌥D` / `⌃⌥P` / `⌃⌥C` | Toggles | Hands-free versions of Dictate, Prompt and Command. |
 
-A small pill at the bottom of the screen shows a live waveform while you speak, then disappears.
-The AI modes add their name to it. The menu-bar icon controls speed (Fast or Accurate),
-permissions and engine restart.
+Press Esc while the pill is showing to cancel. A small pill at the bottom of the screen shows your
+live microphone level while you speak, then disappears. The menu-bar icon holds the speed setting
+(Fast or Accurate), the AI provider and key, the model picker, permissions and an engine restart.
 
-### Privacy
+## Speed
 
-Dictation is fully local. Audio is transcribed by a whisper.cpp server bound to `127.0.0.1` and
-never leaves the Mac.
+Measured on an M3 Pro on 13 November 2026, with recorded clips on the default (Accurate) speech model,
+from letting go of the key until the text is ready to paste:
 
-The AI modes (Prompt, Command, Context) send text to the configured API. When screen context is
-on, they also send a downscaled screenshot. They run only when you press their key, never in the
-background.
+- about 0.5 to 0.6 seconds for a dictation under 14 seconds, and about 1 to 1.1 seconds for a longer one;
+- on the Fast model (`base.en`), 0.2 to 0.4 seconds in the same day's tests, measured before this
+  release's speedups.
 
-Senti never puts your speech on a command line. Text moves between components through the
-environment, because `ps` is readable by every process on the machine. The self-test checks this
-with a canary on every run.
+A prompt rewrite with `gpt-6-luna` took about 2 seconds without a screenshot (median of 5 runs). With
+a screenshot it took 2.3 to 3.6 seconds (median 2.6, 3 runs with a synthetic screenshot, measured
+before this release's changes). Almost all of that is the AI model's own time.
 
-### Security
-
-- The `hs` command-line bridge, which would let any process on your Mac run code inside Senti, is off by default.
-- Untrusted text, including a browser tab's title, is passed to the AI as fenced data it must never obey.
-- The AI's output is only ever typed, never run.
-- Your notes are never read unless you turn the notes feature on and list the folders it may use. Even then only a short, capped digest leaves the Mac, and each one is logged.
-- The log stores no transcripts. Audio and screenshots are deleted when each turn ends, including when it fails, with a 60-second backstop.
-
-## Features
-
-### Formatting
-
-Senti strips filler words (um, uh), fixes capitalization, and applies your own dictionary from
-`replacements.txt`. Mine turns "cloud md" into `CLAUDE.md`. You can switch between two speech
-models from the menu bar: base.en answers in about 0.3 seconds, and large-v3-turbo is slower but
-better with proper nouns.
-
-### Prompts written for the model you're using
-
-Senti notices which app is in front and writes the prompt for the model you're about to paste into.
-Ask for the same thing in Claude and in ChatGPT and you get two different prompts. The Claude one
-uses XML tags and states scope explicitly. The ChatGPT one is shorter and tells the model to make
-its own assumptions and keep going. The guidance lives in `prompts/models/*.md`, which I distilled
-from about 90 sources across OpenAI, Anthropic, Google, open-weight models and prompting research.
-Edit those files and the behavior changes. Detection reads the frontmost app's name on your Mac, so
-it costs no extra API call.
-
-Every AI mode also gets `prompts/operating.md` prepended, a short set of rules that keeps the
-output brief.
-
-### Memory per window
-
-If you run several terminals at once, Senti keeps them apart. A session is a window, so four Claude
-Code terminals are four separate contexts. It reads the project and the current task from the window
-title. Say "now do the same for the download one" in two terminals and each resolves it against its
-own history. This uses no screenshots and no extra API call.
-
-### Your notes, if you want them
-
-This is off unless you turn it on. If you keep an Obsidian vault, Prompt mode can add a short
-digest of your note for the project you're in, so the prompt reflects what the project is.
-It reads only the folders you list (never `People/`), the digest has a size cap, and every use
-is logged. A note's `## Senti` section, if it has one, is exactly what Senti may use;
-otherwise it uses the note's first lines. To turn it on, add to `~/.config/senti/config.sh`:
-
-```bash
-WF_BRAIN=1
-WF_BRAIN_DIRS=$'Projects\nWork'   # vault folders Senti may read, one per line
-```
-
-### Housekeeping
-
-`~/.cache/senti` holds the audio of what you just said and a full-resolution picture of your screen.
-Both are deleted when the turn finishes, with a 60-second backstop and a sweep at launch. Session
-notes are readable only by you and expire after 24 hours.
-
-`bash ~/.config/senti/senti-selftest.sh` checks the whole install: the speech engine, the config
-version, key permissions, the icon build, live API latency, session isolation, and a canary that
-proves your dictated text never appears in the process table.
-
-`senti-eval.sh` scores Prompt mode against a fixed set of cases, so a change to the prompt strategy
-can be measured. Results go to `eval/history.csv`.
+The speech model stays loaded so dictation starts fast. On the same Mac the speech server used about
+716 MB of memory with the default model (`footprint`, 13 November 2026).
 
 ## Install
 
-You need a Mac with Apple Silicon (M1 or later) and [Homebrew](https://brew.sh).
+You need:
+
+- a Mac with Apple Silicon (M1 or later). The installer stops on any other Mac;
+- [Homebrew](https://brew.sh);
+- [Hammerspoon](https://www.hammerspoon.org), which Senti runs inside. `install.sh` offers to
+  install it with Homebrew if it is missing;
+- the Xcode Command Line Tools (`xcode-select --install`). They are needed once, to build the helper
+  that shows the Microphone permission prompt; `install.sh` builds it only when they are present;
+- about 0.6 GB of disk for the default speech model (574 MB), plus about 80 MB for the Homebrew
+  packages themselves, not counting libraries they pull in (measured 13 November 2026).
+
+The installer does not check the macOS version. Senti was tested on macOS 27.0.1.
 
 ```bash
 git clone https://github.com/Leonardo-Engineering/Senti.git ~/code/senti
 cd ~/code/senti && ./install.sh
 ```
 
-You can also download the latest release from the
-[Releases page](https://github.com/Leonardo-Engineering/Senti/releases/latest), unzip it, and run
-`./install.sh` from that folder.
+What `install.sh` does, in order:
 
-The installer checks for the tools Senti uses (whisper-cpp, sox, resvg and Hammerspoon) and
-offers to install any that are missing with Homebrew. It then downloads the speech model
-(574 MB) and checks it against its published checksum. Run `./install.sh --yes` to do all of
-that without being asked. Running it again later updates Senti and keeps your settings.
+1. Checks for `whisper-cpp`, `sox`, `resvg` and Hammerspoon, and offers to install any that are
+   missing with Homebrew (`brew install`, and `brew install --cask hammerspoon`).
+2. Downloads the speech model (574 MB) and checks it against its published SHA-256. A download that
+   does not match is deleted.
+3. Copies Senti's scripts and settings to `~/.config/senti`.
+4. **Replaces `~/.hammerspoon/init.lua`** with Senti's. If you already had your own `init.lua`, it is
+   first saved as `init.lua.pre-senti.<date>-<time>` in the same folder.
+5. Installs a LaunchAgent (`io.senti.server`) that keeps the speech server running on `127.0.0.1`,
+   and `~/Applications/Senti.app`, a menu-bar launcher.
+6. Moves a key file left by an older install into the Keychain (`senti-key.sh migrate`; the file is
+   deleted only after the Keychain copy reads back the same). Then it offers to add an AI key (see
+   below) when none is stored yet. The offer is skipped with `--yes`; the move is not.
 
-The Xcode Command Line Tools (`xcode-select --install`) are optional. Senti uses them to
-build a small helper that triggers the microphone permission prompt.
+`./install.sh --yes` installs missing pieces without asking. Running it again later updates Senti.
+When a release changes the config schema (1.1 does: v8 to v9), `install.sh` saves your old file as
+`config.sh.v<N>.bak` and installs the new one; copy your personal settings back from that file.
+Your `replacements.txt`, `brain-map.txt` and eval cases are kept.
 
-For a faster, English-only model (about 0.3 seconds), download it as well and switch from
-the menu bar (Speed, then Fast):
+The [Releases page](https://github.com/Leonardo-Engineering/Senti/releases/latest) has the same
+source. Release 1.0.0 has no attached files. When a release does attach a `SHA256SUMS` file, check
+your download in the folder you saved both files to:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+**Permissions.** Senti runs inside Hammerspoon, so the macOS permission prompts name
+**Hammerspoon**, not Senti:
+
+- **Accessibility** (to see the hold keys and type): usually prompted on first use.
+- **Microphone**: menu-bar icon → *Grant / test microphone* → Allow.
+- **Screen Recording** (only for Context, and for Prompt with screenshots): menu-bar icon → *Grant
+  screen recording*, then relaunch Hammerspoon.
+
+**Fast model (optional).** For a faster, English-only model, download it (148 MB) and switch in the
+menu bar (Speed, then Fast). This download is not checksum-verified:
 
 ```bash
 curl -L -o ~/.local/share/whisper-models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-Grant **Hammerspoon** the macOS permissions it needs:
-- **Accessibility** (to type): usually prompted on first use.
-- **Microphone**: menu-bar icon → *Grant / test microphone* → Allow.
-- **Screen Recording** (only for the Context and screen-aware Prompt modes): menu-bar icon → *Grant screen recording*, then relaunch Hammerspoon.
+## Add an AI key (optional)
 
-The AI modes (Prompt, Command, Context) need your own OpenAI API key. This is optional, and
-dictation works without it:
+Dictation never needs a key. Prompt, Command and Context use your own key for one of the providers
+below. There are 2 safe ways to add it:
+
+- **The panel.** Menu bar → **AI provider and key…**. It opens by itself once, on the first run with
+  no key. Pick a provider, paste the key, and Senti saves it and checks it against the provider's free
+  model or key list.
+- **The terminal.** Run this and paste the key at the hidden prompt:
+
+  ```bash
+  bash ~/.config/senti/senti-key.sh set openai      # or anthropic, or openrouter
+  ```
+
+  The key is read from the prompt or standard input, never from the command line, so it does not
+  land in your shell history or in the process list.
+
+Keys are stored in your macOS Keychain, encrypted on disk. Senti sends a key only to that provider.
+Programs running as your macOS user can still read it. If the Keychain is locked or unavailable,
+Senti saves the key in a mode-600 file under `~/.config/senti` instead and tells you so.
 
 ```bash
-echo "sk-..." > ~/.config/senti/openai-key && chmod 600 ~/.config/senti/openai-key
+bash ~/.config/senti/senti-key.sh status          # which keys exist, last 4 characters only
+bash ~/.config/senti/senti-key.sh test openai     # checks the key with the provider
+bash ~/.config/senti/senti-key.sh clear openai    # removes it
 ```
 
-## Architecture
+Never type or paste a key into a command line (an `echo` into a file, for example): it stays in your
+shell history.
+
+## Bring your own AI
+
+| Provider | Default model | Status |
+|---|---|---|
+| OpenAI | `gpt-6-luna` | Live-tested |
+| Anthropic | `claude-opus-5-5` | New in 1.1, tested offline, live check pending |
+| OpenRouter | `openai/gpt-6-luna` | New in 1.1, tested offline, live check pending |
+
+"Tested offline" means the request shapes and the error handling for a refused key were checked
+without a real key; nobody has run a real request through Anthropic or OpenRouter from Senti yet.
+
+Prices are US dollars per 1 million tokens, from `ai-models.json`. OpenAI prices were checked on
+11 November 2026 on [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing). Anthropic prices
+come from a model table cached 3 November 2026 and read 13 November 2026; they have not been checked
+on Anthropic's pricing page yet. OpenRouter prices come from OpenRouter's
+model list, fetched 13 November 2026.
+
+**OpenAI**
+
+| Model | Use it for | Input | Output |
+|---|---|---|---|
+| `gpt-6-luna` | The default for text and screenshots, and the cheapest | $0.10 | $0.50 |
+| `gpt-6.1-terra` | Trickier prompts and screenshots | $1.00 | $5.00 |
+| `gpt-6.1-sol` | Complex prompts | $2.00 | $10.00 |
+| `gpt-6-astra` | Most capable, highest cost | $10.00 | $50.00 |
+
+**Anthropic** (new in 1.1, live check pending)
+
+| Model | Use it for | Input | Output |
+|---|---|---|---|
+| `claude-opus-5-5` | The default when the provider is Anthropic | $4.00 | $20.00 |
+| `claude-sonnet-5-5` | Claude at a middle price | $2.00 | $10.00 |
+| `claude-haiku-5-5` | Claude at the same price as `gpt-6-luna` (prompts up to 100K tokens) | $0.10 | $0.50 |
+
+**OpenRouter** (new in 1.1, live check pending)
+
+| Model | Use it for | Input | Output |
+|---|---|---|---|
+| `openai/gpt-6-luna` | The default when the provider is OpenRouter | $0.10 | $0.50 |
+| `anthropic/claude-haiku-5.5` | Claude, cheapest | $0.10 | $0.50 |
+| `anthropic/claude-sonnet-5.5` | Claude, middle price | $2.00 | $10.00 |
+| `anthropic/claude-opus-5.5` | Claude, most capable | $4.00 | $20.00 |
+| `google/gemini-3.8-flash` | Google, not yet measured on Senti's eval | $0.825 | $4.125 |
+
+Every OpenRouter request asks OpenRouter to use only model hosts that do not store or train on the
+data (`data_collection: deny`).
+
+**Switching.** Pick a provider and model in the menu bar (**AI → Model**), or run:
+
+```bash
+bash ~/.config/senti/senti-key.sh use openai gpt-6.1-terra
+```
+
+A `WF_AI_PROVIDER`, `WF_TEXT_MODEL` or `WF_VISION_MODEL` line in `~/.config/senti/config.sh`
+outranks the menu choice. They ship commented out; leave them that way unless you want a fixed pin.
+
+Models and prices change. To check whether your key can use a model right now:
+
+```bash
+bash ~/.config/senti/senti-key.sh test openai --model gpt-6.1-terra   # look for "model_listed":true
+```
+
+## Your notes, if you want them
+
+This is off unless you turn it on. If you keep an Obsidian vault, a heavy Prompt turn (one that
+opens with "think hard" or "today let's work on") can add a short digest of your note for the project
+you are in. Senti reads only the folders you list (so don't list one that holds notes about
+people), and sends the note's `## Senti` section if it has one, otherwise its `## For future Claude` section, otherwise its first 10 lines,
+capped at 700 bytes.
+Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
+Each digest that joins a request is written to the log. To turn it on, add
+to `~/.config/senti/config.sh`:
+
+```bash
+WF_BRAIN=1
+WF_BRAIN_DIRS=$'Projects\nWork'   # vault folders Senti may read, one per line
+```
+
+To see what would be sent, without sending it: `bash ~/.config/senti/senti-brain.sh --preview <project>`.
+
+## Privacy and security
+
+- Dictation is fully local. The audio goes to a whisper.cpp server bound to `127.0.0.1`.
+- Prompt, Command and Context send text, and a downscaled screenshot where described above, only to
+  the provider you chose, and only when you press their key. Nothing is uploaded in the background.
+- Menu bar → **AI → What the last AI request sent** shows what the last request carried, as names and
+  character counts.
+- Your speech, the system prompt and your keys never go on a command line, where any process could
+  read them. The self-test checks this with canary strings.
+- Untrusted text, including a browser tab's title, is fenced and marked as data the AI is told not to
+  follow. The AI's output is only ever typed, never run.
+- The `hs` command-line bridge, which would let any process on your Mac run code inside Hammerspoon,
+  is off by default.
+- The log stores counts, not transcripts. Audio and screenshots are deleted when each turn ends, with
+  a 60-second backstop.
+
+[`PRIVACY.md`](PRIVACY.md) lists exactly what leaves your Mac in each mode and what is stored for how
+long. [`SECURITY.md`](SECURITY.md) has the threat model and how to report a problem.
+
+## Uninstall
+
+From your copy of the repository:
+
+```bash
+./uninstall.sh
+```
+
+It lists what it will remove and asks first. Every question defaults to No. It:
+
+- stops and removes the speech server's LaunchAgent;
+- puts back your previous `~/.hammerspoon/init.lua` from the newest `init.lua.pre-senti.*` backup
+  when the current `init.lua` is Senti's, or when there is none.
+  Your current `init.lua` is saved as `init.lua.senti-<date>.bak` before your old one is restored, so edits you made inside Senti's file are kept in that copy.
+  An `init.lua` that no longer contains Senti's code is kept, and the backup's location is printed.
+  With no backup, Senti's `init.lua` is removed;
+- removes `~/Applications/Senti.app` (and a Desktop copy if you made one), `~/.cache/senti` and
+  Senti's logs;
+- asks separately whether to remove `~/.config/senti` together with your keys in the Keychain, and
+  whether to remove the speech models in `~/.local/share/whisper-models` (other tools may use them).
+
+`./uninstall.sh --yes` removes Senti without asking and leaves `~/.config/senti`, your keys and the
+speech models in place.
+`./uninstall.sh --yes --all` removes those too. Homebrew packages are never removed; the last lines
+print the `brew uninstall` command if you want them gone. Hammerspoon keeps running the old config
+until you reload or quit it.
+
+## How it works
 
 ```
 hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT finalizes WAV
                                                               │
         types via ⌘V ◀─ clean/format/dictionary ◀─ whisper-server (127.0.0.1, warm) ◀┘
                                           │
-   prompt/command ─▶ senti-ai.sh   ─▶ gpt-6-luna   [+ operating layer]
-   context/prompt+screen ─▶ senti-vision.sh ─▶ gpt-6-luna (reads a downscaled screenshot)
-   prompt mode also ─▶ senti-target.sh (which model you're pasting into)
-                   ├─▶ senti-session.sh (this window's recent turns)
-                   └─▶ senti-brain.sh  (your Obsidian note for this project)
+   prompt/command ─▶ senti-ai.sh ─▶ your provider (OpenAI, Anthropic or OpenRouter)
+   context/prompt+screen ─▶ senti-vision.sh ─▶ senti-ai.sh (with a downscaled screenshot)
+   prompt mode also ─▶ senti-target.sh (which model you are pasting into)
+                   ├─▶ senti-session.sh (this window's recent turns, heavy turns only)
+                   └─▶ senti-brain.sh  (your Obsidian note for this project, if on)
 ```
 
-- `senti-serve.sh`: warm whisper.cpp server (launchd `io.senti.server`).
-- `senti-dictate.sh`: record / stop / transcribe / clean / silence-gate / dictionary.
-- `senti-ai.sh`: the single shared OpenAI text call, prepends the operating layer.
-- `senti-target.sh` / `senti-session.sh` / `senti-brain.sh`: model guidance, per-window memory, vault bridge.
-- `senti-selftest.sh`: the full end-to-end check suite.
-- `senti-prompt.sh`: prompt mode (one call; craft + vault + session + target-model guidance).
-- `senti-command.sh`: transform selected text.
-- `senti-vision.sh`: OpenAI vision for context + screen-aware prompt.
-- `senti-judge.sh` / `senti-eval.sh`: prompt-quality judge + offline eval harness.
-- `senti-model.sh`: Fast/Accurate model switch.
-- `senti-mic-auth.swift`: triggers the macOS mic-permission prompt.
-- `senti.lua`: Hammerspoon hotkeys, HUD, menu bar, state machine + watchdog.
-
-## Bring your own AI
-
-Dictation is free, runs on your Mac and needs no key. The three AI modes (Prompt, Command and
-Context) call OpenAI with your own API key, which lives in `~/.config/senti/openai-key` and is
-readable only by you.
-
-Senti uses `gpt-6-luna` by default. If you want better results on harder prompts, switch to a
-stronger model. Prices are in US dollars per 1 million tokens, checked on 11 November 2026 on
-[OpenAI's pricing page](https://platform.openai.com/pricing).
-
-| Model | Use it for | Input | Output |
-|---|---|---|---|
-| `gpt-6-luna` | The default. Fast, and the cheapest | $0.10 | $0.50 |
-| `gpt-6.1-terra` | A step up for trickier prompts and screenshots | $1.00 | $5.00 |
-| `gpt-6.1-sol` | Complex prompts, near top-tier quality | $2.00 | $10.00 |
-| `gpt-6-astra` | The most capable, when quality matters more than cost | $10.00 | $50.00 |
-
-To switch, set the model in `~/.config/senti/config.sh`:
-
-```bash
-WF_TEXT_MODEL="gpt-6.1-terra"     # Prompt and Command
-WF_VISION_MODEL="gpt-6.1-terra"   # Context, and Prompt with a screenshot
-```
-
-Models and prices change. To see what your key can use right now:
-
-```bash
-curl -s https://api.openai.com/v1/models \
-  -K <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/senti/openai-key)") | grep '"id"'
-```
+- `senti-serve.sh`: the warm whisper.cpp server (launchd `io.senti.server`).
+- `senti-dictate.sh`: record, stop, transcribe, clean, silence gate, dictionary.
+- `senti-ai.sh`: the one AI call, text and vision, for every provider. Prepends the operating layer.
+- `senti-key.sh`: stores, tests and reports keys (Keychain), and picks the provider and model.
+- `senti-target.sh` / `senti-session.sh` / `senti-brain.sh`: model guidance, per-window memory, notes.
+- `senti-prompt.sh`: Prompt mode without a screenshot.
+- `senti-vision.sh`: Context, and Prompt with a screenshot.
+- `senti-command.sh`: transforms selected text.
+- `senti-judge.sh` / `senti-eval.sh`: prompt-quality judge and offline eval harness.
+- `senti-selftest.sh`: the check suite. `--ci` runs it offline from a checkout.
+- `senti-model.sh`: Fast and Accurate model switch.
+- `senti-mic-auth.swift`: brings up the macOS microphone permission prompt.
+- `senti.lua`: Hammerspoon hotkeys, pill, menu bar, key panel, state machine and watchdog.
+- `install.sh` / `uninstall.sh`: put Senti on your Mac and take it off.
 
 ## Config
 
-Everything is tunable in `config.sh`: models, language, silence threshold, vision
-model, vault bridge (`WF_BRAIN`) and operating layer (`WF_OPERATING_LAYER`).
-Edit `replacements.txt` for vocabulary fixes and `eval/cases.txt` for eval cases.
+`~/.config/senti/config.sh` holds the settings: language (`WF_LANG`), efforts (`WF_EFFORT`,
+`WF_VISION_EFFORT`), screenshot size (`WF_SHOT_PX`) and the notes bridge (`WF_BRAIN`). 2 more are read
+from it but have no line there until you add one: the silence threshold (`WF_SILENCE_THOLD`, default
+0.005) and the operating layer (`WF_OPERATING_LAYER=0` turns it off). Edit
+`replacements.txt` for vocabulary fixes (for example "cloud md" to `CLAUDE.md`) and
+`eval/cases.txt` for eval cases.
 
-Working on the code? [`CLAUDE.md`](CLAUDE.md) maps the repo to the installed system and lists the
-macOS gotchas that will otherwise cost you an afternoon.
+`bash ~/.config/senti/senti-selftest.sh` checks the whole install: the speech engine, a transcription
+round trip, the config version, keys (presence only), the icon build, session isolation and the
+argv canaries. With a key it also makes live AI calls, which cost a fraction of a cent and send a
+screenshot of your main display; set `WF_SELFTEST_OFFLINE=1` to skip them.
 
-MIT licensed. See [`LICENSE`](LICENSE).
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). [`CLAUDE.md`](CLAUDE.md) maps the repository to the
+installed system and lists the macOS gotchas. Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+
+MIT licensed, copyright Da Vinci Tech. See [`LICENSE`](LICENSE).

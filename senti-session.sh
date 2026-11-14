@@ -45,9 +45,10 @@ case "$CMD" in
     [ "$MODE" = "verbatim" ] && exit 0
     TEXT="${SENTI_IN:-}"
     blank "$TEXT" && exit 0
-    # One line per turn: time, mode, and the utterance flattened + clipped.
+    # One line per turn: time, mode, the utterance flattened + clipped, and the epoch second
+    # (recall ignores turns older than the TTL even in a file that new turns keep fresh).
     FLAT="$(printf '%s' "$TEXT" | /usr/bin/tr '\n\t' '  ' | cut -c1-200)"
-    printf '%s\t%s\t%s\n' "$(date '+%H:%M')" "${MODE:-dictate}" "$FLAT" >> "$FILE"
+    printf '%s\t%s\t%s\t%s\n' "$(date '+%H:%M')" "${MODE:-dictate}" "$FLAT" "$(date '+%s')" >> "$FILE"
     chmod 600 "$FILE" 2>/dev/null
     # Trim in place to the last N turns.
     if [ "$(wc -l < "$FILE" 2>/dev/null || echo 0)" -gt "$KEEP" ]; then
@@ -62,9 +63,14 @@ case "$CMD" in
     [ -n "$T" ] && OUT="$OUT
 What this session is currently doing: $T"
     if [ -s "$FILE" ]; then
-      OUT="$OUT
+      # Age check: the sweep drops a stale FILE, but a window used every few hours keeps its
+      # file fresh while its oldest turns age past the TTL. Lines from before the epoch
+      # column existed carry no age, so they are dropped too (safe side).
+      CUT=$(( $(date '+%s') - TTL_H * 3600 ))
+      TURNS="$(CUT="$CUT" /usr/bin/awk -F '\t' '$2 != "verbatim" && $4 != "" && $4 + 0 >= ENVIRON["CUT"] + 0 {printf "  [%s %s] %s\n", $1, $2, $3}' "$FILE")"
+      [ -n "$TURNS" ] && OUT="$OUT
 Recent turns in THIS session (most recent last) — use them to resolve references like \"that\", \"the same\", \"the other one\":
-$(/usr/bin/awk -F '\t' '$2 != "verbatim" {printf "  [%s %s] %s\n", $1, $2, $3}' "$FILE")"
+$TURNS"
     fi
     # This block rides the prompt-mode API call, so it must not claim to be local.
     ! blank "$OUT" && printf 'Session context (earlier turns in this window):\n%s\n' "$OUT"
@@ -72,6 +78,13 @@ $(/usr/bin/awk -F '\t' '$2 != "verbatim" {printf "  [%s %s] %s\n", $1, $2, $3}' 
 
   sweep)
     # Sessions are transcripts of your speech — don't keep them around indefinitely.
+    # Also clear ~/.cache/senti/brain/*.md: digests the deleted background step once wrote.
+    # Nothing writes them any more, so they are only stale copies of note content.
+    BR="${WF_RUN:-$HOME/.cache/senti}/brain"
+    if [ -d "$BR" ]; then
+      /usr/bin/find "$BR" -maxdepth 1 -type f \( -name '*.md' -o -name '.refreshing.*' -o -name '.tmp.*' \) -delete 2>/dev/null
+      rmdir "$BR" 2>/dev/null
+    fi
     N=0
     if [ -d "$DIR" ]; then
       while IFS= read -r f; do

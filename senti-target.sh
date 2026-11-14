@@ -83,17 +83,32 @@ fi
 #
 # This only resolves for Claude Code. The Claude desktop app, ChatGPT and everything else
 # have no such file and fall through to family-level guidance, exactly as before.
+#
+# The project name comes from the window title, and the matching directory and transcript
+# paths contain it, so none of them may reach a process's argv (ps shows argv to every
+# process). Everything here is bash builtins: parameter expansion for the name, a glob loop
+# with the [ -nt ] test for "newest", and the transcript reaches tail through a redirect.
+# An unmatched glob stays literal on bash 3.2 (no nullglob), so every hit is tested first.
 cc_model() {
-  local proj base dir newest
-  proj="$(printf '%s' "${TITLE:-}" | /usr/bin/sed 's/ —.*//; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+  local proj base dir newest d
+  proj="${TITLE:-}"; proj="${proj%% —*}"
+  proj="${proj#"${proj%%[![:space:]]*}"}"; proj="${proj%"${proj##*[![:space:]]}"}"
   [ -n "$proj" ] || return 0
   base="$HOME/.claude/projects"; [ -d "$base" ] || return 0
-  dir="$(/bin/ls -1dt "$base"/*"$proj" 2>/dev/null | head -1)"
+  dir=""
+  for d in "$base"/*"$proj"; do
+    [ -d "$d" ] || continue
+    { [ -z "$dir" ] || [ "$d" -nt "$dir" ]; } && dir="$d"
+  done
   [ -n "$dir" ] || return 0
-  newest="$(/bin/ls -1t "$dir"/*.jsonl 2>/dev/null | head -1)"
+  newest=""
+  for d in "$dir"/*.jsonl; do
+    [ -f "$d" ] || continue
+    { [ -z "$newest" ] || [ "$d" -nt "$newest" ]; } && newest="$d"
+  done
   [ -n "$newest" ] || return 0
   # Only the tail: transcripts reach tens of MB and the newest model line is at the end.
-  /usr/bin/tail -c 120000 "$newest" 2>/dev/null \
+  /usr/bin/tail -c 120000 < "$newest" 2>/dev/null \
     | /usr/bin/grep -oE '"model":"claude-[a-z0-9.-]+"' | tail -1 \
     | /usr/bin/sed 's/.*"model":"//; s/"$//'
 }
@@ -116,6 +131,39 @@ if [ -n "$CHOSEN" ]; then
   if [ -n "${DELTA// /}" ]; then
     NAME="$MODEL"
     echo "$(date '+%F %T') target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
+  elif [ -n "$MODEL" ] && [ "${WF_KB_FALLBACK:-1}" = "1" ]; then
+    # Nearest older id: a model newer than the KB (claude-opus-5-5 before its section was
+    # written) gets its predecessor's section (claude-opus-5) rather than nothing, and the
+    # log says so, so a stale KB is visible. Drop one trailing "-part" at a time, never
+    # below family-plus-one-part (claude-opus), which would match a different generation.
+    # First the nearest older SIBLING: claude-opus-5-7 takes claude-opus-5-5, the highest
+    # "<prefix>-<n>" section with n below 7, before trimming to claude-opus-5. The prefix
+    # must keep family-plus-one-part, so claude-opus-6 never borrows claude-opus-5, and a
+    # dated snapshot (claude-sonnet-5-20260101) skips this step so it never takes a newer -5-5.
+    OLDER=""; DELTA=""
+    case "$MODEL" in
+      *-*-*-*) case "${MODEL##*-}" in ''|*[!0-9]*|???*) ;; *)   # a 1-2 digit minor, never a date
+        OLDER="$(/usr/bin/perl -ne 'BEGIN { ($p, $n) = splice(@ARGV, 0, 2); $b = -1 }
+          $b = $1 if /^## Model: \Q$p\E-(\d+)\s*$/ && $1 < $n && $1 > $b;
+          END { print "$p-$b" if $b >= 0 }' "${MODEL%-*}" "${MODEL##*-}" "$CHOSEN" 2>/dev/null)"
+        [ -n "$OLDER" ] && DELTA="$(model_section "$CHOSEN" "$OLDER")" ;;
+      esac ;;
+    esac
+    if [ -z "${DELTA// /}" ]; then
+      OLDER="$MODEL"
+      while :; do
+        case "$OLDER" in *-*-*) OLDER="${OLDER%-*}" ;; *) OLDER=""; break ;; esac
+        case "$OLDER" in *-*-*) ;; *) OLDER=""; break ;; esac
+        DELTA="$(model_section "$CHOSEN" "$OLDER")"
+        [ -n "${DELTA// /}" ] && break
+      done
+    fi
+    if [ -n "$OLDER" ] && [ -n "${DELTA// /}" ]; then
+      NAME="$MODEL"
+      echo "$(date '+%F %T') target: fallback model '$OLDER' for '$MODEL'" >>"$WF_LOG" 2>/dev/null
+    else
+      DELTA=""
+    fi
   fi
   OUT="$OUT
 

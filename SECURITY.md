@@ -1,0 +1,113 @@
+# Security
+
+## Reporting a vulnerability
+
+Please report security problems privately, not in a public issue.
+
+1. Open the repository's **Security** tab on GitHub and choose **Report a vulnerability**. This uses
+   GitHub's private vulnerability reporting, so only the maintainers see the report.
+2. If that button is not there (private reporting has to be switched on in the repository settings,
+   and it may not be yet), open a new issue whose whole text is `security contact please`. Put no
+   details in it. A maintainer will reply with a private way to send the report.
+
+There is no security email address. Please do not post exploit details anywhere public until a fix
+has shipped.
+
+## Supported versions
+
+Only the latest release and the `main` branch get security fixes.
+
+## Threat model
+
+Senti is a local tool for one person on one Mac. The adversaries it plans for are:
+
+- **Hostile input.** A web page sets its own tab title, which Senti reads. Text you select, text in
+  your notes and what is on your screen can all carry instructions aimed at the AI model.
+- **Other processes reading what any process can read.** On macOS, `ps` shows every process's
+  command line to every other process.
+
+Code that already runs as your macOS user is trusted. It can read your files, the Senti cache and
+your Keychain items that Senti can read, and it can edit the installed scripts that Hammerspoon runs.
+Senti does not claim a boundary against it. A remote attacker is out of scope because Senti opens no
+port to the network: the speech server listens on `127.0.0.1` only.
+
+## What Senti defends
+
+Each line names the code that does it, so you can check it.
+
+- **Nothing sensitive on a command line.** Your speech, the system prompt (it can hold your session
+  history and notes digest), window titles and API keys travel between Hammerspoon, the scripts and
+  Python in environment variables, never in argv (`senti.lua`, `wf.runScript`; `senti-ai.sh`, the
+  `SENTI_*` variables passed to Python). When `senti-target.sh` looks for the Claude Code session
+  file of the project named in the window title, it matches file names with a bash glob loop inside
+  the shell, so window titles never go on a command line. The self-test runs canary strings through
+  these paths and fails if one shows up in a `ps` snapshot (`senti-selftest.sh`).
+- **API keys in the macOS Keychain.** `senti-key.sh` stores each key as a generic password (service
+  `io.senti`, account = provider). The key reaches `security` on standard input, built by the bash
+  builtin `printf`, so no process argv holds it, and the write is checked by reading the key back. The
+  key is encrypted on disk and Senti sends it only to that provider. Programs running as you can
+  still read it. When the Keychain is locked or unavailable, the key falls back to a file at
+  `~/.config/senti/<provider>-key`, mode 600, inside a mode 700 folder. That file is plain text.
+- **No redirects with a key.** Requests that carry a key refuse HTTP redirects, so the key never
+  follows a redirect to another host (`senti-ai.sh`, `senti-key.sh`, class `NoRedirect`).
+- **Prompt-injection fence.** Untrusted text (the window title, session history, your notes digest,
+  the text you selected) goes in the user message inside a fenced block with a random marker, made new each time the context is prepared.
+  The model is told the block is data and never instructions, and the fence brackets are stripped
+  from the text inside so it cannot close the block early (`senti-lib.sh`, `senti_build_untrusted`;
+  `senti-command.sh`). A fence lowers the risk. It cannot remove it: the model may still follow text
+  it was told to ignore.
+- **Output is typed, never run.** Whatever the model returns is pasted at your cursor. Senti never
+  executes it.
+- **The `hs` command-line bridge is off.** Loading `hs.ipc` would let any process running as you run
+  Lua inside Hammerspoon, which holds the Accessibility, Microphone and Screen Recording permissions.
+  Senti loads it only when `~/.cache/senti/allow-ipc` exists, for debugging (`senti.lua`, top of
+  file).
+- **Short life for sensitive files.** Audio, screenshots, selected text and prepared prompt context
+  in `~/.cache/senti` are deleted by name pattern at the end of every turn, when Senti starts, and
+  every 60 seconds while it is idle (`senti.lua`, `wf.sweepSensitive` and `wf.sweepCache`). Same-user
+  code can read them while they exist, so the defence is how short that time is.
+- **The log holds no speech.** `~/Library/Logs/senti.log` is mode 600 and records character counts,
+  not transcripts or window titles. Full text is logged only if you set `WF_DEBUG=1`
+  (`senti-dictate.sh`). API error lines are scrubbed of anything shaped like a key (`senti-ai.sh`,
+  `scrub`).
+- **Notes have one gate.** When the notes feature is on, every path that sends note text goes
+  through `brain_digest()` in `senti-brain.sh`, which takes only the `## Senti` section (or a capped
+  fallback) and never a whole note. It searches only the folders you list in `WF_BRAIN_DIRS`, and
+  checks every note and folder by its resolved real path against those folders.
+  Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
+  The log says "ignored (outside the allowlist)" when that happens. The bridge is off unless
+  `WF_BRAIN=1`.
+- **Checked model download.** `install.sh` checks the default speech model against its published
+  SHA-256 and deletes a download that does not match.
+
+## Known risks we accept
+
+- **The speech server's `/load` endpoint has no authentication.** whisper-server listens on
+  `127.0.0.1:8090`. Another local account, or a web page that can reach that address, can tell it to
+  load a bad model and exit. launchd restarts it. This is a denial of service: it cannot read your
+  audio.
+- **Universal Clipboard.** Senti types by pasting. The pasted text is marked transient and concealed,
+  which clipboard managers that follow that convention skip, but macOS Universal Clipboard (Handoff)
+  can still sync it to your other devices.
+- **A full screenshot if scaling fails.** If `sips` cannot shrink the screenshot, the original PNG is
+  sent instead (`senti-vision.sh`).
+- **The optional Fast model download has no checksum.** The `curl` line in the README for
+  `ggml-base.en.bin` does not verify the file.
+
+## Supply chain
+
+- Tools come from Homebrew: `whisper-cpp`, `sox`, `resvg` and the Hammerspoon cask. Senti does not
+  vendor any third-party code.
+- The default speech model comes from Hugging Face and is checked against a SHA-256 in `install.sh`.
+- At run time Senti calls only the AI provider you chose: when you use an AI mode, and when it checks
+  a key (`senti-key.sh test`), which reads the provider's free model or key list. The self-test and
+  the eval scripts call the same provider when you run them.
+
+## Scope
+
+In scope: a key or speech reaching a command line, a log, a file that outlives its turn, or a host
+other than your chosen provider; injection that changes what Senti types; a cache file that the sweep
+misses.
+
+Out of scope: an attacker who already runs code as your macOS user; physical access to a Mac that is
+awake and not locked; the accepted `/load` denial of service above.

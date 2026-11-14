@@ -22,6 +22,9 @@ log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$WF_LOG"; }
 # stop chime. Redirecting the group detaches the subshell's stdout before it forks.
 cue() { { [ "$WF_SOUNDS" = "1" ] && [ -f "$1" ] && afplay "$1"; } >/dev/null 2>&1 & }
 
+# Used by `senti-dictate.sh server` (menu, self-test). The transcribe path no longer pings
+# first: a refused connection on the POST itself (curl exit 7) says the same thing and saves
+# a request on every dictation.
 server_up() { "$WF_CURL" -s -o /dev/null -m 1 "$WF_URL/" 2>/dev/null; }
 
 # A pid only counts if it is still a sox writing our capture path. sox can exit on its
@@ -64,12 +67,22 @@ stop_sox() {
 # Any sox still writing $WF_AUDIO when the pidfile names no live recording is an orphan
 # (e.g. key-up's stop ran before key-down's start wrote the pidfile). Keyed on the WAV
 # path, not the pidfile, so the next keypress always clears a leak.
+# One awk does the matching (a bash `while read` over every process cost 0.14 s with about
+# 1,080 processes, measured by b2). index() is a literal match, so a $HOME holding regex
+# characters is safe, and the paths go in through ENVIRON, which (unlike awk -v) does not
+# rewrite backslashes. Same rule as is_capture_cmd: "$WF_SOX -d " and, after it, the WAV
+# path at the very end of the command line.
 reap_orphans() {
-  local live p cmd
-  live="$(cat "$WF_PIDFILE" 2>/dev/null)"
-  ps -ww -U "$(id -u)" -o pid=,command= 2>/dev/null | while read -r p cmd; do
-    is_capture_cmd "$cmd" || continue
-    [ "$p" = "$live" ] && continue   # the live recording, if one started meanwhile
+  local p
+  for p in $(ps -ww -U "$(id -u)" -o pid=,command= 2>/dev/null \
+             | PAT="$WF_SOX -d " TAIL="$WF_AUDIO" /usr/bin/awk '{
+                 pid = $1; cmd = $0; sub(/^[ \t]*[0-9]+[ \t]+/, "", cmd)
+                 pat = ENVIRON["PAT"]; tail = ENVIRON["TAIL"]
+                 i = index(cmd, pat); ts = length(cmd) - length(tail) + 1
+                 if (i > 0 && ts >= i + length(pat) && substr(cmd, ts) == tail) print pid }'); do
+    # Re-read the pidfile at kill time: the sweep runs after the new recorder started, and a
+    # quick re-press may have started another one since.
+    [ "$p" = "$(cat "$WF_PIDFILE" 2>/dev/null)" ] && continue
     log "reaping orphaned sox (pid $p)"
     stop_sox "$p"
   done
@@ -81,13 +94,22 @@ start() {
   # key-down's start). Ignoring this press used to lose the next dictation; finish the
   # leftover instead and record fresh.
   if is_recording; then log "start: finishing a leftover recording first"; finish_recording; fi
-  reap_orphans
   rm -f "$WF_AUDIO"
   cue "$WF_SOUND_START"
   # -d default input, quiet, 16kHz mono 16-bit signed PCM (Whisper's native format).
-  "$WF_SOX" -d -q -r 16000 -c 1 -b 16 -e signed-integer "$WF_AUDIO" >/dev/null 2>>"$WF_LOG" &
+  # --buffer 2048: sox appends to the WAV in buffer-sized blocks. The default 8192 is
+  # 256 ms of audio, too coarse for the HUD, which reads the file's tail to draw the
+  # real mic level; 2048 lands a block every 64 ms (measured). It goes AFTER -d on
+  # purpose: is_capture_cmd matches "$WF_SOX -d ", so a flag in front of -d would stop
+  # it recognising our own sox, and key-up could no longer stop the recording.
+  "$WF_SOX" -d --buffer 2048 -q -r 16000 -c 1 -b 16 -e signed-integer "$WF_AUDIO" >/dev/null 2>>"$WF_LOG" &
   echo $! >"$WF_PIDFILE"
   log "recording started (pid $!)"
+  # The orphan sweep runs AFTER the recorder is up, detached: it used to run first and held
+  # back the start of recording by 0.15 to 0.30 s (b2 F1), so the first words after the HUD
+  # appeared were never in the WAV. Its output is detached from this script's stdout for the
+  # same reason as cue(): hs.task waits for EOF on that pipe.
+  { reap_orphans; } >/dev/null 2>&1 &
 }
 
 # Interrupt sox with SIGINT so it rewrites the WAV header, then wait for the file to settle.
@@ -104,52 +126,74 @@ finish_recording() {
 # instead of transcribing, which is worse than no hint at all. Disable with WF_BIAS=0.
 build_bias() {
   [ "${WF_BIAS:-1}" = "1" ] || return 0
-  local terms="" proj branch
-  # Project name from the focused window title (senti.lua passes it through).
-  proj="$(printf '%s' "${SENTI_SLABEL:-}" | /usr/bin/awk -F ' — ' '{print $1}' \
-          | /usr/bin/tr -cd '[:alnum:]._ -' | cut -c1-40)"
+  local terms="" proj branch head dict n t
+  # Project name from the focused window title (senti.lua passes it through): its first
+  # " — " field, letters, digits and ._- and space only, 40 characters at most. Done with
+  # parameter expansion: the awk | tr | cut pipeline it replaces was 3 spawns per dictation.
+  proj="${SENTI_SLABEL:-}"
+  proj="${proj%% — *}"
+  proj="${proj//[![:alnum:]._ -]/}"
+  proj="${proj:0:40}"
   # A window title is attacker-controllable (a web page sets its own browser-tab
-  # title), and proj is later used as a path component under ~/code. tr already
-  # strips slashes, but "." / ".." survive and would point git at ~/code or its
-  # parent — reject them so the path can only ever name a direct child of ~/code.
+  # title), and proj is later used as a path component under ~/code. Slashes are already
+  # stripped, but "." / ".." survive and would point at ~/code or its parent — reject them
+  # so the path can only ever name a direct child of ~/code.
   case "$proj" in .|..|*/*) proj="" ;; esac
   [ -n "${proj// /}" ] && terms="$proj"
-  # Current git branch, if the focused project maps to a repo we can see.
+  # Current git branch, if the focused project maps to a repo we can see. Read from
+  # .git/HEAD directly (a `git rev-parse` spawn cost about 10 ms); a detached HEAD holds a
+  # commit id, not "ref: ", and adds no term, as before.
   if [ -n "${proj// /}" ] && [ -d "$HOME/code/$proj/.git" ]; then
-    branch="$(/usr/bin/git -C "$HOME/code/$proj" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-    [ -n "$branch" ] && [ "$branch" != "HEAD" ] && terms="$terms, $branch"
+    head=""; IFS= read -r head < "$HOME/code/$proj/.git/HEAD" 2>/dev/null
+    case "$head" in "ref: refs/heads/"?*) branch="${head#ref: refs/heads/}"; terms="$terms, $branch" ;; esac
   fi
   # Replacement targets are, by definition, words this user says and whisper mishears.
   if [ -f "$WF_REPLACEMENTS" ]; then
-    local dict
     # Dedupe: several "what whisper hears" lines legitimately map to the SAME target
     # (cloud md / cloud dot md → CLAUDE.md), and repeating a term in the hint just burns
     # the budget that keeps whisper from echoing the hint instead of transcribing.
-    dict="$(/usr/bin/awk -F '|' '!/^[[:space:]]*#/ && NF>1 {print $2}' "$WF_REPLACEMENTS" \
-            | /usr/bin/awk '!seen[$0]++' \
-            | /usr/bin/head -12 | /usr/bin/tr '\n' ',' | /usr/bin/sed 's/,$//; s/,/, /g')"
+    # One awk: the first 12 distinct targets, joined with ", ".
+    dict="$(/usr/bin/awk -F '|' '!/^[[:space:]]*#/ && NF>1 && !seen[$2]++ && n < 12 { out = out (n ? "," : "") $2; n++ }
+                                END { gsub(/,/, ", ", out); printf "%s", out }' "$WF_REPLACEMENTS")"
     [ -n "${dict// /}" ] && terms="${terms:+$terms, }$dict"
   fi
   [ -z "${terms// /}" ] && return 0
   # Logged so a mistranscription can be debugged against what the hint actually was.
   # The terms include window-title text, and this log is never rotated: count only.
   if [ "${WF_DEBUG:-0}" = "1" ]; then log "bias: $terms"
-  else log "bias: $(printf '%s' "$terms" | /usr/bin/awk -F ', ' '{print NF}') terms"; fi
-  printf 'Vocabulary: %s.' "$(printf '%s' "$terms" | cut -c1-220)"
+  else
+    n=1; t="$terms"
+    while :; do case "$t" in *", "*) t="${t#*, }"; n=$((n+1)) ;; *) break ;; esac; done
+    log "bias: $n terms"
+  fi
+  printf 'Vocabulary: %s.' "${terms:0:220}"
 }
 
 transcribe() {
   [ -s "$WF_AUDIO" ] || { log "no audio to transcribe"; return 0; }
   # Silence gate: real speech peaks well above 0.02; a quiet room sits near 0.0.
   # Skipping near-silent clips stops Whisper hallucinating "Thank you." on nothing.
-  # One sox pass gives both the peak (silence gate) and the length (audio_ctx gate).
-  local stat peak dur
-  stat="$("$WF_SOX" "$WF_AUDIO" -n stat 2>&1)"
-  peak="$(printf '%s' "$stat" | /usr/bin/awk '/Maximum amplitude/{print $3}')"
-  dur="$(printf '%s' "$stat" | /usr/bin/awk '/^Length \(seconds\)/{print $3}')"
+  # One sox pass gives both the peak (silence gate) and the length (audio_ctx gate), and one
+  # awk reads both and decides the gate (it was 5 awk spawns on this path, b2 F3).
   # Fail OPEN: only gate when we actually measured a peak below threshold. If sox stat
   # failed (empty peak), transcribe anyway rather than silently dropping real speech.
-  if [ -n "$peak" ] && /usr/bin/awk -v p="$peak" -v t="${WF_SILENCE_THOLD:-0.005}" 'BEGIN{exit !(p+0 < t+0)}'; then
+  local stat peak dur gate
+  stat="$("$WF_SOX" "$WF_AUDIO" -n stat 2>&1)"
+  read -r peak dur gate <<EOF
+$(printf '%s\n' "$stat" | THOLD="${WF_SILENCE_THOLD:-0.005}" /usr/bin/awk '
+    /Maximum amplitude/ { p = $3 }
+    /^Length \(seconds\)/ { d = $3 }
+    END {
+      g = "speech"
+      if (p != "" && p + 0 < ENVIRON["THOLD"] + 0) {
+        if (d + 0 < 0.5) g = "tap"; else if (p + 0 == 0) g = "dead"; else g = "quiet"
+      }
+      printf "%s %s %s\n", (p == "" ? "-" : p), (d == "" ? "-" : d), g
+    }')
+EOF
+  [ "$peak" = "-" ] && peak=""
+  [ "$dur" = "-" ] && dur=""
+  if [ "$gate" != "speech" ]; then
     # A peak of EXACTLY 0.000000 is not a quiet room — it's the documented mic-TCC
     # signature: macOS silently mutes sox's CoreAudio-HAL input when Hammerspoon lacks
     # Microphone permission, with no prompt. Distinguishing the two turns a mystery
@@ -158,20 +202,15 @@ transcribe() {
     # and raising the permission alarm for it reset micOK and sent people to re-grant a
     # mic that worked. A gated clip under 0.5s is a brushed key, not a dictation: say
     # __WF_TAP__ so senti.lua goes quietly idle instead of alerting.
-    if /usr/bin/awk -v d="${dur:-0}" 'BEGIN{exit !(d+0 < 0.5)}'; then
+    if [ "$gate" = "tap" ]; then
       log "silence gate: ${dur:-0}s quiet clip — a tap, ignored"
       echo "__WF_TAP__"
-    elif /usr/bin/awk -v p="$peak" 'BEGIN{exit !(p+0 == 0)}'; then
+    elif [ "$gate" = "dead" ]; then
       log "silence gate: peak 0.000000 — mic captured NO audio (permission/muted input)"
       echo "__WF_MIC_DEAD__"
     else
       log "silence gate: peak $peak below threshold — skipped as silence"
     fi
-    return 0
-  fi
-  if ! server_up; then
-    log "server down — cannot transcribe"
-    echo "__WF_SERVER_DOWN__"
     return 0
   fi
   # Vocabulary biasing: whisper takes an `prompt` hint that steers decoding toward
@@ -189,11 +228,17 @@ transcribe() {
   # STRICTLY duration-gated, because past ~12s it does not just get slower — it
   # TRUNCATES. Measured at ctx=768: 8s identical, 12s identical, 16s diverged AND took
   # 2803ms (3x slower than default), losing the end of the recording entirely. Silently
-  # dropping the end of a long dictation is the worst failure this app can have, so the
-  # gate is set at 10s — a deliberate margin below the last length proven safe.
-  local ctx_arg=""
-  if [ -n "$dur" ] && /usr/bin/awk -v d="$dur" -v m="${WF_AUDIO_CTX_MAX_SEC:-10}" 'BEGIN{exit !(d+0 > 0 && d+0 < m+0)}'; then
-    ctx_arg="${WF_AUDIO_CTX:-768}"
+  # dropping the end of a long dictation is the worst failure this app can have.
+  # One encoder frame is 20 ms, so 768 frames cover 15.36 s. b2 measured identical words up
+  # to 14.61 s and a lost ending at 16.17 s (13 Nov 2026, TTS clips), so the gate is 14 s.
+  # Whole seconds are compared in bash (no awk spawn): with an integer limit m, d < m holds
+  # exactly when floor(d) < m. A fractional limit falls back to awk.
+  local ctx_arg="" dsec="${dur%%.*}" cmax="${WF_AUDIO_CTX_MAX_SEC:-14}"
+  if [ -n "$dur" ] && [ -n "${dur//[0.]/}" ]; then
+    case "$dsec$cmax" in
+      *[!0-9]*|"") /usr/bin/awk -v d="$dur" -v m="$cmax" 'BEGIN{exit !(d+0 > 0 && d+0 < m+0)}' && ctx_arg="${WF_AUDIO_CTX:-768}" ;;
+      *) [ "$dsec" -lt "$cmax" ] && ctx_arg="${WF_AUDIO_CTX:-768}" ;;
+    esac
   fi
 
   local raw rc args
@@ -213,11 +258,17 @@ transcribe() {
   # (reported as "mic may be muted") or as the server's error JSON, typed into the app.
   # The budget grows with the clip so a long dictation on the Accurate model can finish,
   # capped under senti.lua's 75s 'working' watchdog.
-  local budget
-  budget="$(/usr/bin/awk -v d="${dur:-0}" 'BEGIN{b = 30 + d/2; if (b > 60) b = 60; printf "%d", b}')"
+  local budget=30
+  case "$dsec" in ''|*[!0-9]*) ;; *) budget=$((30 + dsec / 2)); [ "$budget" -gt 60 ] && budget=60 ;; esac
   raw="$("$WF_CURL" -sS --fail -m "$budget" "$WF_URL/inference" "${args[@]}" 2>>"$WF_LOG")"
   rc=$?
   [ -n "$biasf" ] && rm -f "$biasf"
+  # Exit 7 = connection refused: the server is down (this replaced a separate ping).
+  if [ "$rc" -eq 7 ]; then
+    log "server down — cannot transcribe"
+    echo "__WF_SERVER_DOWN__"
+    return 0
+  fi
   if [ "$rc" -ne 0 ]; then
     log "transcription failed (curl exit $rc, ${dur:-?}s clip)"
     echo "__WF_TRANSCRIBE_FAILED__"
@@ -227,49 +278,47 @@ transcribe() {
 }
 
 # Trim whitespace; drop pure non-speech artifacts like [BLANK_AUDIO], (silence), *music*.
+# One perl pass does all of it (it was tr, sed, grep, awk and perl: 0.023 to 0.045 s, b2 F3).
+# Steps, in order:
+#   1. newlines to spaces, trim, collapse runs of whitespace;
+#   2. if the whole result is only bracketed/parenthesised/asterisked tokens ("[BLANK_AUDIO]",
+#      "(silence) *music*"), it is noise: print nothing;
+#   3. Smart Formatting (WF_REMOVE_FILLERS=1): drop filler tokens (um/uh/erm/hmm) anywhere,
+#      and one leading discourse marker (so/okay/well/like) ONLY when whisper wrote it with
+#      a comma ("So, ..."): unconditionally it turned "Well done" into "Done" and "So far so
+#      good" into "Far so good". A dropped filler hands its sentence-ending punctuation back
+#      ("We should, uh." → "We should."). Then re-capitalise the first letter;
+#   4. the custom dictionary: literal, case-insensitive, whole-word phrase fixes from
+#      replacements.txt (whole words: "centi|Senti" was turning incentive into inSentive).
 clean_text() {
-  local t
-  t="$(printf '%s' "$1" | /usr/bin/tr '\n' ' ' \
-       | /usr/bin/sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/[[:space:]]+/ /g')"
-  # If the entire result is made only of bracketed/parenthesised/asterisked tokens
-  # ("[BLANK_AUDIO]", "[BLANK_AUDIO] [BLANK_AUDIO]", "(silence) *music*"), it's noise.
-  if printf '%s' "$t" | /usr/bin/grep -Eq '^((\[[^]]*\]|\([^)]*\)|\*[^*]*\*)[[:space:]]*)+$'; then
-    printf ''; return
-  fi
-  # Smart Formatting: drop filler tokens (um/uh/erm/hmm) anywhere, and one leading
-  # discourse marker (so/okay/well/like), then re-capitalise the first letter.
-  # The marker goes only when whisper wrote it with a comma ("So, ..."): unconditionally
-  # it turned "Well done" into "Done" and "So far so good" into "Far so good". A dropped
-  # filler hands its sentence-ending punctuation back ("We should, uh." → "We should.").
-  if [ "${WF_REMOVE_FILLERS:-1}" = "1" ]; then
-    t="$(printf '%s' "$t" | /usr/bin/awk '{
-      n=split($0,w," "); out="";
-      for(i=1;i<=n;i++){ tok=w[i]; base=tolower(tok); p="";
-        if(match(base,/[.,!?;:]+$/)) p=substr(base,RSTART); sub(/[.,!?;:]+$/,"",base);
-        if(base ~ /^(um+|uh+|uhm+|erm+|hmm+)$/){
-          if(p ~ /\./ && out != "" && out !~ /[.!?]$/){ sub(/[,;:]+$/,"",out); out=out "." }
-          continue }
-        if(i==1 && n>2 && p=="," && base ~ /^(so|okay|ok|well|like)$/) continue;
-        out=(out==""?tok:out" "tok); }
-      if(length(out)>0) out=toupper(substr(out,1,1)) substr(out,2);
-      print out; }')"
-  fi
-  # Custom dictionary: literal, case-insensitive phrase fixes from replacements.txt.
-  if [ -f "$WF_REPLACEMENTS" ]; then
-    t="$(printf '%s' "$t" | /usr/bin/perl -e '
-      my $rf = shift; my @rules;
-      if (open(my $fh, "<", $rf)) {
-        while (<$fh>) { chomp; next if /^\s*#/ || !/\|/;
-          my ($p,$r) = split(/\|/, $_, 2); s/^\s+|\s+$//g for $p, $r;
-          next if $p eq "";   # an empty pattern re-uses the last match in perl
-          push @rules, [$p,$r]; }
+  printf '%s' "$1" | FILLERS="${WF_REMOVE_FILLERS:-1}" /usr/bin/perl -e '
+    my $rf = shift; local $/; my $t = <STDIN>; $t = "" unless defined $t;
+    $t =~ s/\n/ /g; $t =~ s/^\s+//; $t =~ s/\s+$//; $t =~ s/\s+/ /g;
+    exit 0 if $t =~ /^((\[[^\]]*\]|\([^)]*\)|\*[^*]*\*)\s*)+$/;
+    if ($ENV{FILLERS} eq "1") {
+      my @w = split / /, $t; my $n = scalar @w; my $out = "";
+      for my $i (0 .. $#w) {
+        my $tok = $w[$i]; my $base = lc $tok; my $p = "";
+        $p = $1 if $base =~ /([.,!?;:]+)$/; $base =~ s/[.,!?;:]+$//;
+        if ($base =~ /^(um+|uh+|uhm+|erm+|hmm+)$/) {
+          if ($p =~ /\./ && $out ne "" && $out !~ /[.!?]$/) { $out =~ s/[,;:]+$//; $out .= "."; }
+          next;
+        }
+        next if $i == 0 && $n > 2 && $p eq "," && $base =~ /^(so|okay|ok|well|like)$/;
+        $out = $out eq "" ? $tok : "$out $tok";
       }
-      local $/; my $x = <STDIN>;
-      # Whole words only: "centi|Senti" was turning incentive into inSentive.
-      for my $ru (@rules) { my ($p,$r)=@$ru; $x =~ s/(?<![[:alnum:]])\Q$p\E(?![[:alnum:]])/$r/gi; }
-      print $x;' "$WF_REPLACEMENTS")"
-  fi
-  printf '%s' "$t"
+      $out = uc(substr($out, 0, 1)) . substr($out, 1) if length $out;
+      $t = $out;
+    }
+    if (defined $rf && -f $rf && open(my $fh, "<", $rf)) {
+      my @rules; local $/ = "\n";   # line mode again: STDIN was slurped above
+      while (<$fh>) { chomp; next if /^\s*#/ || !/\|/;
+        my ($p, $r) = split(/\|/, $_, 2); s/^\s+|\s+$//g for $p, $r;
+        next if $p eq "";   # an empty pattern re-uses the last match in perl
+        push @rules, [$p, $r]; }
+      for my $ru (@rules) { my ($p, $r) = @$ru; $t =~ s/(?<![[:alnum:]])\Q$p\E(?![[:alnum:]])/$r/gi; }
+    }
+    print $t;' "$WF_REPLACEMENTS"
 }
 
 stop() {

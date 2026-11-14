@@ -55,6 +55,17 @@ ctx_read() {
   cat "$f" 2>/dev/null
 }
 
+# The vault note name for this window's context (or, with no window id, this turn's
+# process) lives in a ctx- sidecar, so the cache sweep removes it with the rest. The name
+# is needed when the block is SENT (the "sent: vault" log line, last-request.json), which
+# can be minutes after the block was built at key-down.
+ctx_note_file() {
+  if [ -n "${SENTI_SKEY:-}" ]; then ctx_file note
+  else printf '%s/ctx-note-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$$"; fi
+}
+senti_ctx_vault_note() { cat "$(ctx_note_file)" 2>/dev/null; }
+senti_ctx_cleanup() { [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null; return 0; }
+
 # Atomic write (temp + mv) so a concurrent reader can never see a half-built context.
 ctx_write() {
   local f t; f="$(ctx_file "$1")"; [ -n "$f" ] || return 0
@@ -130,20 +141,37 @@ senti_intent() {
 }
 
 # Returns the untrusted block only when the turn earned it. Logs which way it went, so
-# the split is measurable rather than a matter of belief.
+# the split is measurable rather than a matter of belief, and logs "sent:" for each part
+# that joins this request: this, not "brain: prepared", is the record of what left the Mac.
 senti_ctx_for_intent() {
-  local mode; mode="$(senti_intent "${1:-}")"
+  local mode block vchars schars note
+  mode="$(senti_intent "${1:-}")"
   echo "$(date '+%F %T') intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   [ "$mode" = heavy ] || return 0
-  senti_untrusted_ctx
+  block="$(senti_untrusted_ctx)"
+  blank "$block" && return 0
+  read -r vchars schars <<EOF
+$(printf '%s' "$block" | /usr/bin/perl -0777 -ne '
+    my ($v, $s) = (0, 0);
+    $v = length($1) if /Project knowledge from the user.s own notes[^\n]*\n(.*?)(?=\nSession context \(|\n<<<END_REFERENCE_CONTEXT)/s;
+    $s = length($1) if /(Session context \(earlier turns in this window\):\n.*?)(?=\n<<<END_REFERENCE_CONTEXT)/s;
+    print "$v $s\n";')
+EOF
+  if [ "${vchars:-0}" -gt 0 ]; then
+    note="$(senti_ctx_vault_note)"
+    echo "$(date '+%F %T') sent: vault '${note:-unknown note}' ${vchars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+  fi
+  [ "${schars:-0}" -gt 0 ] && echo "$(date '+%F %T') sent: session ${schars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+  printf '%s' "$block"
 }
 
 # ── Untrusted reference data (vault note + session context) ──────────────────────────
 # Returns a fully fenced block for the USER message, or empty. Newlines survive inside
 # the fence but the fence + the directive make the boundary explicit to the model.
 senti_build_untrusted() {
-  local brain sess body=""
-  brain="$(bash "$HOME/.config/senti/senti-brain.sh" 2>>"$WF_LOG")"
+  local brain sess body="" nf
+  nf="$(ctx_note_file)"; : > "$nf" 2>/dev/null; chmod 600 "$nf" 2>/dev/null
+  brain="$(SENTI_BRAIN_NOTEOUT="$nf" bash "$HOME/.config/senti/senti-brain.sh" 2>>"$WF_LOG")"
   blank "$brain" || body="$body
 $brain"
   sess="$(bash "$HOME/.config/senti/senti-session.sh" recall 2>>"$WF_LOG")"
@@ -189,10 +217,8 @@ senti_untrusted_ctx() {
 # hand the model the current sentence twice (once as "recent turn", once as the idea).
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   source "$HOME/.config/senti/config.sh"
-  # Key-down is any right-⌘ press, before anything is said. The local digest is fine to
-  # prepare, but the background refresh UPLOADS a vault digest — leave that to a real
-  # prompt turn.
-  export WF_BRAIN_REFRESH=0
+  # Key-down is any right-⌘ press, before anything is said. Preparing the context here is
+  # local work only: nothing is sent until a heavy turn's request (senti_ctx_for_intent).
   senti_prompt_craft  >/dev/null 2>&1
   senti_untrusted_ctx >/dev/null 2>&1
 fi
