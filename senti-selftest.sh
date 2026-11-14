@@ -616,6 +616,39 @@ HV="$(WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects SENTI_SLABEL="self
 case "$HV" in *never-sent*) bad "a heavy turn carried a section outside ## Senti" ;; *"Synthetic project"*) ok "a heavy turn carries the ## Senti digest, fenced" ;; *) bad "heavy turn carried no vault digest" ;; esac
 /usr/bin/grep -q "sent: vault 'selftestproj.md'" "$WF_LOG" && ok "a heavy turn logs sent: vault '<note>' N chars" || bad "no sent: vault line on a heavy turn"
 /usr/bin/grep -q "brain: prepared 'selftestproj.md'" "$WF_LOG" && ok "building the digest logs brain: prepared (not sent)" || bad "no brain: prepared line"
+# Symlinks out of the listed folders: a symlinked folder on a map entry's path, a note that
+# is itself a symlink, and a symlinked folder the scan matches are all ignored and logged.
+# A symlink that resolves inside the listed folders still works. ($SBT sits under /var,
+# which resolves to /private/var, so this also proves the listed folders are resolved.)
+BO="$SBT/outside"; mkdir -p "$BO/esc" "$BO/symproj"
+printf '## Senti\nbrain-outside-note\n' > "$BO/esc/note.md"
+printf '## Senti\nbrain-outside-scan\n' > "$BO/symproj/symproj.md"
+ln -s "$BO/esc" "$SBT/vault/Projects/esc"
+ln -s "$BO/esc/note.md" "$SBT/vault/Projects/direct.md"
+ln -s "$BO/symproj" "$SBT/vault/Projects/symproj"
+ln -s "$VA/selftestproj.md" "$SBT/vault/Projects/alias.md"
+brun() { printf '%s\n' "$2" > "$SBT/brain-map.txt"
+  WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP="$SBT/brain-map.txt" SENTI_SLABEL="$1 — x" \
+    bash "$CFG/senti-brain.sh" 2>/dev/null; }
+BS=""
+case "$(brun zzesc 'zzesc|Projects/esc/note.md')" in *brain-outside*) BS="$BS map-through-symlinked-folder" ;; esac
+case "$(brun zzdirect 'zzdirect|Projects/direct.md')" in *brain-outside*) BS="$BS map-to-symlinked-note" ;; esac
+case "$(brun symproj '')" in *brain-outside*) BS="$BS scan-of-symlinked-folder" ;; esac
+NIGN="$(/usr/bin/grep -c 'ignored (outside the allowlist)' "$WF_LOG" 2>/dev/null)"
+[ -z "$BS" ] && [ "${NIGN:-0}" -ge 3 ] && ok "brain ignores notes and folders that resolve outside the listed folders, and logs it" \
+             || bad "PRIVACY: brain followed a symlink out of the listed folders:${BS:- (or no ignored line)}"
+case "$(brun zzalias 'zzalias|Projects/alias.md')" in *"Synthetic project"*) ok "a symlink that resolves inside the listed folders still works" ;;
+  *) bad "brain refused a symlink that resolves inside the listed folders" ;; esac
+# The folder and note names can equal the window title's project, so the brain script keeps
+# them off argv too (a canary-named folder, traced with bash -x).
+BCAN="brn$(printf '%s' canary)$$"; mkdir -p "$SBT/vault/Projects/$BCAN"
+printf '## Senti\nCanary folder note.\n' > "$SBT/vault/Projects/$BCAN/$BCAN.md"
+WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP=/nonexistent SENTI_SLABEL="$BCAN — x" \
+  bash -x "$CFG/senti-brain.sh" >"$SBT/brain.out" 2>"$SBT/brain.xtrace"
+BX="$(xargv "$SBT/brain.xtrace" "$BCAN")"
+/usr/bin/grep -q 'Canary folder note' "$SBT/brain.out" && [ "$BX" = 0 ] \
+  && ok "brain reads a project's note without its name on any process's argv" \
+  || bad "brain put the project name on the argv of $BX command(s) (or did not read the note)"
 
 echo "── context prefetch (key-down warm-up) ──"
 PKEY="900003"

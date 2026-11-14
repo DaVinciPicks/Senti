@@ -17,6 +17,8 @@
 #     and also the entire risk. It rides only heavy turns (senti_intent in senti-lib.sh).
 #   - So: only the folders listed in WF_BRAIN_DIRS are ever searched. There is no
 #     default list, and the whole bridge is off unless WF_BRAIN=1.
+#   - Notes and folders that resolve outside the listed folders, including through
+#     symlinks, are ignored and logged as "ignored (outside the allowlist)".
 #   - Digest is hard-capped (WF_BRAIN_MAX chars). A note can control exactly what
 #     Senti sees by adding a "## Senti" section — then ONLY that section is used.
 #   - The log says "brain: prepared" when a digest is built (that happens at key-down, when
@@ -55,9 +57,9 @@ MAP="${WF_BRAIN_MAP:-$HOME/.config/senti/brain-map.txt}"
 # through it. Never send a raw note.
 brain_digest() {
   local f="$1" d
-  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## (?:Senti|Sanele)\s*\n(.*?)(?=^## |\z)/ms' "$f")"
-  blank "$d" && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' "$f")"
-  blank "$d" && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
+  d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## (?:Senti|Sanele)\s*\n(.*?)(?=^## |\z)/ms' < "$f")"
+  blank "$d" && d="$(/usr/bin/perl -0777 -ne 'print $1 if /^## For future Claude\s*\n(.*?)(?=^## |\z)/ms' < "$f")"
+  blank "$d" && d="$(/usr/bin/perl -0777 -pe 's/\A---\n.*?\n---\n//s' < "$f" | /usr/bin/grep -v '^#' | /usr/bin/grep -v '^\s*$' | head -10)"
   printf '%s' "$d" \
     | /usr/bin/perl -pe 's/\[\[[^\]|]*\|([^\]]*)\]\]/$1/g; s/\[\[([^\]]*)\]\]/$1/g' \
     | cut -c1-100000 | head -c "$MAX"
@@ -80,7 +82,6 @@ DIRS="${WF_BRAIN_DIRS:-}"
 [ -n "$DIRS" ] || { [ "$PREVIEW" = 1 ] && echo "WF_BRAIN_DIRS lists no folders, so nothing from your notes is sent."; exit 0; }
 in_allowlist() {   # vault-relative path inside an allowlisted dir, no escape hatches
   case "$1" in /*|*..*) return 1 ;; esac
-  [ -L "$VAULT/$1" ] && return 1
   local rel
   while IFS= read -r rel; do
     case "$1" in "$rel"/*) return 0 ;; esac
@@ -90,16 +91,56 @@ EOF
   return 1
 }
 
+# Names alone are not enough: a symlinked folder or note inside a listed folder can point
+# anywhere on the Mac. So every folder and note is checked by its RESOLVED real path against
+# the resolved listed folders, and anything that lands outside them is ignored and logged.
+# Folders resolve with cd -P / pwd -P (builtins, in a subshell). A note that is itself a
+# symlink resolves with perl's abs_path, the path passed in the environment: folder and
+# note names can match the window title, so they never go on a command line.
+realdir() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+realnote() {   # realnote <file> -> its real path, if it resolves to a regular file
+  local f="$1" dir
+  if [ -L "$f" ]; then
+    SENTI_RP="$f" /usr/bin/perl -MCwd=abs_path -e 'my $r = abs_path($ENV{SENTI_RP}); print $r if defined $r && -f $r' 2>/dev/null
+  else
+    [ -f "$f" ] || return 0
+    dir="$(realdir "${f%/*}")"; [ -n "$dir" ] && printf '%s/%s' "$dir" "${f##*/}"
+  fi
+}
+ROOTS=""
+while IFS= read -r rel; do
+  [ -n "$rel" ] && [ -d "$VAULT/$rel" ] || continue
+  r="$(realdir "$VAULT/$rel")"; [ -n "$r" ] && ROOTS="$ROOTS
+$r"
+done <<EOF
+$DIRS
+EOF
+inside_roots() {   # inside_roots <real path> -> 0 when it sits under a resolved listed folder
+  local r
+  [ -n "$1" ] || return 1
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    case "$1" in "$r"/*) return 0 ;; esac
+  done <<EOF
+$ROOTS
+EOF
+  return 1
+}
+ignored() { echo "$(date '+%F %T') brain: $1 ignored (outside the allowlist)" >> "$WF_LOG"; }
+
 # 1. Explicit map wins (format: project|vault-relative/path.md ; # comments allowed).
 # Map entries obey the same allowlist as the scan below; they were a way around it
 # (People/ notes, or ../ out of the vault entirely).
 if [ -f "$MAP" ]; then
   while IFS='|' read -r k v; do
     case "$k" in ''|\#*) continue ;; esac
-    in_allowlist "$v" || { echo "$(date '+%F %T') brain: map entry for '$k' ignored (outside the allowlist)" >> "$WF_LOG"; continue; }
+    in_allowlist "$v" || { ignored "map entry for '$k'"; continue; }
     NK="$(norm "$k")"
     if [ -n "$NK" ] && { case "$NH" in *"$NK"*) true ;; *) case "$NK" in *"$NH"*) true ;; *) false ;; esac ;; esac }; then
-      [ -f "$VAULT/$v" ] && NOTE="$VAULT/$v" && break
+      { [ -f "$VAULT/$v" ] || [ -L "$VAULT/$v" ]; } || continue
+      RP="$(realnote "$VAULT/$v")"
+      inside_roots "$RP" || { ignored "map entry for '$k'"; continue; }
+      NOTE="$RP"; break
     fi
   done < "$MAP"
 fi
@@ -110,16 +151,27 @@ if [ -z "$NOTE" ]; then
     [ -d "$VAULT/$rel" ] || continue
     for d in "$VAULT/$rel"/*/; do
       [ -d "$d" ] || continue
-      base="$(basename "$d")"
+      base="${d%/}"; base="${base##*/}"
       NB="$(norm "$base")"
       [ "${#NB}" -lt 3 ] && continue
       case "$NH" in *"$NB"*) M=1 ;; *) case "$NB" in *"$NH"*) M=1 ;; *) M=0 ;; esac ;; esac
       if [ "$M" = "1" ]; then
-        if [ -f "$d$base.md" ]; then NOTE="$d$base.md"
+        inside_roots "$(realdir "$d")" || { ignored "folder '$rel/$base'"; continue; }
+        CAND=""
+        if [ -f "$d$base.md" ] || [ -L "$d$base.md" ]; then CAND="$d$base.md"
         else
-          # Convention not followed — accept a single unambiguous note, else skip.
-          only="$(/usr/bin/find "$d" -maxdepth 1 -name '*.md' | head -2)"
-          [ "$(printf '%s\n' "$only" | /usr/bin/grep -c .)" = "1" ] && NOTE="$only"
+          # Convention not followed: accept a single unambiguous note, else skip.
+          NMD=0
+          for m in "$d"*.md; do
+            { [ -f "$m" ] || [ -L "$m" ]; } || continue
+            NMD=$((NMD+1)); CAND="$m"
+          done
+          [ "$NMD" = 1 ] || CAND=""
+        fi
+        if [ -n "$CAND" ]; then
+          RP="$(realnote "$CAND")"
+          if inside_roots "$RP"; then NOTE="$RP"
+          else ignored "note '$rel/$base/${CAND##*/}'"; fi
         fi
         [ -n "$NOTE" ] && break 2
       fi
@@ -136,7 +188,7 @@ fi
 
 DIGEST="$(brain_digest "$NOTE")"
 blank "$DIGEST" && { [ "$PREVIEW" = 1 ] && echo "The matching note has nothing to send."; exit 0; }
-NAME="$(basename "$NOTE")"
+NAME="${NOTE##*/}"
 NCH="$(printf '%s' "$DIGEST" | wc -c | tr -d ' ')"
 
 if [ "$PREVIEW" = 1 ]; then
