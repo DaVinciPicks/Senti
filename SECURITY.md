@@ -72,9 +72,11 @@ Each line names the code that does it, so you can check it.
   `scrub`).
 - **Notes have one gate.** When the notes feature is on, every path that sends note text goes
   through `brain_digest()` in `senti-brain.sh`, which takes only the `## Senti` section (or a capped
-  fallback) and never a whole note. It searches only the folders you list in `WF_BRAIN_DIRS`. A
-  `brain-map.txt` entry outside those folders (an absolute path, `..`, or a symlink) is ignored. The
-  bridge is off unless `WF_BRAIN=1`.
+  fallback) and never a whole note. It searches only the folders you list in `WF_BRAIN_DIRS`, and
+  checks every note and folder by its resolved real path against those folders.
+  Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
+  The log says "ignored (outside the allowlist)" when that happens. The bridge is off unless
+  `WF_BRAIN=1`.
 - **Checked model download.** `install.sh` checks the default speech model against its published
   SHA-256 and deletes a download that does not match.
 

@@ -63,6 +63,8 @@ All notable changes to Senti. Dates are in US Eastern time.
   clear them.
 - The project name from the window title no longer appears in a file listing's arguments when
   Senti looks for the Claude Code session file; the lookup is a bash glob loop.
+- The notes bridge checks each note and folder by its real path, so a symlinked folder or note that
+  points outside the folders in `WF_BRAIN_DIRS` is ignored instead of read.
 - Reading an empty `model.pref` no longer stops the speech server from starting.
 - Esc during Command sends nothing, stops the request in flight, and restores an empty clipboard to
   empty.
