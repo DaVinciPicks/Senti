@@ -16,7 +16,7 @@ ICONSET="$CFG/appicon.iconset"
 RESVG="${RESVG:-/opt/homebrew/bin/resvg}"
 if [ ! -x "$RESVG" ]; then
   command -v resvg >/dev/null 2>&1 && RESVG="$(command -v resvg)" || {
-    echo "  warning: resvg not found — skipping icon build (brew install resvg)" >&2; exit 0; }
+    echo "  warning: resvg not found, so the icon build is skipped (brew install resvg)" >&2; exit 0; }
 fi
 
 rm -rf "$ICONSET"; mkdir -p "$ICONSET"
