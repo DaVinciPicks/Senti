@@ -238,7 +238,7 @@ This is off unless you turn it on. If you keep an Obsidian vault, a heavy Prompt
 opens with "think hard" or "today let's work on") can add a short digest of your note for the project
 you are in. Senti reads only the folders you list (so don't list one that holds notes about
 people), and sends the note's `## Senti` section if it has one, otherwise its `## For future Claude` section, otherwise its first 10 lines,
-capped at 700 characters.
+capped at 700 bytes.
 Notes and folders that resolve outside the listed folders, including through symlinks, are ignored.
 Each digest that joins a request is written to the log. To turn it on, add
 to `~/.config/senti/config.sh`:

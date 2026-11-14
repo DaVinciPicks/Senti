@@ -42,7 +42,7 @@ On a heavy turn Senti adds:
 - **Your notes digest**, only if you turned notes on with `WF_BRAIN=1` and listed folders in
   `WF_BRAIN_DIRS`. Senti picks the note for the current project and sends its `## Senti` section. A
   note without one sends its `## For future Claude` section, or else its first 10 lines. The digest is
-  capped at 700 characters (`WF_BRAIN_MAX`). Add a `## Senti` section to a note to decide exactly what
+  capped at 700 bytes (`WF_BRAIN_MAX`). Add a `## Senti` section to a note to decide exactly what
   can leave. To see what would be sent, without sending anything, run
   `bash ~/.config/senti/senti-brain.sh --preview <project>`.
 
