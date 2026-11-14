@@ -1032,6 +1032,9 @@ function wf.saveClipboard()
   local saved = { text = hs.pasteboard.getContents() }
   local okT, types = pcall(hs.pasteboard.contentTypes)
   if not okT or type(types) ~= "table" then return saved end
+  -- A truly empty clipboard (no types at all) must be restored to empty, or a selection that
+  -- command mode copied stays behind. Unreadable types (file promises) are NOT empty.
+  if #types == 0 then saved.empty = true; return saved end
   local rich = false
   for _, t in ipairs(types) do
     if t:find("^dyn%.") or t:find("promise") then return saved end
@@ -1047,6 +1050,7 @@ end
 -- Restore after our paste, unless the user copied something new in the meantime.
 function wf.restoreClipboard(saved, ourCount)
   if not saved or hs.pasteboard.changeCount() ~= ourCount then return end
+  if saved.empty then hs.pasteboard.clearContents(); return end
   if saved.all then
     -- pcall's first value is only "didn't throw"; writeAllData's own result says whether
     -- every flavour was written (it clears first, so a failure can leave it empty).
