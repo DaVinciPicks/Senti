@@ -83,17 +83,32 @@ fi
 #
 # This only resolves for Claude Code. The Claude desktop app, ChatGPT and everything else
 # have no such file and fall through to family-level guidance, exactly as before.
+#
+# The project name comes from the window title, and the matching directory and transcript
+# paths contain it, so none of them may reach a process's argv (ps shows argv to every
+# process). Everything here is bash builtins: parameter expansion for the name, a glob loop
+# with the [ -nt ] test for "newest", and the transcript reaches tail through a redirect.
+# An unmatched glob stays literal on bash 3.2 (no nullglob), so every hit is tested first.
 cc_model() {
-  local proj base dir newest
-  proj="$(printf '%s' "${TITLE:-}" | /usr/bin/sed 's/ —.*//; s/^[[:space:]]*//; s/[[:space:]]*$//')"
+  local proj base dir newest d
+  proj="${TITLE:-}"; proj="${proj%% —*}"
+  proj="${proj#"${proj%%[![:space:]]*}"}"; proj="${proj%"${proj##*[![:space:]]}"}"
   [ -n "$proj" ] || return 0
   base="$HOME/.claude/projects"; [ -d "$base" ] || return 0
-  dir="$(/bin/ls -1dt "$base"/*"$proj" 2>/dev/null | head -1)"
+  dir=""
+  for d in "$base"/*"$proj"; do
+    [ -d "$d" ] || continue
+    { [ -z "$dir" ] || [ "$d" -nt "$dir" ]; } && dir="$d"
+  done
   [ -n "$dir" ] || return 0
-  newest="$(/bin/ls -1t "$dir"/*.jsonl 2>/dev/null | head -1)"
+  newest=""
+  for d in "$dir"/*.jsonl; do
+    [ -f "$d" ] || continue
+    { [ -z "$newest" ] || [ "$d" -nt "$newest" ]; } && newest="$d"
+  done
   [ -n "$newest" ] || return 0
   # Only the tail: transcripts reach tens of MB and the newest model line is at the end.
-  /usr/bin/tail -c 120000 "$newest" 2>/dev/null \
+  /usr/bin/tail -c 120000 < "$newest" 2>/dev/null \
     | /usr/bin/grep -oE '"model":"claude-[a-z0-9.-]+"' | tail -1 \
     | /usr/bin/sed 's/.*"model":"//; s/"$//'
 }

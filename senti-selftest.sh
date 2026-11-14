@@ -27,6 +27,20 @@ psnap() { /bin/ps -Ao args= 2>/dev/null; }   # snapshot into a variable, match w
 
 # A canary assembled at runtime, so no command line (this script's included) spells it whole.
 canary() { printf '%s%s%s%s' "sk-" "selftest" "Can" "ary$$$1"; }
+# xargv <xtrace file> <text>: count traced commands that ran as a separate process (an
+# absolute path, or not a shell builtin or keyword) and carried <text> in their arguments.
+# Deterministic where a ps loop is not: a /bin/ls lives for milliseconds.
+xargv() {
+  local l w n=0
+  while IFS= read -r l; do
+    case "$l" in *"$2"*) ;; *) continue ;; esac
+    w="${l#"${l%%[!+]*}"}"; w="${w# }"; w="${w%% *}"; w="${w//\'/}"
+    case "$w" in *=*) continue ;; esac
+    case "$(type -t "$w")" in builtin|keyword|'') continue ;; esac
+    n=$((n+1))
+  done < "$1"
+  printf '%s' "$n"
+}
 
 # ════════════════════════════════════ 1. INSTALLED ═════════════════════════════════════
 if [ "$CI" = 0 ]; then
@@ -536,6 +550,18 @@ SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Ter
 printf '{"message":{"model":"claude-opus-6"}}\n' > "$SB/.claude/projects/-x-code-selftestproj/s.jsonl"
 SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Terminal >/dev/null 2>&1
 /usr/bin/grep -q "for 'claude-opus-6'" "$WF_LOG" && bad "claude-opus-6 borrowed an older generation's section" || ok "a new generation (claude-opus-6) never borrows claude-opus-5"
+# The window title never reaches a process's argv: not the project name, not the matching
+# transcript directory or file (both contain it), whether or not a directory matches.
+TCAN="Tgt$(printf '%s' Canary)$$"
+mkdir -p "$SB/.claude/projects/-x-code-$TCAN"
+printf '{"message":{"model":"claude-opus-5-5"}}\n' > "$SB/.claude/projects/-x-code-$TCAN/s.jsonl"
+TX=0
+for TTL in "$TCAN" "${TCAN}Miss"; do
+  SENTI_SLABEL="$TTL — secret task — claude" bash -x "$CFG/senti-target.sh" Terminal >/dev/null 2>"$SBT/target.xtrace"
+  TX=$((TX + $(xargv "$SBT/target.xtrace" "$TTL")))
+done
+[ "$TX" = 0 ] && ok "target resolver keeps the window title off every process's argv (match and no match)" \
+              || bad "LEAK: the window title reached the argv of $TX command(s) in senti-target.sh"
 
 echo "── prompt-mode path parity ──"
 # Parity is STRUCTURAL: both paths source senti-lib.sh and call BOTH shared functions
