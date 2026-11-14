@@ -80,6 +80,8 @@ You need:
 
 - a Mac with Apple Silicon (M1 or later). The installer stops on any other Mac;
 - [Homebrew](https://brew.sh);
+- the Xcode Command Line Tools (`xcode-select --install`). They are needed once, to build the helper
+  that shows the Microphone permission prompt; `install.sh` builds it only when they are present;
 - about 0.6 GB of disk for the default speech model (574 MB), plus about 80 MB for the Homebrew
   packages themselves, not counting libraries they pull in (measured 13 November 2026).
 
@@ -106,8 +108,7 @@ What `install.sh` does, in order:
 `./install.sh --yes` installs missing pieces without asking. Running it again later updates Senti.
 When a release changes the config schema (1.1 does: v8 to v9), `install.sh` saves your old file as
 `config.sh.v<N>.bak` and installs the new one; copy your personal settings back from that file.
-Your `replacements.txt`, `brain-map.txt` and eval cases are kept. The Xcode Command Line Tools (`xcode-select --install`) are optional: Senti
-uses them to build a small helper that brings up the microphone permission prompt.
+Your `replacements.txt`, `brain-map.txt` and eval cases are kept.
 
 The [Releases page](https://github.com/Leonardo-Engineering/Senti/releases/latest) has the same
 source. Release 1.0.0 has no attached files. When a release does attach a `SHA256SUMS` file, check
