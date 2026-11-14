@@ -29,7 +29,7 @@ from it. If you change the schema, bump `WF_CONFIG_VERSION` in `config.sh`.
 1. **Syntax:** `for f in senti-*.sh install.sh uninstall.sh app/*.sh; do /bin/bash -n "$f"; done`
 2. **Offline self-test, from your checkout:** `bash senti-selftest.sh --ci`. It needs no
    Hammerspoon, no speech server, no key and no network, and runs in a throwaway HOME with a
-   throwaway keychain. CI runs the same two steps on every pull request.
+   throwaway keychain. CI runs the same 2 steps on every pull request.
 3. **Installed self-test, if you changed runtime behaviour:** `./install.sh`, then
    `bash ~/.config/senti/senti-selftest.sh`. With a key, its live checks call your AI provider (a
    fraction of a cent) and send a screenshot of your main display. Set `WF_SELFTEST_OFFLINE=1` to skip

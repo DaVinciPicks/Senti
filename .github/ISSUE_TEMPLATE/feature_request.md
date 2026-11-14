@@ -7,7 +7,7 @@ labels: enhancement
 
 **What you want to do**
 
-Describe the task, not the solution. For example: "I dictate into two terminals and want each one
+Describe the task, not the solution. For example: "I dictate into 2 terminals and want each one
 to remember its own history."
 
 **What happens today**

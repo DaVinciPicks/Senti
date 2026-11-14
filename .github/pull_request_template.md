@@ -1,6 +1,6 @@
 ## What this changes
 
-<!-- One or two sentences on the behaviour change. -->
+<!-- 1 or 2 sentences on the behaviour change. -->
 
 ## How you checked it
 
