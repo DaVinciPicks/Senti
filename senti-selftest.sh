@@ -12,8 +12,9 @@
 #      keys (presence only), a transcription round trip, and live AI calls.
 #   2. SANDBOX (always): logic checks run against a throwaway HOME staged from the scripts
 #      under test, with a throwaway keychain (SENTI_KEYCHAIN), so the key helper, the
-#      provider request shapes, the argv canaries, memory gating and the KB resolver are
-#      proven without touching your settings, your keys or your login keychain.
+#      provider request shapes, the argv canaries, memory gating, the notes sources (a
+#      mock Notion API on 127.0.0.1, a synthetic vault for retrieval) and the KB resolver
+#      are proven without touching your settings, your keys or your login keychain.
 set -uo pipefail
 CI=0
 [ "${1:-}" = "--ci" ] && CI=1
@@ -86,8 +87,8 @@ fi
 echo "── config ──"
 # Bump with WF_CONFIG_VERSION in config.sh: a restored config.sh.bak from before the
 # rename points every path at the old directories, and ">= 2" let that pass.
-[ "${WF_CONFIG_VERSION:-0}" -ge 9 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
-                                                 || bad "config schema stale (v${WF_CONFIG_VERSION:-0}) — re-run install.sh"
+[ "${WF_CONFIG_VERSION:-0}" -ge 10 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
+                                                  || bad "config schema stale (v${WF_CONFIG_VERSION:-0}) — re-run install.sh"
 
 echo "── install integrity & process hygiene ──"
 # The failures that actually happened (2026-10-17) and the ones a partial install leaves.
@@ -237,8 +238,9 @@ fi
 for v in $(compgen -v | /usr/bin/grep '^WF_'); do unset "$v"; done
 SBT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/senti-selftest.XXXXXX")"
 SB="$SBT/home"
-KCP=""
+KCP=""; MOCKPID=""
 cleanup() {
+  [ -n "$MOCKPID" ] && kill "$MOCKPID" >/dev/null 2>&1
   [ -n "$KCP" ] && /usr/bin/security delete-keychain "$KCP" >/dev/null 2>&1
   /bin/rm -rf "${SBT:?}"
 }
@@ -248,7 +250,7 @@ chmod 700 "$SB/.config/senti" "$SB/.cache/senti"
 cp "$SRC"/senti-*.sh "$SB/.config/senti/"
 # The sandbox proves the CODE on the shipped defaults: a tuned config.sh (notes bridge on, a
 # provider or model pin) would override the environment these checks set. Strip those lines.
-/usr/bin/sed -E '/^[[:space:]]*(export[[:space:]]+)?(WF_BRAIN|WF_BRAIN_DIRS|WF_VAULT|WF_BRAIN_MAX|WF_BRAIN_MAP|WF_AI_PROVIDER|WF_TEXT_MODEL|WF_VISION_MODEL)=/d' \
+/usr/bin/sed -E '/^[[:space:]]*(export[[:space:]]+)?(WF_BRAIN|WF_BRAIN_DIRS|WF_VAULT|WF_BRAIN_MAX|WF_BRAIN_MAP|WF_BRAIN_RETRIEVE|WF_BRAIN_RETRIEVE_MIN|WF_BRAIN_NOTION|WF_NOTION_KEY|WF_NOTION_TIMEOUT|WF_NOTION_TTL_MIN|WF_NOTION_API|WF_AI_PROVIDER|WF_TEXT_MODEL|WF_VISION_MODEL)=/d' \
   "$SRC/config.sh" > "$SB/.config/senti/config.sh"
 for f in replacements.txt brain-map.txt ai-models.json; do [ -f "$SRC/$f" ] && cp "$SRC/$f" "$SB/.config/senti/"; done
 cp "$SRC"/prompts/*.md "$SB/.config/senti/prompts/" 2>/dev/null
@@ -293,8 +295,8 @@ elif [ "$CI" = 1 ]; then
 fi
 
 echo "── config ──"
-[ "${WF_CONFIG_VERSION:-0}" -ge 9 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
-                                                 || bad "config schema stale (v${WF_CONFIG_VERSION:-0})"
+[ "${WF_CONFIG_VERSION:-0}" -ge 10 ] 2>/dev/null && ok "config schema v${WF_CONFIG_VERSION:-0}" \
+                                                  || bad "config schema stale (v${WF_CONFIG_VERSION:-0})"
 MISSING=""
 for v in WF_OPENAI_KEY WF_EFFORT WF_OPERATING_PROMPT WF_MODEL_KB WF_LOG WF_RUN WF_URL; do
   eval "val=\${$v:-}"; [ -z "$val" ] && MISSING="$MISSING $v"
@@ -489,6 +491,47 @@ PP="$(/usr/bin/stat -f '%Lp' "$CFG/ai.pref" 2>/dev/null)"
   && ok "use writes ai.pref (mode 600) for the menu's provider and model" || bad "use: ai.pref wrong or mode ${PP:-none}"
 /bin/rm -f "$CFG/ai.pref"
 bash "$KEY" clear openai >/dev/null 2>&1; bash "$KEY" clear openrouter >/dev/null 2>&1
+# The Notion token is a key account, not an AI provider: same storage rules, never resolved.
+CN="$(printf '%s%s%s' "ntn_" "selftestNotion" "Tok$$")"
+( SENTI_IN="$CN" bash "$KEY" set notion > "$SBT/nset.out" 2>&1; echo $? > "$SBT/nset.rc" ) &
+SP=$!; NLEAK=0
+while kill -0 "$SP" 2>/dev/null; do SNAP="$(psnap)"; case "$SNAP" in *"$CN"*) NLEAK=1 ;; esac; done
+wait "$SP"; RC="$(cat "$SBT/nset.rc")"
+if [ -n "$KCP" ]; then
+  [ "$RC" = 0 ] && /usr/bin/grep -q '(Keychain)' "$SBT/nset.out" && [ ! -e "$CFG/notion-key" ] \
+    && ok "set notion stores the token in the Keychain (account notion), no plaintext file" || bad "set notion: exit $RC $(cat "$SBT/nset.out")"
+else
+  [ "$RC" = 19 ] && [ "$(/usr/bin/stat -f '%Lp' "$CFG/notion-key" 2>/dev/null)" = 600 ] \
+    && ok "without the Keychain, set notion writes notion-key mode 600 and exits 19" || bad "set notion fallback: exit $RC"
+fi
+SENTI_IN="$CN" bash "$KEY" set notion ntn_argvtoken123 >/dev/null 2>&1; RC=$?
+SENTI_IN='ntn_bad"quote1234' bash "$KEY" set notion >/dev/null 2>&1; RC2=$?
+[ "$RC/$RC2" = "2/2" ] && ok "set notion refuses a token on argv and a token outside [A-Za-z0-9._-] (exit 2)" || bad "set notion argv/charset gave $RC/$RC2"
+NJ="$(bash "$KEY" status --json 2>/dev/null)"; NT="$(bash "$KEY" status 2>/dev/null)"
+case "$NJ$NT" in *"$CN"*) bad "status printed the Notion token" ;; *) ok "status never prints the Notion token" ;; esac
+printf '%s' "$NJ" | /usr/bin/python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["tokens"]["notion"]["present"] and "notion" not in d["keys"] and d["active"]["provider"] != "notion"' 2>/dev/null \
+  && ok "status --json reports the token under tokens, never under keys or as the active provider" || bad "status --json notion: $NJ"
+NU="$(bash "$KEY" use notion 2>/dev/null; echo "rc=$?")"; NTE="$(bash "$KEY" test notion 2>/dev/null; echo "rc=$?")"
+NR="$(SENTI_PROVIDER=notion bash -c 'source "$HOME/.config/senti/config.sh"; source "$1"; senti_ai_resolve text; echo "$SENTI_R_PROVIDER"' _ "$KEY")"
+NA="$(bash -c 'source "$HOME/.config/senti/config.sh"; source "$1"; senti_ai_resolve text; echo "$SENTI_R_PROVIDER/$SENTI_R_SOURCE"' _ "$KEY")"
+case "$NU|$NTE|$NR|$NA" in "rc=2|rc=2|openai|openai/auto") ok "notion is not an AI provider: use and test refuse it, SENTI_PROVIDER=notion and the auto tier ignore it" ;;
+  *) bad "notion leaked into provider handling: use $NU, test $NTE, env $NR, auto $NA" ;; esac
+/usr/bin/grep -qi 'notion' "$CFG/ai-models.json" && bad "ai-models.json mentions notion" || ok "ai-models.json has no notion entry (not in the model picker)"
+R3="$(bash -c 'source "$HOME/.config/senti/config.sh"; source "$1"; senti_key_read notion; [ "$SENTI_KEY_VALUE" = "$2" ] && echo same' _ "$KEY" "$CN")"
+[ "$R3" = same ] && ok "the read path returns the Notion token byte for byte" || bad "notion read path mismatch"
+if [ -n "$KCP" ]; then
+  bash "$KEY" clear notion >/dev/null 2>&1
+  ( umask 077; printf '%s\n' "$CN" > "$CFG/notion-key" )
+  ( bash "$KEY" migrate > "$SBT/nmig.out" 2>&1 ) &
+  SP=$!
+  while kill -0 "$SP" 2>/dev/null; do SNAP="$(psnap)"; case "$SNAP" in *"$CN"*) NLEAK=1 ;; esac; done
+  wait "$SP"
+  /usr/bin/grep -q 'migrated notion to Keychain' "$SBT/nmig.out" && [ ! -e "$CFG/notion-key" ] \
+    && ok "migrate moves notion-key into the Keychain after a verified read-back" || bad "notion migrate: $(cat "$SBT/nmig.out")"
+fi
+unset SNAP
+[ "$NLEAK" = 0 ] && ok "no Notion token canary in any ps snapshot during set and migrate" || bad "LEAK: the Notion token was visible in ps"
+# Kept stored: the Notion checks below read it. Cleared at the end of that section.
 
 echo "── typed exit codes (no network) ──"
 NOK="$(SENTI_PROVIDER=anthropic SENTI_SYS=x SENTI_IN=hi bash "$AI" 2>/dev/null; echo "rc=$?")"
@@ -649,6 +692,281 @@ BX="$(xargv "$SBT/brain.xtrace" "$BCAN")"
 /usr/bin/grep -q 'Canary folder note' "$SBT/brain.out" && [ "$BX" = 0 ] \
   && ok "brain reads a project's note without its name on any process's argv" \
   || bad "brain put the project name on the argv of $BX command(s) (or did not read the note)"
+
+echo "── Notion notes source (a mock Notion API on 127.0.0.1) ──"
+# The mock serves Notion-shaped JSON for GET /v1/blocks/<id>/children, accepts only the token
+# stored above, and logs each request's path, auth result and Notion-Version (never the
+# token) so "nothing was sent" is checked on the server side. Its inputs come from the
+# environment, never its command line.
+cat > "$SBT/notion-mock.py" <<'PY'
+import json, os, time, threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit, parse_qs
+E = os.environ
+TOKEN, MARK, LOG = E["SENTI_MOCK_TOKEN"], E["SENTI_MOCK_MARK"], E["SENTI_MOCK_LOG"]
+OK, TOG, SLOW, ERR, REDIR = ("%d1111111-aaaa-4bbb-8ccc-000000000000" % i for i in range(1, 6))
+KIDS = "61111111-aaaa-4bbb-8ccc-000000000000"
+LOCK = threading.Lock()
+N = [0]
+def blk(ty, text, **kw):
+    N[0] += 1
+    b = {"object": "block", "id": kw.pop("id", "77777777-0000-4000-8000-%012d" % N[0]), "type": ty,
+         "has_children": kw.pop("has_children", False), "in_trash": False}
+    b[ty] = dict(rich_text=[{"type": "text", "plain_text": text, "text": {"content": text}}], **kw)
+    return b
+PAGES = {
+    (OK, None): ([blk("heading_1", "Project"), blk("paragraph", "intro-" + MARK),
+                  blk("heading_2", "Private"), blk("paragraph", "private-" + MARK), blk("image", "")], "cur2"),
+    (OK, "cur2"): ([blk("heading_2", "Senti"), blk("paragraph", "senti-" + MARK + " first fact"),
+                    blk("bulleted_list_item", "second fact"), blk("heading_2", "After"),
+                    blk("paragraph", "after-" + MARK)], None),
+    (TOG, None): ([blk("paragraph", "toggle intro"),
+                   blk("heading_2", "Senti", id=KIDS, has_children=True, is_toggleable=True),
+                   blk("heading_2", "Later"), blk("paragraph", "later-" + MARK)], None),
+    (KIDS, None): ([blk("paragraph", "toggled-" + MARK)], None),
+}
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+    def reply(self, code, obj, extra=None):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def do_GET(self):
+        u = urlsplit(self.path)
+        auth = "ok" if self.headers.get("Authorization") == "Bearer " + TOKEN else "bad"
+        with LOCK, open(LOG, "a") as f:
+            f.write("%s %s auth=%s version=%s\n" % (self.command, u.path, auth, self.headers.get("Notion-Version")))
+        if auth != "ok":
+            return self.reply(401, {"object": "error", "status": 401})
+        p = u.path.strip("/").split("/")
+        if len(p) == 4 and p[:2] == ["v1", "blocks"] and p[3] == "children":
+            if p[2] == SLOW:
+                time.sleep(6)
+            if p[2] == ERR:
+                return self.reply(500, {"object": "error", "status": 500})
+            if p[2] == REDIR:
+                return self.reply(302, {}, {"Location": "http://127.0.0.1:%d/v1/redirected" % self.server.server_port})
+            hit = PAGES.get((p[2], (parse_qs(u.query).get("start_cursor") or [None])[0]))
+            if hit:
+                return self.reply(200, {"object": "list", "type": "block", "block": {}, "results": hit[0],
+                                        "next_cursor": hit[1], "has_more": hit[1] is not None})
+        self.reply(404, {"object": "error", "status": 404, "code": "object_not_found"})
+    do_POST = do_GET
+srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+srv.daemon_threads = True
+with open(E["SENTI_MOCK_PORTFILE"] + ".tmp", "w") as f:
+    f.write(str(srv.server_port))
+os.replace(E["SENTI_MOCK_PORTFILE"] + ".tmp", E["SENTI_MOCK_PORTFILE"])
+srv.serve_forever()
+PY
+NMARK="nm$$x"; NLOG="$SBT/notion-req.log"; : > "$NLOG"
+SENTI_MOCK_TOKEN="$CN" SENTI_MOCK_MARK="$NMARK" SENTI_MOCK_LOG="$NLOG" SENTI_MOCK_PORTFILE="$SBT/notion-port" \
+  /usr/bin/python3 -I "$SBT/notion-mock.py" 2>/dev/null &
+MOCKPID=$!
+for _ in $(seq 1 50); do [ -s "$SBT/notion-port" ] && break; /bin/sleep 0.1; done
+NPORT="$(cat "$SBT/notion-port" 2>/dev/null)"
+if [ -z "$NPORT" ]; then
+  bad "the Notion mock server did not start"
+else
+  printf '%s\n' "# notion pages" \
+    "nalpha|notion:https://www.notion.so/acme/Cafe-Notes-11111111aaaa4bbb8ccc000000000000?pvs=4" \
+    "nbeta = notion:21111111-aaaa-4bbb-8ccc-000000000000" \
+    "nslow|notion:31111111aaaa4bbb8ccc000000000000" "nerr|notion:41111111aaaa4bbb8ccc000000000000" \
+    "nredir|notion:51111111aaaa4bbb8ccc000000000000" > "$SBT/notion-map.txt"
+  NENV=(env WF_BRAIN_NOTION=1 WF_NOTION_API="http://127.0.0.1:$NPORT" WF_BRAIN_MAP="$SBT/notion-map.txt")
+  BR="$CFG/senti-brain.sh"; BC="$WF_RUN/brain"
+  nreq() { /usr/bin/grep -c . "$NLOG" 2>/dev/null || true; }
+  NO="$("${NENV[@]}" SENTI_SLABEL="nalpha — x — claude" bash "$BR" --notion 2>/dev/null)"
+  case "$NO" in *private-$NMARK*|*after-$NMARK*|*intro-$NMARK*) bad "Notion digest carried text outside the Senti section" ;;
+    *"senti-$NMARK first fact"*"second fact"*) ok "a mapped Notion page (a notion.so URL) yields its Senti section, found on the second page of results" ;;
+    *) bad "mapped Notion page gave: ${NO:0:80}" ;; esac
+  NO2="$("${NENV[@]}" SENTI_SLABEL="nbeta — x" bash "$BR" --notion 2>/dev/null)"
+  case "$NO2" in *"toggled-$NMARK"*) case "$NO2" in *later-$NMARK*) bad "toggle page leaked the next section" ;; *) ok "a toggle heading named Senti: its children are the digest (\"project = notion:\" line form)" ;; esac ;;
+    *) bad "toggle heading page gave: ${NO2:0:80}" ;; esac
+  CF="$BC/notion-11111111aaaa4bbb8ccc000000000000.txt"
+  [ "$(/usr/bin/stat -f '%Lp' "$CF" 2>/dev/null)/$(/usr/bin/stat -f '%Lp' "$BC" 2>/dev/null)" = "600/700" ] \
+    && ok "the gated digest is cached mode 600 in a mode 700 brain/ folder" || bad "Notion cache perms: $(/usr/bin/stat -f '%Lp %N' "$CF" "$BC" 2>&1 | tr '\n' ' ')"
+  case "$(cat "$CF" 2>/dev/null)" in *private-$NMARK*|*intro-$NMARK*) bad "the Notion cache holds text outside the gate" ;; *"senti-$NMARK"*) ok "the cache holds only the gated digest" ;; *) bad "Notion cache content unexpected" ;; esac
+  N0="$(nreq)"; "${NENV[@]}" SENTI_SLABEL="nalpha — x" bash "$BR" --notion >/dev/null 2>&1
+  [ "$(nreq)" = "$N0" ] && ok "a second heavy turn within WF_NOTION_TTL_MIN reads the cache, no request" || bad "the Notion cache was not used"
+  /usr/bin/touch -t "$(date -v-20M '+%Y%m%d%H%M.%S')" "$CF"
+  "${NENV[@]}" SENTI_SLABEL="nalpha — x" bash "$BR" --notion >/dev/null 2>&1
+  [ "$(nreq)" -gt "$N0" ] && ok "an expired cache entry is read from Notion again" || bad "an expired Notion cache was still used"
+  /usr/bin/touch -t "$(date -v-20M '+%Y%m%d%H%M.%S')" "$CF"
+  WF_BRAIN_NOTION=1 bash "$CFG/senti-session.sh" sweep >/dev/null 2>&1
+  [ ! -e "$CF" ] && ok "the session sweep deletes Notion digests past their TTL" || bad "the sweep left an expired Notion digest"
+  "${NENV[@]}" SENTI_SLABEL="nalpha — x" bash "$BR" --notion >/dev/null 2>&1
+  WF_BRAIN_NOTION=0 bash "$CFG/senti-session.sh" sweep >/dev/null 2>&1
+  [ ! -e "$CF" ] && ok "with Notion turned off, the sweep deletes every Notion digest" || bad "Notion off: the sweep kept a digest"
+  N0="$(nreq)"
+  NU="$("${NENV[@]}" SENTI_SLABEL="ngamma — x — claude" bash "$BR" --notion 2>/dev/null)"
+  NU2="$("${NENV[@]}" SENTI_SLABEL="ngamma — x — claude" SENTI_SKEY="" bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "think hard about it"' 2>/dev/null)"
+  case "$NU$NU2" in *$NMARK*) bad "an unmapped project received Notion text" ;; *)
+    [ "$(nreq)" = "$N0" ] && ok "an unmapped project sends nothing to Notion (0 requests) and gets no Notion text" || bad "an unmapped project made a Notion request" ;; esac
+  N0="$(nreq)"
+  "${NENV[@]}" SENTI_SKEY=900007 SENTI_SLABEL="nalpha — x — claude" bash "$CFG/senti-lib.sh" 2>/dev/null
+  LT="$("${NENV[@]}" SENTI_SLABEL="nalpha — x — claude" SENTI_SKEY="" bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "make this shorter"' 2>/dev/null)"
+  [ "$(nreq)" = "$N0" ] && [ -z "$LT" ] && ok "the key-down prefetch and a light turn never call Notion" || bad "Notion was called at key-down or on a light turn"
+  /bin/rm -f "$WF_RUN"/ctx-*
+  HT="$("${NENV[@]}" SENTI_SLABEL="nalpha — x — claude" SENTI_SKEY="" bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "today let us work on the cafe"' 2>/dev/null)"
+  case "$HT" in *"Notion page"*"senti-$NMARK"*"END_REFERENCE_CONTEXT"*) ok "a heavy turn carries the Notion digest inside a nonce fence" ;; *) bad "heavy turn Notion block: ${HT:0:80}" ;; esac
+  /usr/bin/grep -q "sent: notion 'Notion page 11111111'" "$WF_LOG" && ok "a heavy turn logs sent: notion with the page id prefix, not the title" || bad "no sent: notion line"
+  "${NENV[@]}" SENTI_SLABEL="nalpha — x — claude" SENTI_SKEY="" SENTI_AI_DRYRUN=1 SENTI_IN="think hard about the cafe" bash "$CFG/senti-prompt.sh" >/dev/null 2>&1
+  /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert any(p["source"]=="notion" and p.get("note")=="Notion page 11111111" and p["chars"]>0 for p in d["parts"])' "$WF_RUN/last-request.json" 2>/dev/null \
+    && ok "last-request.json counts the Notion part by page id, never its text" || bad "last-request.json has no notion part"
+  # The token must never reach a command line: a slow page keeps the fetch alive while ps is
+  # sampled. (The canary was built at runtime; this script's own argv never spells it.)
+  ( "${NENV[@]}" WF_NOTION_TTL_MIN=0 WF_NOTION_TIMEOUT=1.5 SENTI_SLABEL="nslow — x — claude" SENTI_SKEY="" \
+      bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "think hard now"' >/dev/null 2>&1 ) &
+  SP=$!; NLEAK=0; NSNAP=0
+  while kill -0 "$SP" 2>/dev/null; do SNAP="$(psnap)"; NSNAP=$((NSNAP+1)); case "$SNAP" in *"$CN"*) NLEAK=1 ;; esac; done
+  wait "$SP"; unset SNAP
+  [ "$NLEAK" = 0 ] && [ "$NSNAP" -gt 3 ] && ok "the Notion token never appeared in ps ($NSNAP snapshots during a fetch)" || bad "LEAK or no sampling: Notion token in ps=$NLEAK, snapshots $NSNAP"
+  T0="$(now)"
+  NS="$("${NENV[@]}" WF_NOTION_TIMEOUT=1 SENTI_SLABEL="nslow — x" bash "$BR" --notion 2>/dev/null)"
+  T1="$(now)"
+  # Strict on the read's own clock (logged), loose on the wall clock: a loaded CI runner can be
+  # slow to start python, but the read itself must stop at the deadline (the mock waits 6 s).
+  NMS="$(/usr/bin/grep 'unavailable (timeout)' "$WF_LOG" | tail -1 | /usr/bin/sed -E 's/.* ([0-9]+) ms$/\1/')"
+  case "$NMS" in ''|*[!0-9]*) NMS=99999 ;; esac
+  [ "$NMS" -le 1300 ] && /usr/bin/awk -v a="$T0" -v b="$T1" 'BEGIN{exit !(b-a < 4.0)}' && [ -z "$NS" ] \
+    && ok "a Notion page slower than WF_NOTION_TIMEOUT=1 stops at the deadline (read ${NMS} ms, $(/usr/bin/awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.2f", b-a}') s in all) and sends nothing" \
+    || bad "slow Notion page: read ${NMS} ms, $(/usr/bin/awk -v a="$T0" -v b="$T1" 'BEGIN{printf "%.2f", b-a}') s in all, output ${#NS} chars"
+  NE="$("${NENV[@]}" SENTI_SLABEL="nerr — x" bash "$BR" --notion 2>/dev/null)$("${NENV[@]}" SENTI_SLABEL="nredir — x" bash "$BR" --notion 2>/dev/null)"
+  [ -z "$NE" ] && ! /usr/bin/grep -q '/v1/redirected' "$NLOG" && ok "a Notion 500 or redirect sends nothing, and the redirect is never followed" || bad "Notion error or redirect: ${#NE} chars, $(/usr/bin/grep -c redirected "$NLOG") redirected requests"
+  /usr/bin/grep -q 'unavailable (timeout)' "$WF_LOG" && /usr/bin/grep -q 'unavailable (Notion server error)' "$WF_LOG" \
+    && ok "failures log a reason and a time" || bad "Notion failures were not logged"
+  case "$(cat "$WF_LOG")" in *"$CN"*|*"$NMARK"*) bad "senti.log holds Notion page text or the token" ;; *) ok "senti.log holds no Notion text and no token" ;; esac
+  N0="$(nreq)"; "${NENV[@]}" WF_NOTION_API="http://example.invalid" WF_NOTION_TTL_MIN=0 SENTI_SLABEL="nalpha — x" bash "$BR" --notion >/dev/null 2>&1
+  /usr/bin/grep -q 'not api.notion.com or a local test server' "$WF_LOG" && ok "WF_NOTION_API refuses any host but api.notion.com and loopback" || bad "a non-loopback WF_NOTION_API was not refused"
+  /usr/bin/grep -q 'search' "$NLOG" && bad "Notion search was called" || ok "Notion's search endpoint is never called"
+  /usr/bin/grep -v 'auth=ok version=2026-03-11' "$NLOG" | /usr/bin/grep -q . \
+    && bad "a Notion request lacked the token or Notion-Version 2026-03-11" || ok "every Notion request carried the token and Notion-Version 2026-03-11 ($(nreq) requests)"
+  # The Obsidian map loop skips notion lines silently (it once logged map lines it refused).
+  printf 'nalpha|notion:11111111aaaa4bbb8ccc000000000000\nselftestproj|Projects/selftestproj/selftestproj.md\n' > "$SBT/mixed-map.txt"
+  NI0="$(/usr/bin/grep -c 'ignored' "$WF_LOG")"
+  MX="$(WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP="$SBT/mixed-map.txt" SENTI_SLABEL="selftestproj — x" bash "$BR" 2>/dev/null)"
+  case "$MX" in *"Synthetic project"*) [ "$(/usr/bin/grep -c 'ignored' "$WF_LOG")" = "$NI0" ] && ok "Obsidian and Notion lines live in one brain-map.txt; notion lines are never logged as refused vault paths" || bad "a notion map line was logged as an ignored vault entry" ;;
+    *) bad "a mixed brain-map.txt broke the Obsidian lookup" ;; esac
+fi
+kill "$MOCKPID" 2>/dev/null; wait "$MOCKPID" 2>/dev/null; MOCKPID=""
+bash "$KEY" clear notion >/dev/null 2>&1
+
+echo "── retrieval (local keyword search over the listed vault folders) ──"
+# A synthetic vault: project "rworkbench" has a hub note and a non-hub note with the fact a
+# heavy turn needs; filler projects give bm25 a corpus. The decoys are the BEST lexical
+# matches on purpose, so only scoping keeps them out: another project's note, a People/ note
+# inside the project folder, a hidden folder, and a symlink to a note outside the vault.
+RV="$SBT/rvault"; RW="$RV/Projects/rworkbench"
+mkdir -p "$RW/People" "$RW/.trash" "$RV/Projects/racme" "$SBT/routside"
+printf '# rworkbench\n\n## Senti\nA web app for freelancers. Stack: Python, FastAPI, SQLite.\n' > "$RW/rworkbench.md"
+printf '# CSV rules\n\n## For future Claude\nThe accounting export uses semicolons as the separator and rounds totals half-even (fact-r%s).\n' "$$" > "$RW/csv-rules.md"
+printf '# Notes\n\nMeeting about the landing page colours.\n' > "$RW/meeting.md"
+printf '## Senti\naccounting export totals semicolons separator half-even rounding wrong totals (acme-r%s)\n' "$$" > "$RV/Projects/racme/racme.md"
+printf '## Senti\naccounting export totals semicolons separator half-even rounding wrong totals bug (acme2-r%s)\n' "$$" > "$RV/Projects/racme/exports.md"
+printf '## For future Claude\naccounting export totals semicolons separator half-even rounding wrong totals bug (people-r%s)\n' "$$" > "$RW/People/Jane.md"
+printf '## For future Claude\naccounting export totals semicolons separator half-even rounding wrong totals bug (trash-r%s)\n' "$$" > "$RW/.trash/old.md"
+printf '## For future Claude\naccounting export totals semicolons separator half-even rounding wrong totals bug (outside-r%s)\n' "$$" > "$SBT/routside/out.md"
+ln -s "$SBT/routside/out.md" "$RW/linked.md"
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  mkdir -p "$RV/Projects/rf$i"
+  printf '## Senti\nNotes on hobby %s: gardening, travel plans and a reading list.\n' "$i" > "$RV/Projects/rf$i/rf$i.md"
+  printf 'Spent an hour on hobby %s; try the photo export next time.\n' "$i" > "$RV/Projects/rf$i/log.md"
+done
+RENV=(env WF_BRAIN=1 WF_BRAIN_RETRIEVE=1 WF_VAULT="$RV" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP=/nonexistent)
+RQ="today let's work on the export bug where the totals look wrong in the accounting tool"
+rctx() {   # rctx <project> <utterance> → what senti_ctx_for_intent returns
+  "${RENV[@]}" SENTI_SLABEL="$1 — ⠐ x — claude" SENTI_SKEY="" \
+    bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "$1"' _ "$2" 2>/dev/null
+}
+RA="$(rctx rworkbench "$RQ")"
+case "$RA" in *"fact-r$$"*) ok "a heavy turn retrieves the fact from a non-hub note of the right project" ;; *) bad "retrieval missed the non-hub fact: ${RA:0:100}" ;; esac
+case "$RA" in *acme-r$$*|*acme2-r$$*|*people-r$$*|*trash-r$$*|*outside-r$$*) bad "PRIVACY: retrieval sent a decoy (another project, People/, a hidden folder or a symlink out)" ;;
+  *) ok "retrieval never sends another project's note, a People/ note, a hidden folder's note or a symlink out, though each matched better" ;; esac
+/usr/bin/grep -q "sent: vault 'csv-rules.md' [0-9]* chars (retrieved)" "$WF_LOG" && ok "a retrieved note is logged as sent: vault '<note>' N chars (retrieved)" || bad "no sent line for the retrieved note"
+RB="$(rctx racme "$RQ")"
+case "$RB" in *"fact-r$$"*) bad "PRIVACY: another project's window received rworkbench's note" ;; *) ok "another project's heavy turn never receives this project's note" ;; esac
+NR0="$(/usr/bin/grep -c 'retrieved\|retrieval' "$WF_LOG")"
+RL="$(rctx rworkbench "the export bug where the totals look wrong in the accounting tool")"
+"${RENV[@]}" SENTI_SKEY=900008 SENTI_SLABEL="rworkbench — x — claude" SENTI_IN="$RQ" bash "$CFG/senti-lib.sh" 2>/dev/null
+/bin/rm -f "$WF_RUN"/ctx-*
+[ -z "$RL" ] && [ "$(/usr/bin/grep -c 'retrieved\|retrieval' "$WF_LOG")" = "$NR0" ] \
+  && ok "a light turn and the key-down prefetch never run retrieval" || bad "retrieval ran on a light turn or at key-down"
+RX="$(rctx rworkbench 'think hard about NEAR("x" y) OR * ^col: "unbalanced quote AND the accounting export totals in semicolons')"
+case "$RX" in *"fact-r$$"*) ok "FTS5 operators and quotes in speech are quoted, never parsed (the words still match)" ;; *) bad "FTS5 syntax in speech broke retrieval" ;; esac
+printf 'rroot|Projects/rootnote.md\n' > "$SBT/rmap.txt"; printf '## Senti\nroot note\n' > "$RV/Projects/rootnote.md"
+RR="$(env WF_BRAIN=1 WF_BRAIN_RETRIEVE=1 WF_VAULT="$RV" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP="$SBT/rmap.txt" SENTI_SLABEL="rroot — x" SENTI_Q="$RQ" bash "$CFG/senti-brain.sh" --retrieve 2>/dev/null)"
+[ -z "$RR" ] && ok "a note mapped directly in a listed folder scopes nothing: retrieval adds no note" || bad "retrieval searched a whole listed folder: ${RR:0:80}"
+# Real vault names: a vault path and a listed folder with spaces, a project folder and a note
+# with an accent and a dash, and no locale (Hammerspoon's tasks run without LANG). A few filler
+# folders give bm25 a corpus (with 2 notes its IDF is 0), and the floor is lowered for so few notes.
+NV="$SBT/My Vault"; NP="$NV/Active Work/Café Ledger — Exports"; mkdir -p "$NP"
+for i in 1 2 3 4 5 6; do mkdir -p "$NV/Active Work/Hobby $i"; printf '## Senti\nNotes on hobby %s and travel.\n' "$i" > "$NV/Active Work/Hobby $i/Hobby $i.md"; done
+printf '## Senti
+The café ledger hub (hub-names%s).
+' "$$" > "$NP/Café Ledger — Exports.md"
+printf '## For future Claude
+The accountant needs semicolons as the separator (fact-names%s).
+' "$$" > "$NP/Règles d’export — CSV.md"
+NN="$(env -u LANG -u LC_ALL -u LC_CTYPE WF_BRAIN=1 WF_BRAIN_RETRIEVE=1 WF_BRAIN_RETRIEVE_MIN=0.5 WF_VAULT="$NV" \
+      WF_BRAIN_DIRS="Active Work" WF_BRAIN_MAP=/nonexistent SENTI_SLABEL="Café Ledger — x — claude" SENTI_SKEY="" \
+      bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; senti_ctx_for_intent "think hard about the separator in the export"' 2>/dev/null)"
+case "$NN" in *"hub-names$$"*"fact-names$$"*) ok "spaces, an accent and a dash in vault, folder and note names, with no locale: the hub note and the retrieved note both arrive" ;;
+  *) bad "real-world names broke the notes bridge: ${NN:0:100}" ;; esac
+# The query is speech: it must never reach a command line. A canary rides the utterance
+# through the whole retrieval pipeline while ps is sampled. It reaches the test's own shell
+# in the environment (RQC): on this script's command line, ps would catch the test itself.
+RCAN="rq$(printf '%s' canary)$$"
+( "${RENV[@]}" SENTI_SLABEL="rworkbench — x — claude" SENTI_SKEY="" RQC="$RCAN" \
+    bash -c 'source "$HOME/.config/senti/config.sh"; source "$HOME/.config/senti/senti-lib.sh"; for i in 1 2 3; do senti_ctx_for_intent "think hard about $RQC accounting export totals" >/dev/null; done' 2>/dev/null ) &
+SP=$!; RLEAK=0; RSNAP=0
+while kill -0 "$SP" 2>/dev/null; do SNAP="$(psnap)"; RSNAP=$((RSNAP+1)); case "$SNAP" in *"$RCAN"*) RLEAK=1 ;; esac; done
+wait "$SP"; unset SNAP
+[ "$RLEAK" = 0 ] && [ "$RSNAP" -gt 3 ] && ok "the retrieval query never appeared in ps ($RSNAP snapshots)" || bad "LEAK or no sampling: query in ps=$RLEAK, snapshots $RSNAP"
+case "$(cat "$WF_LOG")" in *"$RCAN"*) bad "senti.log holds the retrieval query" ;; *) ok "senti.log holds no retrieval query text" ;; esac
+
+echo "── prompt latency: the screenshot is downscaled at key-down, the same bytes are sent ──"
+SHOTSRC=""
+for f in "$SRC/assets/social-preview.png" "$SRC/menubar/mic.png"; do [ -f "$f" ] && { SHOTSRC="$f"; break; }; done
+if [ -z "$SHOTSRC" ] || [ ! -x /usr/bin/sips ]; then
+  skip "no PNG to stand in for a screenshot (or no sips): key-down downscale not checked"
+else
+  /bin/rm -f "$WF_RUN"/ctx-* "$WF_RUN"/screen*.png "$WF_RUN"/screen-small.jpg
+  cp "$SHOTSRC" "$WF_RUN/screen.png"
+  SENTI_SKEY=900009 SENTI_SLABEL="senti — ⠐ x — claude" bash "$CFG/senti-lib.sh" 2>/dev/null
+  /usr/bin/sips -Z 1536 -s format jpeg "$WF_RUN/screen.png" --out "$SBT/inline.jpg" >/dev/null 2>&1
+  [ -s "$WF_RUN/ctx-shot.jpg" ] && [ "$(/usr/bin/stat -f '%Lp' "$WF_RUN/ctx-shot.jpg")" = 600 ] && cmp -s "$WF_RUN/ctx-shot.jpg" "$SBT/inline.jpg" \
+    && ok "the key-down prefetch downscales the screenshot (mode 600), byte-identical to the key-up sips" || bad "key-down downscale missing, wrong mode or different bytes"
+  NRU0="$(/usr/bin/grep -c 'downscaled at key-down, reused' "$WF_LOG")"
+  V1="$(SENTI_AI_DRYRUN=1 SENTI_IN="write a prompt about this page" SENTI_SKEY=900009 SENTI_SLABEL="senti — x" \
+        bash "$CFG/senti-vision.sh" "" "$WF_RUN/screen.png" prompt 2>/dev/null | /usr/bin/grep -o '<[0-9]* bytes>')"
+  NRU1="$(/usr/bin/grep -c 'downscaled at key-down, reused' "$WF_LOG")"
+  [ "$NRU1" -gt "$NRU0" ] && [ "$V1" = "<$(wc -c < "$SBT/inline.jpg" | tr -d ' ') bytes>" ] && [ ! -e "$WF_RUN/ctx-shot.jpg" ] && [ ! -e "$WF_RUN/ctx-shot.sig" ] \
+    && ok "senti-vision.sh sends the prefetched copy ($V1, the same size as the key-up sips) and removes it" || bad "prefetched screenshot not reused: $V1, reused lines $NRU0 to $NRU1"
+  # A different screenshot at key-up (a new capture) must never get the old copy.
+  SENTI_SKEY=900009 SENTI_SLABEL="senti — x" bash "$CFG/senti-lib.sh" 2>/dev/null
+  /bin/rm -f "$WF_RUN/screen.png"; /usr/bin/sips -Z 600 "$SHOTSRC" --out "$WF_RUN/screen.png" >/dev/null 2>&1
+  /usr/bin/sips -Z 1536 -s format jpeg "$WF_RUN/screen.png" --out "$SBT/inline2.jpg" >/dev/null 2>&1
+  V2="$(SENTI_AI_DRYRUN=1 SENTI_IN="write a prompt about this page" SENTI_SKEY=900009 SENTI_SLABEL="senti — x" \
+        bash "$CFG/senti-vision.sh" "" "$WF_RUN/screen.png" prompt 2>/dev/null | /usr/bin/grep -o '<[0-9]* bytes>')"
+  [ "$(/usr/bin/grep -c 'downscaled at key-down, reused' "$WF_LOG")" = "$NRU1" ] && [ "$V2" = "<$(wc -c < "$SBT/inline2.jpg" | tr -d ' ') bytes>" ] \
+    && ok "a screenshot that changed after key-down is downscaled again at key-up, never served the old copy" || bad "a changed screenshot got the stale prefetched copy ($V2)"
+  printf 'prompt_screen=0\npanel_seen=1\n' > "$CFG/ui.pref"; /bin/rm -f "$WF_RUN"/ctx-*
+  SENTI_SKEY=900009 SENTI_SLABEL="senti — x" bash "$CFG/senti-lib.sh" 2>/dev/null
+  [ ! -e "$WF_RUN/ctx-shot.jpg" ] && ok "with \"Use a screenshot in Prompt\" off, the prefetch makes no copy" || bad "the prefetch downscaled with the screenshot toggle off"
+  /bin/rm -f "$CFG/ui.pref" "$WF_RUN"/ctx-* "$WF_RUN/screen.png" "$WF_RUN/screen-small.jpg"
+  # The cache sweep in senti.lua must cover the new files (ctx- prefix, .jpg).
+  if [ "$CI" = 1 ]; then
+    /usr/bin/grep -q 'name:match("^ctx%-")' "$SRC/senti.lua" && /usr/bin/grep -q 'name:match("%.jpg$")' "$SRC/senti.lua" \
+      && ok "senti.lua's sweep covers ctx-shot.jpg and ctx-shot.sig" || bad "senti.lua's sweep misses the prefetched screenshot"
+  fi
+fi
 
 echo "── context prefetch (key-down warm-up) ──"
 PKEY="900003"
