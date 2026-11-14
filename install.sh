@@ -239,7 +239,8 @@ echo "→ AI provider key (optional: dictation never needs one)"
 # the Keychain copy reads back byte for byte; on any failure the file stays and still works.
 bash "$CFG/senti-key.sh" migrate || true
 HAS_KEY=0
-bash "$CFG/senti-key.sh" status --json 2>/dev/null | /usr/bin/grep -q '"present":true' && HAS_KEY=1
+# Only the AI keys count here ("keys"); a Notion token alone ("tokens") does not run AI modes.
+bash "$CFG/senti-key.sh" status --json 2>/dev/null | /usr/bin/sed 's/,"tokens":.*//' | /usr/bin/grep -q '"present":true' && HAS_KEY=1
 # Offered only on a terminal and never with --yes: a scripted install must not stop to ask.
 # senti-key.sh reads the key from a hidden prompt (read -s), so it never reaches shell
 # history, a command line or the screen.

@@ -80,9 +80,17 @@ $TURNS"
     # Sessions are transcripts of your speech — don't keep them around indefinitely.
     # Also clear ~/.cache/senti/brain/*.md: digests the deleted background step once wrote.
     # Nothing writes them any more, so they are only stale copies of note content.
+    # And expire the Notion digests (brain/notion-<page id>.txt) past WF_NOTION_TTL_MIN, or
+    # all of them once Notion is turned off. The read path enforces the same TTL.
     BR="${WF_RUN:-$HOME/.cache/senti}/brain"
     if [ -d "$BR" ]; then
       /usr/bin/find "$BR" -maxdepth 1 -type f \( -name '*.md' -o -name '.refreshing.*' -o -name '.tmp.*' \) -delete 2>/dev/null
+      NTTL="${WF_NOTION_TTL_MIN:-10}"; case "$NTTL" in ''|*[!0-9]*) NTTL=10 ;; esac
+      if [ "${WF_BRAIN_NOTION:-0}" = "1" ] && [ "$NTTL" -gt 0 ]; then
+        /usr/bin/find "$BR" -maxdepth 1 -type f -name 'notion-*.txt' -mmin "+$NTTL" -delete 2>/dev/null
+      else
+        /usr/bin/find "$BR" -maxdepth 1 -type f -name 'notion-*.txt' -delete 2>/dev/null
+      fi
       rmdir "$BR" 2>/dev/null
     fi
     N=0

@@ -31,10 +31,11 @@ The user message may begin with a fenced REFERENCE_CONTEXT block (untrusted back
 # craft stays in the system prompt. Both ride env, never argv (senti-ai.sh).
 CTX="$(senti_ctx_for_intent "$RAW")"
 USER_MSG="${CTX}Rough idea to transform: $RAW"
-VNOTE=""; blank "$CTX" || VNOTE="$(senti_ctx_vault_note)"
+VNOTE=""; NNOTE=""
+blank "$CTX" || { VNOTE="$(senti_ctx_note vault)"; NNOTE="$(senti_ctx_note notion)"; }
 # Mode and counts label ~/.cache/senti/last-request.json (names and counts, never text).
 OUT="$(SENTI_SYS="$GEN_SYS" SENTI_IN="$USER_MSG" SENTI_MODE="${SENTI_MODE:-prompt}" \
-       SENTI_PARTS="speech:${#RAW}" SENTI_VAULT_NOTE="$VNOTE" bash "$AI" 2>>"$WF_LOG")"
+       SENTI_PARTS="speech:${#RAW}" SENTI_VAULT_NOTE="$VNOTE" SENTI_NOTION_NOTE="$NNOTE" bash "$AI" 2>>"$WF_LOG")"
 RC=$?
 senti_ctx_cleanup
 if [ "$RC" -ne 0 ] || blank "$OUT"; then

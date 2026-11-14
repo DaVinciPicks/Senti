@@ -25,7 +25,9 @@
 #     gate moved from 10 s to 14 s (measured), WF_URL can be overridden (the self-test
 #     points it at a dead port to prove the transcription check fails), and the notes
 #     digest refresh is gone (WF_BRAIN_REFRESH no longer exists).
-WF_CONFIG_VERSION=9
+# v10: Notion as a second notes source beside Obsidian (WF_BRAIN_NOTION, off by default; the
+#     token lives in the Keychain like the AI keys), with its timeout and cache settings.
+WF_CONFIG_VERSION=10
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -156,6 +158,26 @@ WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 # WF_BRAIN_DIRS=$'Projects\nWork'              # vault folders it may read, one per line
 # WF_VAULT="$HOME/Documents/Obsidian Vault"
 # WF_BRAIN_MAX=700                            # digest cap, chars
+
+# --- Second brain (Notion) ---
+# Off by default, and independent of the Obsidian switch above. When on, a heavy Prompt turn
+# for a project you mapped to a Notion page adds a capped digest of that page (its "Senti"
+# heading section, else "For future Claude", else its first lines) to the AI call. Senti
+# reads only pages you map in brain-map.txt, one line per project:
+#   myproject|notion:https://www.notion.so/My-Page-0123456789abcdef0123456789abcdef
+# and your integration can only read pages you shared with it in Notion. Senti never uses
+# Notion's search. The page is read after you speak, on heavy turns only, never at key-down.
+# Add your integration token (it goes to the macOS Keychain):
+#   bash ~/.config/senti/senti-key.sh set notion
+# See what would be sent, locally: bash ~/.config/senti/senti-brain.sh --preview <project>
+# WF_BRAIN_NOTION=1
+# WF_NOTION_KEY="$HOME/.config/senti/notion-key"  # token file, used only when the Keychain holds none
+# WF_NOTION_TIMEOUT=2.5                         # seconds for the whole read, 0.5 to 3; a slow or
+#                                               # failed read sends no Notion digest at all
+# WF_NOTION_TTL_MIN=10                          # minutes a read digest is reused before Senti reads
+#                                               # the page again (0 = read it on every heavy turn)
+# WF_NOTION_API=http://127.0.0.1:8765           # tests only: a local mock server. Any host other
+#                                               # than api.notion.com or 127.0.0.1/localhost is refused
 
 # --- Binaries (absolute paths — Hammerspoon/launchd have a minimal PATH) ---
 WF_SOX="${WF_SOX:-/opt/homebrew/bin/sox}"

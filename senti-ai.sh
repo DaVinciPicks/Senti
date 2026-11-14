@@ -14,6 +14,7 @@
 #   SENTI_MODE   prompt | context | command | judge | selftest (labels last-request.json).
 #   SENTI_PARTS  "speech:N selection:N" counts from the caller, for last-request.json.
 #   SENTI_VAULT_NOTE   the vault note name when a vault digest rides this call.
+#   SENTI_NOTION_NOTE  "Notion page <first 8 hex of the id>" when a Notion digest rides it.
 #   SENTI_AI_DRYRUN=1  print {url, headers, body} with the key as [key] and image data as
 #                <N bytes>, then exit 0. No key needed, no network call.
 #
@@ -200,27 +201,34 @@ def parts():
         if m:
             d["note"] = m.group(1)
         out.append(d)
-    m = re.search(r"REFERENCE_CONTEXT [0-9a-f]+ [^\n]*\n(.*?)<<<END_REFERENCE_CONTEXT", USER, re.S)
-    if m:
+    # Every fenced block: the one prepared at key-down (vault + session) and the one a heavy
+    # turn adds after transcription (Notion). Each part is found by its header line.
+    heads = {"Project knowledge from the user's own notes": ("vault", "SENTI_VAULT_NOTE"),
+             "Project knowledge from the user's Notion page": ("notion", "SENTI_NOTION_NOTE"),
+             "Session context (earlier turns in this window):": ("session", "")}
+    head_re = re.compile(r"^(%s)[^\n]*\n" % "|".join(re.escape(h) for h in heads), re.M)
+    for m in re.finditer(r"REFERENCE_CONTEXT [0-9a-f]+ [^\n]*\n(.*?)<<<END_REFERENCE_CONTEXT", USER, re.S):
         block = m.group(1)
-        v = re.search(r"Project knowledge from the user's own notes[^\n]*\n(.*?)(?=\nSession context \(|\Z)", block, re.S)
-        if v and v.group(1).strip():
-            d = {"source": "vault", "chars": len(v.group(1).strip())}
-            if ENV.get("SENTI_VAULT_NOTE"):
-                d["note"] = ENV["SENTI_VAULT_NOTE"][:80]
-            out.append(d)
-        s = re.search(r"Session context \(earlier turns in this window\):\n(.*)", block, re.S)
-        if s:
-            title = sess = 0
-            for line in s.group(1).splitlines():
-                if line.startswith("Working directory / project:") or line.startswith("What this session is currently doing:"):
-                    title += len(line.split(":", 1)[1].strip())
-                elif line.strip():
-                    sess += len(line.strip())
-            if title:
-                out.append({"source": "window_title", "chars": title})
-            if sess:
-                out.append({"source": "session", "chars": sess})
+        hits = list(head_re.finditer(block))
+        for i, h in enumerate(hits):
+            body = block[h.end():hits[i + 1].start() if i + 1 < len(hits) else len(block)]
+            src, env_note = heads[h.group(1)]
+            if src == "session":
+                title = sess = 0
+                for line in body.splitlines():
+                    if line.startswith("Working directory / project:") or line.startswith("What this session is currently doing:"):
+                        title += len(line.split(":", 1)[1].strip())
+                    elif line.strip():
+                        sess += len(line.strip())
+                if title:
+                    out.append({"source": "window_title", "chars": title})
+                if sess:
+                    out.append({"source": "session", "chars": sess})
+            elif body.strip():
+                d = {"source": src, "chars": len(body.strip())}
+                if ENV.get(env_note):
+                    d["note"] = ENV[env_note][:80]
+                out.append(d)
     return out
 
 def write_lastreq(result, ms, usage, effort):

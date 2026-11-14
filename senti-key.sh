@@ -1,16 +1,21 @@
 #!/bin/bash
-# Senti key helper: the ONE place that stores, reads, tests and reports AI provider keys,
-# and the one place that decides which provider and model an AI call uses.
+# Senti key helper: the ONE place that stores, reads, tests and reports AI provider keys
+# (and the Notion token), and the one place that decides which provider and model an AI
+# call uses.
 #
-#   senti-key.sh set <provider>                key from SENTI_IN, else a hidden prompt on a
+#   senti-key.sh set <account>                 key from SENTI_IN, else a hidden prompt on a
 #                                              TTY, else stdin. NEVER from argv.
 #   senti-key.sh test <provider> [--model ID]  free list endpoint, no completion
-#   senti-key.sh clear <provider>              Keychain item AND fallback file
+#   senti-key.sh clear <account>               Keychain item AND fallback file
 #   senti-key.sh status [--json]               presence, source, last 4 characters; no key
 #   senti-key.sh use <provider> [text_model [vision_model]]   writes ai.pref
 #   senti-key.sh migrate                       key files -> Keychain (install.sh runs this)
 #
 # Providers: openai, anthropic, openrouter.
+# Accounts: the providers plus notion. The Notion token (an internal integration secret,
+# read by senti-brain.sh for the notes bridge) is stored, cleared, reported and migrated
+# exactly like a provider key, but it is NOT an AI provider: it never enters provider
+# resolution, the model picker or ai-models.json, and `use` and `test` refuse it.
 #
 # Sourced (senti-ai.sh does this) the file only defines functions: senti_ai_resolve and
 # senti_key_read. Nothing runs and nothing is printed.
@@ -42,11 +47,15 @@
 # 16 unverified, 19 Keychain locked or unavailable (the key file is used instead).
 
 SENTI_PROVIDERS="openai anthropic openrouter"
+# Everything set/clear/status/migrate handle. Provider resolution loops over
+# SENTI_PROVIDERS only, so the notion token can never be picked as an AI provider.
+SENTI_KEY_ACCOUNTS="openai anthropic openrouter notion"
 SENTI_KC_SERVICE="io.senti"
 
 senti_provider_ok() { case "${1:-}" in openai|anthropic|openrouter) return 0 ;; esac; return 1; }
+senti_account_ok() { senti_provider_ok "${1:-}" || [ "${1:-}" = notion ]; }
 senti_provider_label() {
-  case "${1:-}" in openai) printf 'OpenAI' ;; anthropic) printf 'Anthropic' ;; openrouter) printf 'OpenRouter' ;; esac
+  case "${1:-}" in openai) printf 'OpenAI' ;; anthropic) printf 'Anthropic' ;; openrouter) printf 'OpenRouter' ;; notion) printf 'Notion' ;; esac
 }
 # Defaults when nothing names a model. ai-models.json carries the same values as each
 # provider's "default"; the self-test asserts the two agree.
@@ -66,6 +75,7 @@ senti_key_file() {
     openai)     printf '%s' "${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}" ;;
     anthropic)  printf '%s' "${WF_ANTHROPIC_KEY:-$HOME/.config/senti/anthropic-key}" ;;
     openrouter) printf '%s' "${WF_OPENROUTER_KEY:-$HOME/.config/senti/openrouter-key}" ;;
+    notion)     printf '%s' "${WF_NOTION_KEY:-$HOME/.config/senti/notion-key}" ;;
   esac
 }
 senti_id_ok() {   # model id pattern ^[A-Za-z0-9._:/-]{1,80}$
@@ -118,7 +128,7 @@ _sk_kc_put() {
   local p="$1" k="$2" label back
   SK_PUT_STALE=0
   _sk_kc_path_ok && [ -x "$(_sk_sec)" ] || return 19
-  label="Senti $(senti_provider_label "$p") API key"
+  if [ "$p" = notion ]; then label="Senti Notion token"; else label="Senti $(senti_provider_label "$p") API key"; fi
   if [ -n "${SENTI_KEYCHAIN:-}" ]; then
     printf 'add-generic-password -U -s %s -a %s -l "%s" -w %s "%s"\n' \
       "$SENTI_KC_SERVICE" "$p" "$label" "$k" "$SENTI_KEYCHAIN" | _sk_run 10 -i >/dev/null 2>&1
@@ -234,10 +244,14 @@ REG="${SENTI_MODELS_JSON:-$CFG/ai-models.json}"
 KC_MSG="The macOS Keychain is locked or unavailable; Senti will use the key file instead"
 
 usage() {
-  echo "usage: senti-key.sh {set|test|clear|use} <openai|anthropic|openrouter> ... | status [--json] | migrate" >&2
+  echo "usage: senti-key.sh {set|clear} <openai|anthropic|openrouter|notion> | {test|use} <openai|anthropic|openrouter> ... | status [--json] | migrate" >&2
   exit 2
 }
-need_provider() { senti_provider_ok "${1:-}" || { echo "unknown provider '${1:-}': use openai, anthropic or openrouter" >&2; exit 2; }; }
+need_provider() {
+  [ "${1:-}" = notion ] && { echo "notion is the notes token, not an AI provider: it cannot be tested or used for AI calls here (see what it would send with senti-brain.sh --preview <project>)" >&2; exit 2; }
+  senti_provider_ok "${1:-}" || { echo "unknown provider '${1:-}': use openai, anthropic or openrouter" >&2; exit 2; }
+}
+need_account() { senti_account_ok "${1:-}" || { echo "unknown account '${1:-}': use openai, anthropic, openrouter or notion" >&2; exit 2; }; }
 # A key that fails the charset (a hand-edited file key) shows as ????: its tail could hold a
 # quote or backslash that breaks status --json, and a short one would print whole.
 last4() {
@@ -259,6 +273,9 @@ write_private() {   # write_private <path> <content>
 
 prefix_hint() {   # a warning only: also catches a key pasted under the wrong provider
   case "$1:$2" in
+    notion:ntn_*|notion:secret_*) ;;
+    notion:sk-*) echo "note: that looks like an AI provider key, saved under notion anyway" >&2 ;;
+    notion:*) echo "note: Notion integration tokens usually start with ntn_ or secret_; saved anyway" >&2 ;;
     anthropic:sk-ant-*|openrouter:sk-or-*) ;;
     openai:sk-ant-*|openai:sk-or-*) echo "note: that looks like an $( [ "${2#sk-ant-}" != "$2" ] && echo Anthropic || echo OpenRouter ) key, saved under openai anyway" >&2 ;;
     openai:sk-*) ;;
@@ -269,13 +286,14 @@ prefix_hint() {   # a warning only: also catches a key pasted under the wrong pr
 }
 
 cmd_set() {
-  local p="${1:-}" k
-  need_provider "$p"; shift
+  local p="${1:-}" k what="API key"
+  need_account "$p"; shift
+  [ "$p" = notion ] && what="integration token"
   [ "$#" -eq 0 ] || { echo "keys are read from SENTI_IN or stdin, never argv" >&2; exit 2; }
   if [ -n "${SENTI_IN:-}" ]; then
     k="$SENTI_IN"
   elif [ -t 0 ]; then
-    printf 'Paste your %s API key (it stays hidden), then press Return: ' "$(senti_provider_label "$p")" >&2
+    printf 'Paste your %s %s (it stays hidden), then press Return: ' "$(senti_provider_label "$p")" "$what" >&2
     IFS= read -rs k; echo >&2
   elif [ -n "${SENTI_IN+set}" ]; then
     k=""     # SENTI_IN set but empty (an app's empty key field): "no key given", never a wait on stdin
@@ -312,7 +330,7 @@ cmd_set() {
 
 cmd_clear() {
   local p="${1:-}" rc=0
-  need_provider "$p"
+  need_account "$p"
   _sk_kc_del "$p" || rc=19
   rm -f "$(senti_key_file "$p")"
   if [ "$rc" = 0 ]; then echo "cleared $p key"; else echo "cleared the $p key file; $KC_MSG" >&2; fi
@@ -322,7 +340,7 @@ cmd_clear() {
 
 cmd_migrate() {
   local p f k back rc=0 krc
-  for p in $SENTI_PROVIDERS; do
+  for p in $SENTI_KEY_ACCOUNTS; do
     f="$(senti_key_file "$p")"
     [ -s "$f" ] || continue
     k="$(/usr/bin/tr -d '[:space:]' < "$f")"
@@ -369,13 +387,15 @@ vision_model=$v
 }
 
 cmd_status() {
-  local json=0 p f mode out="" first=1 orph="" kcstate="ok" k rc
+  local json=0 p f mode out="" first=1 orph="" kcstate="ok" k rc entry tok=""
   [ "${1:-}" = "--json" ] && json=1
   [ -x "$(_sk_sec)" ] || kcstate="unavailable"
   senti_ai_resolve text;   local ap="$SENTI_R_PROVIDER" at="$SENTI_R_MODEL" asrc="$SENTI_R_SOURCE"
   senti_ai_resolve vision; local av="$SENTI_R_MODEL"
   [ "$json" = 1 ] && out="{\"active\":{\"provider\":\"$ap\",\"text_model\":\"$at\",\"vision_model\":\"$av\",\"source\":\"$asrc\"},\"keys\":{"
-  for p in $SENTI_PROVIDERS; do
+  # AI provider keys go under "keys"; the Notion token goes under "tokens", so anything that
+  # reads "keys" (the menu, install.sh) never mistakes it for an AI key.
+  for p in $SENTI_KEY_ACCOUNTS; do
     SENTI_KEY_FOR=""; senti_key_read "$p"; rc=$?
     [ "${SENTI_KEY_KC:-}" = "unavailable" ] && kcstate="unavailable"
     k="$SENTI_KEY_VALUE"; mode=""
@@ -383,15 +403,18 @@ cmd_status() {
       f="$(senti_key_file "$p")"; mode="$(/usr/bin/stat -f '%Lp' "$f" 2>/dev/null || echo '?')"
     fi
     if [ "$json" = 1 ]; then
-      [ "$first" = 1 ] || out="$out,"; first=0
       if [ "$rc" = 0 ]; then
-        out="$out\"$p\":{\"present\":true,\"source\":\"$SENTI_KEY_SOURCE\",\"last4\":\"$(last4 "$k")\"${mode:+,\"mode\":\"$mode\"}}"
+        entry="\"$p\":{\"present\":true,\"source\":\"$SENTI_KEY_SOURCE\",\"last4\":\"$(last4 "$k")\"${mode:+,\"mode\":\"$mode\"}}"
       else
-        out="$out\"$p\":{\"present\":false}"
+        entry="\"$p\":{\"present\":false}"
       fi
+      if [ "$p" = notion ]; then tok="$entry"
+      else [ "$first" = 1 ] || out="$out,"; first=0; out="$out$entry"; fi
     else
       if [ "$rc" = 0 ]; then
         printf '%-11s %-9s ...%s%s\n' "$p" "$SENTI_KEY_SOURCE" "$(last4 "$k")" "${mode:+  (file mode $mode)}"
+      elif [ "$p" = notion ]; then
+        printf '%-11s no token (only needed for the Notion notes bridge)\n' "$p"
       else
         printf '%-11s no key\n' "$p"
       fi
@@ -402,12 +425,12 @@ cmd_status() {
   for f in "$CFG"/*-key; do
     [ -f "$f" ] || continue
     f="$(basename "$f")"
-    case "$f" in openai-key|anthropic-key|openrouter-key) continue ;; esac
+    case "$f" in openai-key|anthropic-key|openrouter-key|notion-key) continue ;; esac
     case "$f" in *[!A-Za-z0-9._-]*) continue ;; esac
     orph="$orph${orph:+ }$f"
   done
   if [ "$json" = 1 ]; then
-    out="$out},\"keychain\":\"$kcstate\",\"orphans\":["
+    out="$out},\"tokens\":{$tok},\"keychain\":\"$kcstate\",\"orphans\":["
     first=1
     for f in $orph; do [ "$first" = 1 ] || out="$out,"; first=0; out="$out\"$f\""; done
     printf '%s]}\n' "$out"

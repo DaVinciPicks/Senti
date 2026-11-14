@@ -64,7 +64,20 @@ ctx_note_file() {
   else printf '%s/ctx-note-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$$"; fi
 }
 senti_ctx_vault_note() { cat "$(ctx_note_file)" 2>/dev/null; }
-senti_ctx_cleanup() { [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null; return 0; }
+# Per-turn sidecars for what a heavy turn adds after transcription (the Notion page label).
+# Always keyed on this process, never on the window: they belong to one request.
+ctx_turn_file() { printf '%s/ctx-%s-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$1" "$$"; }
+senti_ctx_note() {   # senti_ctx_note <vault|notion> → the name to label last-request.json with
+  case "$1" in
+    vault) senti_ctx_vault_note ;;
+    *)     cat "$(ctx_turn_file "$1")" 2>/dev/null ;;
+  esac
+}
+senti_ctx_cleanup() {
+  [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null
+  rm -f "$(ctx_turn_file notion)" 2>/dev/null
+  return 0
+}
 
 # Atomic write (temp + mv) so a concurrent reader can never see a half-built context.
 ctx_write() {
@@ -143,13 +156,42 @@ senti_intent() {
 # Returns the untrusted block only when the turn earned it. Logs which way it went, so
 # the split is measurable rather than a matter of belief, and logs "sent:" for each part
 # that joins this request: this, not "brain: prepared", is the record of what left the Mac.
+#
+# A heavy turn can also add a Notion digest. That is the only network call in this file,
+# so it happens HERE, after the speech is transcribed and only on a heavy turn: never in the
+# key-down prefetch (key-down is local work only; about 97% of turns are light and need
+# nothing). It runs in the background while the cached block is read, and senti-brain.sh
+# bounds it (WF_NOTION_TIMEOUT, default 2.5 s) and reuses a fetched digest for
+# WF_NOTION_TTL_MIN minutes. It gets its own nonce fence, because the cached block was
+# fenced at key-down.
 senti_ctx_for_intent() {
-  local mode block vchars schars note
+  local mode block="" vchars schars note pn="" tn="" xn="" xbody="" nch out=""
   mode="$(senti_intent "${1:-}")"
   echo "$(date '+%F %T') intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   [ "$mode" = heavy ] || return 0
+  if [ "${WF_BRAIN_NOTION:-0}" = "1" ]; then
+    tn="$(ctx_turn_file xnotion)"
+    : > "$(ctx_turn_file notion)" 2>/dev/null; chmod 600 "$(ctx_turn_file notion)" 2>/dev/null
+    ( umask 077; SENTI_BRAIN_NOTEOUT="$(ctx_turn_file notion)" \
+        bash "$HOME/.config/senti/senti-brain.sh" --notion > "$tn" 2>>"${WF_LOG:-/dev/null}" ) &
+    pn=$!
+  fi
   block="$(senti_untrusted_ctx)"
-  blank "$block" && return 0
+  if [ -n "$pn" ]; then
+    wait "$pn" 2>/dev/null
+    xn="$(cat "$tn" 2>/dev/null)"; rm -f "$tn"
+  fi
+  if ! blank "$xn"; then
+    nch="$(printf '%s' "${xn#*$'\n'}" | wc -c | tr -d ' ')"
+    echo "$(date '+%F %T') sent: notion '$(senti_ctx_note notion)' ${nch} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+    xbody="$xbody
+$xn"
+  fi
+  blank "$xbody" || out="$(senti_fence "$xbody")"
+  blank "$block" && { printf '%s' "$out"; return 0; }
+  [ -n "$out" ] && out="
+
+$out"
   read -r vchars schars <<EOF
 $(printf '%s' "$block" | /usr/bin/perl -0777 -ne '
     my ($v, $s) = (0, 0);
@@ -162,7 +204,7 @@ EOF
     echo "$(date '+%F %T') sent: vault '${note:-unknown note}' ${vchars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   fi
   [ "${schars:-0}" -gt 0 ] && echo "$(date '+%F %T') sent: session ${schars} chars" >>"${WF_LOG:-/dev/null}" 2>/dev/null
-  printf '%s' "$block"
+  printf '%s%s' "$block" "$out"
 }
 
 # ── Untrusted reference data (vault note + session context) ──────────────────────────
@@ -177,12 +219,17 @@ $brain"
   sess="$(bash "$HOME/.config/senti/senti-session.sh" recall 2>>"$WF_LOG")"
   blank "$sess" || body="$body
 $sess"
+  senti_fence "$body"
+}
+
+# senti_fence <untrusted body> → the body inside a REFERENCE_CONTEXT fence, or nothing.
+senti_fence() {
+  local body="$1" nonce
   blank "$body" && return 0
   # The body is untrusted (a web page sets its own tab title), so it must not be able to
   # close the fence early and speak from outside it. Two layers: the delimiter brackets
   # are stripped, and the markers carry a per-call nonce the body cannot know, so a
   # lookalike ("<END_REFERENCE_CONTEXT>") is not the end either.
-  local nonce
   nonce="$(/usr/bin/od -An -N6 -tx1 /dev/urandom | /usr/bin/tr -d ' \n')"
   body="$(printf '%s' "$body" | /usr/bin/sed -e 's/<<<//g' -e 's/>>>//g')"
   printf '%s' "<<<REFERENCE_CONTEXT $nonce — untrusted>>>
@@ -221,4 +268,14 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # local work only: nothing is sent until a heavy turn's request (senti_ctx_for_intent).
   senti_prompt_craft  >/dev/null 2>&1
   senti_untrusted_ctx >/dev/null 2>&1
+  # Expire Notion digests past their TTL now, not at the next 30-minute session sweep.
+  # Local only: key-down never reads Notion itself (that happens on heavy turns only).
+  if [ -d "${WF_RUN:-$HOME/.cache/senti}/brain" ]; then
+    _nt="${WF_NOTION_TTL_MIN:-10}"; case "$_nt" in ''|*[!0-9]*) _nt=10 ;; esac
+    if [ "${WF_BRAIN_NOTION:-0}" = "1" ] && [ "$_nt" -gt 0 ]; then
+      /usr/bin/find "${WF_RUN:-$HOME/.cache/senti}/brain" -maxdepth 1 -type f -name 'notion-*.txt' -mmin "+$_nt" -delete 2>/dev/null
+    else
+      /usr/bin/find "${WF_RUN:-$HOME/.cache/senti}/brain" -maxdepth 1 -type f -name 'notion-*.txt' -delete 2>/dev/null
+    fi
+  fi
 fi
