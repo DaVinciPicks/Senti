@@ -81,6 +81,7 @@ Some of this is sent, as the tables above say. The rest never leaves the Mac.
   become a short spelling hint for the local speech server and never leave the Mac.
 - The text you select, in Command mode, which is sent as listed above.
 - The notes folders you list, if notes are on.
+- Your clipboard, held in memory during a paste or a Command turn so it can be put back. It is never sent or saved.
 
 ## What Senti stores, and for how long
 
