@@ -9,6 +9,8 @@ Free, local speech-to-text for macOS.</p>
 
 <p align="center"><a href="https://usesenti.io">usesenti.io</a></p>
 
+<p align="center"><a href="https://github.com/Leonardo-Engineering/Senti/actions/workflows/ci.yml"><img src="https://github.com/Leonardo-Engineering/Senti/actions/workflows/ci.yml/badge.svg" alt="CI status"></a></p>
+
 Hold a key and speak. Senti types what you said into the app you are in, or turns a rough spoken
 idea into a prompt written for the AI model you are about to paste it into. Dictation runs on your
 Mac and your audio never leaves it.
