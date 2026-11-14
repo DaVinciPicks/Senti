@@ -27,6 +27,20 @@ psnap() { /bin/ps -Ao args= 2>/dev/null; }   # snapshot into a variable, match w
 
 # A canary assembled at runtime, so no command line (this script's included) spells it whole.
 canary() { printf '%s%s%s%s' "sk-" "selftest" "Can" "ary$$$1"; }
+# xargv <xtrace file> <text>: count traced commands that ran as a separate process (an
+# absolute path, or not a shell builtin or keyword) and carried <text> in their arguments.
+# Deterministic where a ps loop is not: a /bin/ls lives for milliseconds.
+xargv() {
+  local l w n=0
+  while IFS= read -r l; do
+    case "$l" in *"$2"*) ;; *) continue ;; esac
+    w="${l#"${l%%[!+]*}"}"; w="${w# }"; w="${w%% *}"; w="${w//\'/}"
+    case "$w" in *=*) continue ;; esac
+    case "$(type -t "$w")" in builtin|keyword|'') continue ;; esac
+    n=$((n+1))
+  done < "$1"
+  printf '%s' "$n"
+}
 
 # ════════════════════════════════════ 1. INSTALLED ═════════════════════════════════════
 if [ "$CI" = 0 ]; then
@@ -536,6 +550,18 @@ SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Ter
 printf '{"message":{"model":"claude-opus-6"}}\n' > "$SB/.claude/projects/-x-code-selftestproj/s.jsonl"
 SENTI_SLABEL="selftestproj — ⠐ x — claude" bash "$CFG/senti-target.sh" Terminal >/dev/null 2>&1
 /usr/bin/grep -q "for 'claude-opus-6'" "$WF_LOG" && bad "claude-opus-6 borrowed an older generation's section" || ok "a new generation (claude-opus-6) never borrows claude-opus-5"
+# The window title never reaches a process's argv: not the project name, not the matching
+# transcript directory or file (both contain it), whether or not a directory matches.
+TCAN="Tgt$(printf '%s' Canary)$$"
+mkdir -p "$SB/.claude/projects/-x-code-$TCAN"
+printf '{"message":{"model":"claude-opus-5-5"}}\n' > "$SB/.claude/projects/-x-code-$TCAN/s.jsonl"
+TX=0
+for TTL in "$TCAN" "${TCAN}Miss"; do
+  SENTI_SLABEL="$TTL — secret task — claude" bash -x "$CFG/senti-target.sh" Terminal >/dev/null 2>"$SBT/target.xtrace"
+  TX=$((TX + $(xargv "$SBT/target.xtrace" "$TTL")))
+done
+[ "$TX" = 0 ] && ok "target resolver keeps the window title off every process's argv (match and no match)" \
+              || bad "LEAK: the window title reached the argv of $TX command(s) in senti-target.sh"
 
 echo "── prompt-mode path parity ──"
 # Parity is STRUCTURAL: both paths source senti-lib.sh and call BOTH shared functions
@@ -590,6 +616,39 @@ HV="$(WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects SENTI_SLABEL="self
 case "$HV" in *never-sent*) bad "a heavy turn carried a section outside ## Senti" ;; *"Synthetic project"*) ok "a heavy turn carries the ## Senti digest, fenced" ;; *) bad "heavy turn carried no vault digest" ;; esac
 /usr/bin/grep -q "sent: vault 'selftestproj.md'" "$WF_LOG" && ok "a heavy turn logs sent: vault '<note>' N chars" || bad "no sent: vault line on a heavy turn"
 /usr/bin/grep -q "brain: prepared 'selftestproj.md'" "$WF_LOG" && ok "building the digest logs brain: prepared (not sent)" || bad "no brain: prepared line"
+# Symlinks out of the listed folders: a symlinked folder on a map entry's path, a note that
+# is itself a symlink, and a symlinked folder the scan matches are all ignored and logged.
+# A symlink that resolves inside the listed folders still works. ($SBT sits under /var,
+# which resolves to /private/var, so this also proves the listed folders are resolved.)
+BO="$SBT/outside"; mkdir -p "$BO/esc" "$BO/symproj"
+printf '## Senti\nbrain-outside-note\n' > "$BO/esc/note.md"
+printf '## Senti\nbrain-outside-scan\n' > "$BO/symproj/symproj.md"
+ln -s "$BO/esc" "$SBT/vault/Projects/esc"
+ln -s "$BO/esc/note.md" "$SBT/vault/Projects/direct.md"
+ln -s "$BO/symproj" "$SBT/vault/Projects/symproj"
+ln -s "$VA/selftestproj.md" "$SBT/vault/Projects/alias.md"
+brun() { printf '%s\n' "$2" > "$SBT/brain-map.txt"
+  WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP="$SBT/brain-map.txt" SENTI_SLABEL="$1 — x" \
+    bash "$CFG/senti-brain.sh" 2>/dev/null; }
+BS=""
+case "$(brun zzesc 'zzesc|Projects/esc/note.md')" in *brain-outside*) BS="$BS map-through-symlinked-folder" ;; esac
+case "$(brun zzdirect 'zzdirect|Projects/direct.md')" in *brain-outside*) BS="$BS map-to-symlinked-note" ;; esac
+case "$(brun symproj '')" in *brain-outside*) BS="$BS scan-of-symlinked-folder" ;; esac
+NIGN="$(/usr/bin/grep -c 'ignored (outside the allowlist)' "$WF_LOG" 2>/dev/null)"
+[ -z "$BS" ] && [ "${NIGN:-0}" -ge 3 ] && ok "brain ignores notes and folders that resolve outside the listed folders, and logs it" \
+             || bad "PRIVACY: brain followed a symlink out of the listed folders:${BS:- (or no ignored line)}"
+case "$(brun zzalias 'zzalias|Projects/alias.md')" in *"Synthetic project"*) ok "a symlink that resolves inside the listed folders still works" ;;
+  *) bad "brain refused a symlink that resolves inside the listed folders" ;; esac
+# The folder and note names can equal the window title's project, so the brain script keeps
+# them off argv too (a canary-named folder, traced with bash -x).
+BCAN="brn$(printf '%s' canary)$$"; mkdir -p "$SBT/vault/Projects/$BCAN"
+printf '## Senti\nCanary folder note.\n' > "$SBT/vault/Projects/$BCAN/$BCAN.md"
+WF_BRAIN=1 WF_VAULT="$SBT/vault" WF_BRAIN_DIRS=Projects WF_BRAIN_MAP=/nonexistent SENTI_SLABEL="$BCAN — x" \
+  bash -x "$CFG/senti-brain.sh" >"$SBT/brain.out" 2>"$SBT/brain.xtrace"
+BX="$(xargv "$SBT/brain.xtrace" "$BCAN")"
+/usr/bin/grep -q 'Canary folder note' "$SBT/brain.out" && [ "$BX" = 0 ] \
+  && ok "brain reads a project's note without its name on any process's argv" \
+  || bad "brain put the project name on the argv of $BX command(s) (or did not read the note)"
 
 echo "── context prefetch (key-down warm-up) ──"
 PKEY="900003"
@@ -673,6 +732,12 @@ EV="$(SENTI_PROVIDER=anthropic WF_EVAL_CASES="$SBT/cases.txt" bash "$CFG/senti-e
 case "$EV" in *"FAIL 1"*"base-vs-base"*) [ "$RC" = 1 ] && ok "a failed generation is counted FAIL, never scored (exit 1)" || bad "eval exit $RC on failures" ;;
   *) bad "eval with no key: $(printf '%s' "$EV" | tail -3 | tr '\n' ' ')" ;; esac
 
+if [ "$CI" = 1 ]; then
+  # Copy rule: nothing the installer or uninstaller prints uses an em or en dash. Every line
+  # that is not a full-line comment is scanned, so a dash in a "|| echo" continuation counts.
+  DL="$(/usr/bin/perl -CSD -ne 'next if /^\s*#/; print "$ARGV:$. " if /[\x{2013}\x{2014}]/; close ARGV if eof' "$SRC/install.sh" "$SRC/uninstall.sh" 2>/dev/null)"
+  [ -z "$DL" ] && ok "install.sh and uninstall.sh print no em or en dashes" || bad "em or en dash in installer output: ${DL//$SRC\//}"
+fi
 if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
   echo "── uninstaller (seeded throwaway HOME, launchctl stubbed) ──"
   UH="$SBT/uh"; mkdir -p "$UH/Library/LaunchAgents" "$UH/.hammerspoon" "$UH/.config/senti" "$UH/.cache/senti" "$SBT/ubin"
@@ -695,6 +760,33 @@ if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
   [ "$(cat "$UH2/.hammerspoon/init.lua")" = "newer own config" ] && [ -f "$UH2/.hammerspoon/init.lua.pre-senti.20261001-120000" ] \
     && case "$UO" in *"init.lua.pre-senti.20261001-120000"*) true ;; *) false ;; esac \
     && ok "uninstall: a non-Senti init.lua is kept and the backup's path is printed" || bad "uninstall replaced a non-Senti init.lua"
+  # Senti's init.lua plus the user's own edit, with a pre-Senti backup: the edit must survive
+  # in init.lua.senti-<date>.bak before the backup is restored, and both paths are printed.
+  # The second home does the same through a dotfiles symlink.
+  UEDIT="own-edit-$$"
+  for kind in file link; do
+    UH3="$SBT/uh3-$kind"; mkdir -p "$UH3/.hammerspoon" "$UH3/dots"
+    if [ "$kind" = link ]; then
+      printf 'wf.armTap()\n-- %s\n' "$UEDIT" > "$UH3/dots/init.lua"; ln -s "$UH3/dots/init.lua" "$UH3/.hammerspoon/init.lua"
+    else
+      printf 'wf.armTap()\n-- %s\n' "$UEDIT" > "$UH3/.hammerspoon/init.lua"
+    fi
+    printf 'older backup\n' > "$UH3/.hammerspoon/init.lua.pre-senti.20261001-120000"
+    UO="$(printf 'y\nn\nn\n' | HOME="$UH3" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" 2>&1)"
+    USAVED=""; for b in "$UH3"/.hammerspoon/init.lua.senti-*.bak; do [ -f "$b" ] && USAVED="$b"; done
+    [ -n "$USAVED" ] && [ "$(cat "$UH3/.hammerspoon/init.lua")" = "older backup" ] \
+      && case "$(cat "$USAVED")" in *"$UEDIT"*) true ;; *) false ;; esac \
+      && case "$UO" in *"saved your current init.lua as ~/.hammerspoon/${USAVED##*/}"*"from ~/.hammerspoon/init.lua.pre-senti.20261001-120000"*) true ;; *) false ;; esac \
+      && { [ "$kind" = file ] || [ -L "$UH3/.hammerspoon/init.lua" ]; } \
+      && ok "uninstall ($kind): an edited Senti init.lua is saved as init.lua.senti-<date>.bak before the backup is restored" \
+      || bad "uninstall ($kind): the edited Senti init.lua was not saved before the restore"
+  done
+  # With no pre-Senti backup nothing is restored, so the preview must not promise a saved copy.
+  UH4="$SBT/uh4"; mkdir -p "$UH4/.hammerspoon"; printf 'wf.armTap()\n' > "$UH4/.hammerspoon/init.lua"
+  UO="$(printf 'n\n' | HOME="$UH4" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" 2>&1)"
+  case "$UO" in *"saved first"*) bad "uninstall preview promises a saved init.lua copy when there is no backup" ;;
+    *"no earlier init.lua backup"*) ok "uninstall preview says when there is no backup to restore" ;;
+    *) bad "uninstall preview: no line about the Hammerspoon config" ;; esac
 fi
 
 echo
