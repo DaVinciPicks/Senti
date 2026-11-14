@@ -82,6 +82,8 @@ You need:
 
 - a Mac with Apple Silicon (M1 or later). The installer stops on any other Mac;
 - [Homebrew](https://brew.sh);
+- [Hammerspoon](https://www.hammerspoon.org), which Senti runs inside. `install.sh` offers to
+  install it with Homebrew if it is missing;
 - the Xcode Command Line Tools (`xcode-select --install`). They are needed once, to build the helper
   that shows the Microphone permission prompt; `install.sh` builds it only when they are present;
 - about 0.6 GB of disk for the default speech model (574 MB), plus about 80 MB for the Homebrew
