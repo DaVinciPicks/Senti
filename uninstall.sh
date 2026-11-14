@@ -9,7 +9,10 @@
 #   ~/Library/LaunchAgents/io.senti.server.plist   the warm whisper server (stopped first)
 #   ~/.hammerspoon/init.lua                        restored from the newest
 #                                                  init.lua.pre-senti.* backup, if any, and
-#                                                  only when the current one is Senti's
+#                                                  only when the current one is Senti's.
+#                                                  The current one is first saved as
+#                                                  init.lua.senti-<date>.bak, so edits you
+#                                                  made inside Senti's file are kept there.
 #   ~/Applications/Senti.app (and ~/Desktop/Senti.app if you made that copy)
 #   ~/.cache/senti                                 audio, screenshots, session memory
 #   ~/Library/Logs/senti.log, senti-server.log
@@ -27,7 +30,7 @@ for a in "$@"; do
   case "$a" in
     -y|--yes) ASSUME_YES=1 ;;
     --all) ALL=1 ;;
-    -h|--help) /usr/bin/sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) /usr/bin/sed -n '2,26p' "$0"; exit 0 ;;
     *) echo "unknown option: $a (try --help)" >&2; exit 2 ;;
   esac
 done
@@ -60,7 +63,8 @@ confirm_extra() {
 echo "This removes Senti from this Mac:"
 [ -f "$PLIST" ] && echo "  - the whisper server LaunchAgent (stopped first)"
 if [ -f "$HSDIR/init.lua" ] && /usr/bin/grep -q 'wf.armTap' "$HSDIR/init.lua"; then
-  echo "  - Senti's Hammerspoon config (your previous init.lua comes back if a backup exists)"
+  echo "  - Senti's Hammerspoon config (your previous init.lua comes back if a backup exists;"
+  echo "    the current one is saved first as ~/.hammerspoon/init.lua.senti-<date>.bak)"
 elif [ -e "$HSDIR/init.lua" ] || [ -L "$HSDIR/init.lua" ]; then
   echo "  (your ~/.hammerspoon/init.lua is not Senti's, so it stays as it is)"
 fi
@@ -84,6 +88,8 @@ fi
 #    missing one, is replaced by the newest backup install.sh made. A config written after
 #    Senti was installed is the user's newest work: it stays, and so does the backup.
 #    Backup names sort by time (init.lua.pre-senti.YYYYMMDD-HHMMSS).
+#    Senti's init.lua may carry the user's own edits, so before a backup replaces it, it is
+#    copied to init.lua.senti-<YYYYmmdd-HHMMSS>.bak. If that copy fails, nothing is restored.
 HSINIT="$HSDIR/init.lua"
 NEWEST=""
 for b in "$HSDIR"/init.lua.pre-senti.*; do
@@ -92,21 +98,37 @@ done
 IS_SENTI=0; HAS_INIT=0
 { [ -e "$HSINIT" ] || [ -L "$HSINIT" ]; } && HAS_INIT=1
 [ -f "$HSINIT" ] && /usr/bin/grep -q 'wf.armTap' "$HSINIT" && IS_SENTI=1
+SAVED_OK=1
+if [ -n "$NEWEST" ] && [ "$IS_SENTI" = 1 ]; then
+  SAVED="$HSDIR/init.lua.senti-$(date '+%Y%m%d-%H%M%S').bak"
+  [ -e "$SAVED" ] || [ -L "$SAVED" ] && SAVED="${SAVED%.bak}-$$.bak"
+  # cat, not cp or mv: it reads through a dotfiles symlink and never replaces an existing file.
+  if [ ! -e "$SAVED" ] && [ ! -L "$SAVED" ] && (set -o noclobber; cat "$HSINIT" > "$SAVED") 2>/dev/null \
+     && /usr/bin/cmp -s "$HSINIT" "$SAVED"; then
+    echo "✓ saved your current init.lua as ~/.hammerspoon/$(basename "$SAVED")"
+  else
+    SAVED_OK=0
+    echo "  ! could not save a copy of your current init.lua, so it was left as it is"
+    echo "    your pre-Senti backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
+  fi
+fi
 if [ "$HAS_INIT" = 1 ] && [ "$IS_SENTI" = 0 ]; then
   echo "  kept ~/.hammerspoon/init.lua: it is not Senti's config"
   [ -n "$NEWEST" ] && echo "  your pre-Senti backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
+elif [ "$SAVED_OK" = 0 ]; then
+  :
 elif [ -n "$NEWEST" ] && [ -L "$HSINIT" ]; then
   # A dotfiles symlink: install.sh copied senti.lua THROUGH the link, so the backup goes
   # back through it too. mv would replace the link and leave senti.lua in the target.
   if cat "$NEWEST" > "$HSINIT"; then
     rm -f "$NEWEST"
-    echo "✓ restored your previous Hammerspoon config from $(basename "$NEWEST") (through the init.lua link)"
+    echo "✓ restored your previous Hammerspoon config from ~/.hammerspoon/$(basename "$NEWEST") (through the init.lua link)"
   else
     echo "  ! could not write through the init.lua link; your backup is still at ~/.hammerspoon/$(basename "$NEWEST")"
   fi
 elif [ -n "$NEWEST" ]; then
   mv -f "$NEWEST" "$HSINIT"
-  echo "✓ restored your previous Hammerspoon config from $(basename "$NEWEST")"
+  echo "✓ restored your previous Hammerspoon config from ~/.hammerspoon/$(basename "$NEWEST")"
 elif [ "$IS_SENTI" = 1 ]; then
   rm -f "$HSINIT"
   echo "✓ removed Senti's Hammerspoon config (there was no earlier config to restore)"

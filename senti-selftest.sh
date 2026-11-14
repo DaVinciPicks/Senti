@@ -695,6 +695,27 @@ if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
   [ "$(cat "$UH2/.hammerspoon/init.lua")" = "newer own config" ] && [ -f "$UH2/.hammerspoon/init.lua.pre-senti.20261001-120000" ] \
     && case "$UO" in *"init.lua.pre-senti.20261001-120000"*) true ;; *) false ;; esac \
     && ok "uninstall: a non-Senti init.lua is kept and the backup's path is printed" || bad "uninstall replaced a non-Senti init.lua"
+  # Senti's init.lua plus the user's own edit, with a pre-Senti backup: the edit must survive
+  # in init.lua.senti-<date>.bak before the backup is restored, and both paths are printed.
+  # The second home does the same through a dotfiles symlink.
+  UEDIT="own-edit-$$"
+  for kind in file link; do
+    UH3="$SBT/uh3-$kind"; mkdir -p "$UH3/.hammerspoon" "$UH3/dots"
+    if [ "$kind" = link ]; then
+      printf 'wf.armTap()\n-- %s\n' "$UEDIT" > "$UH3/dots/init.lua"; ln -s "$UH3/dots/init.lua" "$UH3/.hammerspoon/init.lua"
+    else
+      printf 'wf.armTap()\n-- %s\n' "$UEDIT" > "$UH3/.hammerspoon/init.lua"
+    fi
+    printf 'older backup\n' > "$UH3/.hammerspoon/init.lua.pre-senti.20261001-120000"
+    UO="$(printf 'y\nn\nn\n' | HOME="$UH3" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" 2>&1)"
+    USAVED=""; for b in "$UH3"/.hammerspoon/init.lua.senti-*.bak; do [ -f "$b" ] && USAVED="$b"; done
+    [ -n "$USAVED" ] && [ "$(cat "$UH3/.hammerspoon/init.lua")" = "older backup" ] \
+      && case "$(cat "$USAVED")" in *"$UEDIT"*) true ;; *) false ;; esac \
+      && case "$UO" in *"saved your current init.lua as ~/.hammerspoon/${USAVED##*/}"*"from ~/.hammerspoon/init.lua.pre-senti.20261001-120000"*) true ;; *) false ;; esac \
+      && { [ "$kind" = file ] || [ -L "$UH3/.hammerspoon/init.lua" ]; } \
+      && ok "uninstall ($kind): an edited Senti init.lua is saved as init.lua.senti-<date>.bak before the backup is restored" \
+      || bad "uninstall ($kind): the edited Senti init.lua was not saved before the restore"
+  done
 fi
 
 echo
