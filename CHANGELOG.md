@@ -46,7 +46,7 @@ All notable changes to Senti. Dates are in US Eastern time.
   log says what each request sent.
 - System prompts moved off the command line in every wrapper, and wrappers keep the cause of an AI
   error instead of replacing it with a generic one.
-- User-facing strings no longer use em dashes.
+- Notices, menus and installer messages no longer use em dashes.
 - README: the key step no longer writes the key with `echo`, which left it in shell history.
 
 ### Fixed
