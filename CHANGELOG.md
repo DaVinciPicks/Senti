@@ -61,6 +61,8 @@ All notable changes to Senti. Dates are in US Eastern time.
 - `uninstall.sh` keeps an `init.lua` that is not Senti's, restores a symlinked `init.lua` through the
   link, stops when HOME is empty, and no longer claims Keychain items are gone when it could not
   clear them.
+- The project name from the window title no longer appears in a file listing's arguments when
+  Senti looks for the Claude Code session file; the lookup is a bash glob loop.
 - Reading an empty `model.pref` no longer stops the speech server from starting.
 - Esc during Command sends nothing, stops the request in flight, and restores an empty clipboard to
   empty.

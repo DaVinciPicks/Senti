@@ -38,8 +38,10 @@ Each line names the code that does it, so you can check it.
 - **Nothing sensitive on a command line.** Your speech, the system prompt (it can hold your session
   history and notes digest), window titles and API keys travel between Hammerspoon, the scripts and
   Python in environment variables, never in argv (`senti.lua`, `wf.runScript`; `senti-ai.sh`, the
-  `SENTI_*` variables passed to Python). The self-test runs canary strings through these paths and
-  fails if one shows up in a `ps` snapshot (`senti-selftest.sh`).
+  `SENTI_*` variables passed to Python). When `senti-target.sh` looks for the Claude Code session
+  file of the project named in the window title, it matches file names with a bash glob loop inside
+  the shell, so window titles never go on a command line. The self-test runs canary strings through
+  these paths and fails if one shows up in a `ps` snapshot (`senti-selftest.sh`).
 - **API keys in the macOS Keychain.** `senti-key.sh` stores each key as a generic password (service
   `io.senti`, account = provider). The key reaches `security` on standard input, built by the bash
   builtin `printf`, so no process argv holds it, and the write is checked by reading the key back. The
