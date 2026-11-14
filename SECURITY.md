@@ -51,7 +51,7 @@ Each line names the code that does it, so you can check it.
 - **No redirects with a key.** Requests that carry a key refuse HTTP redirects, so the key never
   follows a redirect to another host (`senti-ai.sh`, `senti-key.sh`, class `NoRedirect`).
 - **Prompt-injection fence.** Untrusted text (the window title, session history, your notes digest,
-  the text you selected) goes in the user message inside a fenced block with a random per-call marker.
+  the text you selected) goes in the user message inside a fenced block with a random marker, made new each time the context is prepared.
   The model is told the block is data and never instructions, and the fence brackets are stripped
   from the text inside so it cannot close the block early (`senti-lib.sh`, `senti_build_untrusted`;
   `senti-command.sh`). A fence lowers the risk. It cannot remove it: the model may still follow text
