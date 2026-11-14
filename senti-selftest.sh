@@ -732,6 +732,12 @@ EV="$(SENTI_PROVIDER=anthropic WF_EVAL_CASES="$SBT/cases.txt" bash "$CFG/senti-e
 case "$EV" in *"FAIL 1"*"base-vs-base"*) [ "$RC" = 1 ] && ok "a failed generation is counted FAIL, never scored (exit 1)" || bad "eval exit $RC on failures" ;;
   *) bad "eval with no key: $(printf '%s' "$EV" | tail -3 | tr '\n' ' ')" ;; esac
 
+if [ "$CI" = 1 ]; then
+  # Copy rule: nothing the installer or uninstaller prints uses an em or en dash. Every line
+  # that is not a full-line comment is scanned, so a dash in a "|| echo" continuation counts.
+  DL="$(/usr/bin/perl -CSD -ne 'next if /^\s*#/; print "$ARGV:$. " if /[\x{2013}\x{2014}]/; close ARGV if eof' "$SRC/install.sh" "$SRC/uninstall.sh" 2>/dev/null)"
+  [ -z "$DL" ] && ok "install.sh and uninstall.sh print no em or en dashes" || bad "em or en dash in installer output: ${DL//$SRC\//}"
+fi
 if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
   echo "── uninstaller (seeded throwaway HOME, launchctl stubbed) ──"
   UH="$SBT/uh"; mkdir -p "$UH/Library/LaunchAgents" "$UH/.hammerspoon" "$UH/.config/senti" "$UH/.cache/senti" "$SBT/ubin"
