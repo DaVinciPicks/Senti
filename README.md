@@ -103,8 +103,10 @@ What `install.sh` does, in order:
    and `~/Applications/Senti.app`, a menu-bar launcher.
 6. Offers to add an AI key (see below) when none is stored yet. This step is skipped with `--yes`.
 
-`./install.sh --yes` installs missing pieces without asking. Running it again later updates Senti
-and keeps your settings. The Xcode Command Line Tools (`xcode-select --install`) are optional: Senti
+`./install.sh --yes` installs missing pieces without asking. Running it again later updates Senti.
+When a release changes the config schema (1.1 does: v8 to v9), `install.sh` saves your old file as
+`config.sh.v<N>.bak` and installs the new one; copy your personal settings back from that file.
+Your `replacements.txt`, `brain-map.txt` and eval cases are kept. The Xcode Command Line Tools (`xcode-select --install`) are optional: Senti
 uses them to build a small helper that brings up the microphone permission prompt.
 
 The [Releases page](https://github.com/Leonardo-Engineering/Senti/releases/latest) has the same
@@ -279,7 +281,8 @@ It lists what it will remove and asks first. Every question defaults to No. It:
 - asks separately whether to remove `~/.config/senti` together with your keys in the Keychain, and
   whether to remove the speech models in `~/.local/share/whisper-models` (other tools may use them).
 
-`./uninstall.sh --yes` removes Senti without asking and keeps your settings, keys and models.
+`./uninstall.sh --yes` removes Senti without asking and leaves `~/.config/senti`, your keys and the
+speech models in place.
 `./uninstall.sh --yes --all` removes those too. Homebrew packages are never removed; the last lines
 print the `brew uninstall` command if you want them gone. Hammerspoon keeps running the old config
 until you reload or quit it.

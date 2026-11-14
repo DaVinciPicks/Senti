@@ -39,7 +39,9 @@ All notable changes to Senti. Dates are in US Eastern time.
 - AI errors now have typed exit codes (10 to 19), and the notices name the provider and the cause.
 - Faster dictation path: key-down to recorder start went from 0.127 s to 0.018 s, and the short-clip
   speedup now applies up to 14 s instead of 10 s, which took an 11.7 s clip from 1.04 s to 0.59 s
-  (recorded clips on an M3 Pro, 13 Nov 2026). `config.sh` is now schema v9.
+  (recorded clips on an M3 Pro, 13 Nov 2026).
+- `config.sh` is now schema v9. Upgrading from 1.0 saves your old file as `config.sh.v8.bak` and
+  installs the new one; copy your personal settings back from that file.
 - The notes digest is no longer sent in the background to be shortened. That step is deleted, and the
   log says what each request sent.
 - System prompts moved off the command line in every wrapper, and wrappers keep the cause of an AI
