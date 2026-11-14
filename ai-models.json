@@ -3,8 +3,8 @@
   "unit": "US dollars per 1 million tokens",
   "providers": {
     "openai":     { "label": "OpenAI",     "host": "api.openai.com",    "key_url": "https://platform.openai.com/api-keys",   "default": "gpt-6-luna",        "available": true },
-    "anthropic":  { "label": "Anthropic",  "host": "api.anthropic.com", "key_url": "https://platform.claude.com/settings/keys", "default": "claude-opus-5-5", "available": false },
-    "openrouter": { "label": "OpenRouter", "host": "openrouter.ai",     "key_url": "https://openrouter.ai/settings/keys",    "default": "openai/gpt-6-luna", "available": false }
+    "anthropic":  { "label": "Anthropic",  "host": "api.anthropic.com", "key_url": "https://platform.claude.com/settings/keys", "default": "claude-opus-5-5", "available": true },
+    "openrouter": { "label": "OpenRouter", "host": "openrouter.ai",     "key_url": "https://openrouter.ai/settings/keys",    "default": "openai/gpt-6-luna", "available": true }
   },
   "models": [
     { "provider": "openai", "id": "gpt-6-luna", "role": "The default for text and screenshots, and the cheapest", "input": 0.10, "output": 0.50, "vision": true, "efforts": ["none", "low", "medium", "high", "xhigh", "max"], "source": "platform.openai.com/pricing, checked 2026-11-11; on the key 2026-11-13; vision self-test 2026-11-13" },

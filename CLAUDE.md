@@ -152,8 +152,10 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
   - One `ai:` log line per call, counts only (provider, model, effort, ms, tokens, key
     source). `~/.cache/senti/last-request.json` (600) names the parts of the last request
     (speech, selection, window_title, session, vault, target_digest) with counts, never text.
-  - Anthropic and OpenRouter are tested offline (dry runs, a bogus key → 401 → exit 11,
-    13 Nov 2026) until the owner's live check; `available: false` in the registry until then.
+  - Anthropic and OpenRouter: request shapes and the refused-key mapping are tested offline
+    (dry runs, a bogus key → 401 → exit 11, 13 Nov 2026). The owner listed both as available
+    on 14 Nov 2026 without a live call ("any model's key should work"); a real-key report is
+    the first live evidence.
 - **AI text + vision on OpenAI:** both go to **`gpt-6-luna`** since 2026-10-17: $0.10/$0.50
   per 1M vs gpt-5.6-luna's $0.20/$1.20, and it beat 5.6-luna 5-0-3 pairwise on the 8 eval
   cases while costing ~1/3 per text call at the same latency. Text runs at

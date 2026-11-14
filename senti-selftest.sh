@@ -345,8 +345,8 @@ for m in d.get("models", []):
     for k in ("id", "role", "input", "output", "source"):
         if k not in m: errs.append("%s lacks %s" % (m.get("id"), k))
 avail = {p: v.get("available") for p, v in P.items()}
-if avail != {"openai": True, "anthropic": False, "openrouter": False}:
-    errs.append("available flags %s (contract: openai only until the live checks)" % avail)
+if avail != {"openai": True, "anthropic": True, "openrouter": True}:
+    errs.append("available flags %s (owner, 14 Nov 2026: every provider is available)" % avail)
 print("; ".join(errs) if errs else "OK %d providers %d models %s" % (len(P), len(d["models"]), " ".join("%s=%s" % (p, v["default"]) for p, v in sorted(P.items()))))
 PY
 )"

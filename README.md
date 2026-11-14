@@ -172,14 +172,14 @@ shell history.
 
 ## Bring your own AI
 
-| Provider | Default model | Status |
-|---|---|---|
-| OpenAI | `gpt-6-luna` | Live-tested |
-| Anthropic | `claude-opus-5-5` | New in 1.1, tested offline, live check pending |
-| OpenRouter | `openai/gpt-6-luna` | New in 1.1, tested offline, live check pending |
+| Provider | Default model |
+|---|---|
+| OpenAI | `gpt-6-luna` (the default provider) |
+| Anthropic | `claude-opus-5-5` |
+| OpenRouter | `openai/gpt-6-luna` |
 
-"Tested offline" means the request shapes and the error handling for a refused key were checked
-without a real key; nobody has run a real request through Anthropic or OpenRouter from Senti yet.
+Add a key for any of them in the menu bar ("AI provider and key...") or with
+`bash ~/.config/senti/senti-key.sh set <provider>`, then pick a model in the same menu.
 
 Prices are US dollars per 1 million tokens, from `ai-models.json`. OpenAI prices were checked on
 11 November 2026 on [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing). Anthropic prices
@@ -196,7 +196,7 @@ model list, fetched 13 November 2026.
 | `gpt-6.1-sol` | Complex prompts | $2.00 | $10.00 |
 | `gpt-6-astra` | Most capable, highest cost | $10.00 | $50.00 |
 
-**Anthropic** (new in 1.1, live check pending)
+**Anthropic**
 
 | Model | Use it for | Input | Output |
 |---|---|---|---|
@@ -204,7 +204,7 @@ model list, fetched 13 November 2026.
 | `claude-sonnet-5-5` | Claude at a middle price | $2.00 | $10.00 |
 | `claude-haiku-5-5` | Claude at the same price as `gpt-6-luna` (prompts up to 100K tokens) | $0.10 | $0.50 |
 
-**OpenRouter** (new in 1.1, live check pending)
+**OpenRouter**
 
 | Model | Use it for | Input | Output |
 |---|---|---|---|
