@@ -75,3 +75,37 @@ overwrites the scripts and `init.lua`. `config.sh`, `replacements.txt`, `brain-m
 
 A short imperative subject that says what changed in behaviour, for example
 `uninstall keeps a non-Senti init.lua`. One logical change per commit.
+
+## Releasing
+
+Publishing anything (a tag, a release, the site) needs the owner's explicit yes each time. The
+steps below are for when that yes is given.
+
+1. **Changelog.** Move the `Unreleased` section of `CHANGELOG.md` under the new version and date.
+2. **Version strings.** Find every file that carries the version and change them together:
+   `grep -rn 'CFBundle.*Version' app/Info.plist` and the changelog heading.
+3. **Checks.** CI is green on `main`. On a real Mac: `./install.sh`, then
+   `bash ~/.config/senti/senti-selftest.sh`. If the dictation path changed, measure it again and
+   update the latency lines in `README.md` with the new date.
+4. **Annotated tag.** `git tag -a v1.1.0 -m "Senti 1.1.0"`, then push the tag.
+5. **Source tarball and checksums.**
+
+   ```bash
+   git archive --format=tar.gz --prefix=senti-1.1.0/ -o senti-1.1.0.tar.gz v1.1.0
+   shasum -a 256 senti-1.1.0.tar.gz > SHA256SUMS
+   shasum -a 256 -c SHA256SUMS
+   ```
+
+6. **Scan the tarball** for a home-folder path or a key before uploading:
+
+   ```bash
+   mkdir check && tar -xzf senti-1.1.0.tar.gz -C check
+   grep -rIl -e '/Users/[A-Za-z0-9]' -e 'sk-[A-Za-z0-9_-]\{20,\}' check
+   ```
+
+   No output means nothing was found.
+7. **Release.** Create the GitHub release from the tag, attach `senti-1.1.0.tar.gz` and
+   `SHA256SUMS`, and paste the changelog section as the notes. The owner approves it before it is
+   published.
+8. **Check what users get.** Download both files from the release page and run
+   `shasum -a 256 -c SHA256SUMS`.
