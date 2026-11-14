@@ -185,7 +185,8 @@ Prices are US dollars per 1 million tokens, from `ai-models.json`. OpenAI prices
 11 November 2026 on [OpenAI's pricing page](https://developers.openai.com/api/docs/pricing). Anthropic prices
 come from a model table cached 3 November 2026 and read 13 November 2026; they have not been checked
 on Anthropic's pricing page yet. OpenRouter prices come from OpenRouter's
-model list, fetched 13 November 2026.
+model list, fetched 14 November 2026. Through OpenRouter one key reaches models from 9 labs; the list
+is picked from OpenRouter's catalog and its most-used models.
 
 **OpenAI**
 
@@ -212,7 +213,15 @@ model list, fetched 13 November 2026.
 | `anthropic/claude-haiku-5.5` | Claude, cheapest | $0.10 | $0.50 |
 | `anthropic/claude-sonnet-5.5` | Claude, middle price | $2.00 | $10.00 |
 | `anthropic/claude-opus-5.5` | Claude, most capable | $4.00 | $20.00 |
-| `google/gemini-3.8-flash` | Google, not yet measured on Senti's eval | $0.825 | $4.125 |
+| `google/gemini-3.8-flash` | Google Gemini, a lower-cost option | $0.825 | $4.125 |
+| `google/gemini-4-hydrogen` | Google's newest Gemini | $1.50 | $7.50 |
+| `moonshotai/kimi-k3.1-pro` | Moonshot's newest Kimi | $2.00 | $10.00 |
+| `x-ai/grok-4.7` | xAI's newest Grok | $2.00 | $6.00 |
+| `mistralai/mistral-large-4-0` | Mistral's newest large model | $0.70 | $2.10 |
+| `qwen/qwen3.8-omni-flash` | Qwen, fast and low cost | $0.15 | $0.47 |
+| `minimax/minimax-m3.1-flash` | MiniMax, fast and low cost | $0.15 | $0.60 |
+| `deepseek/deepseek-v4.1-flash` | DeepSeek, fast and very low cost | $0.051 | $0.203 |
+| `z-ai/glm-5.3-flash` | GLM, the lowest cost here | $0.04 | $0.078 |
 
 Every OpenRouter request asks OpenRouter to use only model hosts that do not store or train on the
 data (`data_collection: deny`).
