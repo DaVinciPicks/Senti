@@ -269,9 +269,11 @@ From your copy of the repository:
 It lists what it will remove and asks first. Every question defaults to No. It:
 
 - stops and removes the speech server's LaunchAgent;
-- puts back your previous `~/.hammerspoon/init.lua` from the newest `init.lua.pre-senti.*` backup,
-  but only when the current `init.lua` is Senti's. If you changed it since, yours is kept and the
-  backup's location is printed. With no backup, Senti's `init.lua` is removed;
+- puts back your previous `~/.hammerspoon/init.lua` from the newest `init.lua.pre-senti.*` backup
+  when the current `init.lua` is Senti's, or when there is none.
+  Your current `init.lua` is saved as `init.lua.senti-<date>.bak` before your old one is restored, so edits you made inside Senti's file are kept in that copy.
+  An `init.lua` that no longer contains Senti's code is kept, and the backup's location is printed.
+  With no backup, Senti's `init.lua` is removed;
 - removes `~/Applications/Senti.app` (and a Desktop copy if you made one), `~/.cache/senti` and
   Senti's logs;
 - asks separately whether to remove `~/.config/senti` together with your keys in the Keychain, and

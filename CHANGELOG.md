@@ -23,7 +23,7 @@ All notable changes to Senti. Dates are in US Eastern time.
   and counts only, no text).
 - Esc cancels a recording or an AI turn while the pill is showing.
 - `uninstall.sh`, which asks before each step and restores your previous `init.lua` when the current
-  one is Senti's.
+  one is Senti's. Your current `init.lua` is saved as `init.lua.senti-<date>.bak` before your old one is restored, so edits you made inside Senti's file are kept in that copy.
 - An optional key step in `install.sh` (terminal only, never with `--yes`).
 - `senti-selftest.sh --ci`: an offline mode for CI, plus a transcription round trip and key canaries.
 - An eval harness that can prove a change, with a base-vs-base row.
