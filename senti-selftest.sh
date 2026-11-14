@@ -781,6 +781,12 @@ if [ "$CI" = 1 ] && [ -f "$SRC/uninstall.sh" ]; then
       && ok "uninstall ($kind): an edited Senti init.lua is saved as init.lua.senti-<date>.bak before the backup is restored" \
       || bad "uninstall ($kind): the edited Senti init.lua was not saved before the restore"
   done
+  # With no pre-Senti backup nothing is restored, so the preview must not promise a saved copy.
+  UH4="$SBT/uh4"; mkdir -p "$UH4/.hammerspoon"; printf 'wf.armTap()\n' > "$UH4/.hammerspoon/init.lua"
+  UO="$(printf 'n\n' | HOME="$UH4" SENTI_LAUNCHCTL="$SBT/ubin/launchctl" bash "$SRC/uninstall.sh" 2>&1)"
+  case "$UO" in *"saved first"*) bad "uninstall preview promises a saved init.lua copy when there is no backup" ;;
+    *"no earlier init.lua backup"*) ok "uninstall preview says when there is no backup to restore" ;;
+    *) bad "uninstall preview: no line about the Hammerspoon config" ;; esac
 fi
 
 echo

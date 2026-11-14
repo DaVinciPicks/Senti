@@ -63,8 +63,14 @@ confirm_extra() {
 echo "This removes Senti from this Mac:"
 [ -f "$PLIST" ] && echo "  - the whisper server LaunchAgent (stopped first)"
 if [ -f "$HSDIR/init.lua" ] && /usr/bin/grep -q 'wf.armTap' "$HSDIR/init.lua"; then
-  echo "  - Senti's Hammerspoon config (your previous init.lua comes back if a backup exists;"
-  echo "    the current one is saved first as ~/.hammerspoon/init.lua.senti-<date>.bak)"
+  HAS_BACKUP=0
+  for b in "$HSDIR"/init.lua.pre-senti.*; do [ -f "$b" ] && HAS_BACKUP=1; done
+  if [ "$HAS_BACKUP" = 1 ]; then
+    echo "  - Senti's Hammerspoon config (your previous init.lua comes back from its backup;"
+    echo "    the current one is saved first as ~/.hammerspoon/init.lua.senti-<date>.bak)"
+  else
+    echo "  - Senti's Hammerspoon config (there is no earlier init.lua backup to restore)"
+  fi
 elif [ -e "$HSDIR/init.lua" ] || [ -L "$HSDIR/init.lua" ]; then
   echo "  (your ~/.hammerspoon/init.lua is not Senti's, so it stays as it is)"
 fi
