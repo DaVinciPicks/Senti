@@ -7,8 +7,7 @@ All notable changes to Senti. Dates are in US Eastern time.
 ### Added
 
 - **Anthropic and OpenRouter** as AI providers next to OpenAI, behind one adapter in `senti-ai.sh`,
-  each with its own key. Both are tested offline (request shapes, a refused key maps to the right
-  error); a live check with real keys is still pending.
+  each with its own key. Add a key for any of them in the menu bar and pick a model.
 - `ai-models.json`: every provider and model Senti knows, with prices and the efforts each model
   accepts.
 - `senti-key.sh`, the key helper: `set` (hidden prompt or standard input, never argv), `test`,
