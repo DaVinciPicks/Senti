@@ -273,6 +273,50 @@ senti_untrusted_ctx() {
   printf '%s' "$out"
 }
 
+# ── Screenshot downscale at key-down ────────────────────────────────────────────────
+# Prompt mode's screenshot is taken at key-DOWN (senti.lua snapAndCapture), but the sips
+# downscale used to run after key-up, inside senti-vision.sh: 0.08 s of the user's wait,
+# the largest local step left on that path (measured 14 Nov 2026). The prefetch now does it
+# while the user is still speaking, with exactly the same sips command, so the JPEG that is
+# sent is byte for byte the one key-up would have made. It is used only when the screenshot
+# at key-up is the very file that was downscaled: senti_shot_sig (inode, size, mtime to the
+# nanosecond, and the target size) must match, else senti-vision.sh downscales as before.
+# Files: ctx-shot.jpg and ctx-shot.sig, under the ctx- prefix (and .jpg) that the cache
+# sweep removes at the end of every turn.
+senti_shot_sig() { /usr/bin/stat -f '%i %z %Fm' "$1" 2>/dev/null && printf ' %s' "${WF_SHOT_PX:-1536}"; }
+senti_shot_prefetch() {
+  local run="${WF_RUN:-$HOME/.cache/senti}" shot a b i tmp line
+  shot="$run/screen.png"
+  # "Use a screenshot in Prompt" off (ui.pref prompt_screen=0): no capture is coming.
+  if [ -f "$HOME/.config/senti/ui.pref" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      [ "$line" = "prompt_screen=0" ] && return 0
+    done < "$HOME/.config/senti/ui.pref"
+  fi
+  # screencapture starts at the same key-down and takes about 0.2 s: wait up to 1.5 s.
+  i=0
+  while [ ! -s "$shot" ]; do
+    i=$((i+1)); [ "$i" -gt 30 ] && return 0
+    /bin/sleep 0.05
+  done
+  # Wait until the file stops changing, so a capture still being written is not used.
+  a="$(senti_shot_sig "$shot")"; i=0
+  while :; do
+    /bin/sleep 0.05; b="$(senti_shot_sig "$shot")"
+    [ -n "$a" ] && [ "$a" = "$b" ] && break
+    a="$b"; i=$((i+1)); [ "$i" -gt 20 ] && return 0
+  done
+  tmp="$( umask 077; /usr/bin/mktemp "$run/ctx-shot.XXXXXX" 2>/dev/null )" || return 0
+  if /usr/bin/sips -Z "${WF_SHOT_PX:-1536}" -s format jpeg "$shot" --out "$tmp" >/dev/null 2>&1 \
+     && [ -s "$tmp" ] && [ "$(senti_shot_sig "$shot")" = "$a" ]; then
+    chmod 600 "$tmp" 2>/dev/null
+    mv -f "$tmp" "$run/ctx-shot.jpg" && ( umask 077; printf '%s' "$a" > "$run/ctx-shot.sig" )
+  else
+    rm -f "$tmp"
+  fi
+  return 0
+}
+
 # ── Prefetch entry point ─────────────────────────────────────────────────────────────
 # Executed directly (not sourced) → warm both halves and exit. senti.lua fires this at
 # key-DOWN for prompt mode. The standard BASH_SOURCE/$0 idiom is used rather than an
@@ -289,6 +333,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   # local work only: nothing is sent until a heavy turn's request (senti_ctx_for_intent).
   senti_prompt_craft  >/dev/null 2>&1
   senti_untrusted_ctx >/dev/null 2>&1
+  senti_shot_prefetch >/dev/null 2>&1
   # Expire Notion digests past their TTL now, not at the next 30-minute session sweep.
   # Local only: key-down never reads Notion itself (that happens on heavy turns only).
   if [ -d "${WF_RUN:-$HOME/.cache/senti}/brain" ]; then
