@@ -116,6 +116,39 @@ if [ -n "$CHOSEN" ]; then
   if [ -n "${DELTA// /}" ]; then
     NAME="$MODEL"
     echo "$(date '+%F %T') target: resolved exact model '$MODEL'" >>"$WF_LOG" 2>/dev/null
+  elif [ -n "$MODEL" ] && [ "${WF_KB_FALLBACK:-1}" = "1" ]; then
+    # Nearest older id: a model newer than the KB (claude-opus-5-5 before its section was
+    # written) gets its predecessor's section (claude-opus-5) rather than nothing, and the
+    # log says so, so a stale KB is visible. Drop one trailing "-part" at a time, never
+    # below family-plus-one-part (claude-opus), which would match a different generation.
+    # First the nearest older SIBLING: claude-opus-5-7 takes claude-opus-5-5, the highest
+    # "<prefix>-<n>" section with n below 7, before trimming to claude-opus-5. The prefix
+    # must keep family-plus-one-part, so claude-opus-6 never borrows claude-opus-5, and a
+    # dated snapshot (claude-sonnet-5-20260101) skips this step so it never takes a newer -5-5.
+    OLDER=""; DELTA=""
+    case "$MODEL" in
+      *-*-*-*) case "${MODEL##*-}" in ''|*[!0-9]*|???*) ;; *)   # a 1-2 digit minor, never a date
+        OLDER="$(/usr/bin/perl -ne 'BEGIN { ($p, $n) = splice(@ARGV, 0, 2); $b = -1 }
+          $b = $1 if /^## Model: \Q$p\E-(\d+)\s*$/ && $1 < $n && $1 > $b;
+          END { print "$p-$b" if $b >= 0 }' "${MODEL%-*}" "${MODEL##*-}" "$CHOSEN" 2>/dev/null)"
+        [ -n "$OLDER" ] && DELTA="$(model_section "$CHOSEN" "$OLDER")" ;;
+      esac ;;
+    esac
+    if [ -z "${DELTA// /}" ]; then
+      OLDER="$MODEL"
+      while :; do
+        case "$OLDER" in *-*-*) OLDER="${OLDER%-*}" ;; *) OLDER=""; break ;; esac
+        case "$OLDER" in *-*-*) ;; *) OLDER=""; break ;; esac
+        DELTA="$(model_section "$CHOSEN" "$OLDER")"
+        [ -n "${DELTA// /}" ] && break
+      done
+    fi
+    if [ -n "$OLDER" ] && [ -n "${DELTA// /}" ]; then
+      NAME="$MODEL"
+      echo "$(date '+%F %T') target: fallback model '$OLDER' for '$MODEL'" >>"$WF_LOG" 2>/dev/null
+    else
+      DELTA=""
+    fi
   fi
   OUT="$OUT
 

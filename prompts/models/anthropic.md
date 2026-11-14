@@ -2,9 +2,9 @@
 family: anthropic
 display_name: Anthropic Claude
 match: claude|anthropic|opus|sonnet|haiku
-frontier: claude-fable-5
-daily: claude-sonnet-5
-updated: 2026-08-09
+frontier: claude-fable-5-2
+daily: claude-opus-5-5
+updated: 2026-11-13
 ---
 
 ## Prompting rules
@@ -157,3 +157,65 @@ above applies unchanged. What differs from Fable 5:
 - **Ask for length directly.** Default responses run long, and nothing in the prompt
   shortens them except saying so.
 - **No assistant prefill** — it 400s, same as Fable 5.
+
+## Model: claude-opus-5-5
+
+The current Opus, and the default model in Claude Code (claude-api skill, read 13 Nov 2026).
+Thinking is always on here and cannot be turned off; effort is the only dial (default
+`medium`). When the prompt is going here:
+
+- **Never write a reasoning scaffold.** "Think step by step" or "think less" lines do
+  nothing useful; the reader controls depth with effort, not the prompt.
+- **State scope and say what must not change.** It widens tasks by default; name the files
+  or areas to leave alone, with the reason.
+- **Name the patterns to avoid, not a mood.** For design or UI work, "avoid a generic look"
+  swaps one default for another; list the specific things you do not want.
+- **Don't re-describe an attached screenshot.** It reads screens and charts precisely;
+  say what to do with the image instead.
+- **Ask for length directly.** Turns run long; nothing else shortens them.
+- **No assistant prefill** (a 400). Ask for the output shape in words.
+
+## Model: claude-sonnet-5-5
+
+The mid-price Claude (claude-api skill, read 13 Nov 2026). Adaptive thinking is on by
+default and effort defaults to `high`. When the prompt is going here:
+
+- **Ask it to prove code changes.** At low effort it can report a change as done without
+  running anything; for code work, ask it to run the tests or the build and report the
+  output.
+- **Say which tools or sources to use.** On knowledge work it may answer from memory when
+  a connected tool, the repo or a search would serve better; name the source you want.
+- **For follow-ups, say what is settled.** It can reopen earlier answers; state which
+  decisions stand and what this turn changes.
+- **No assistant prefill, no temperature** (both 400 on current Claude models).
+
+## Model: claude-haiku-5-5
+
+The fast, low-cost Claude (claude-api skill, read 13 Nov 2026). Thinking is on by default;
+effort runs from `low` to `max` (default `medium`). When the prompt is going here:
+
+- **Keep the task tight and the output shape explicit.** It is at its best on short,
+  well-specified work (rewriting, extraction, classification); give the format, and 2 or 3
+  short examples when the shape matters.
+- **For agent work, ask it to finish.** With a long agent prompt at low effort it can stop
+  early and hand the task back; say "keep going until everything asked is done".
+- **Ask it to run checks after code changes**, as for Sonnet 5.5.
+- **Give today's date when it can search**, and say which facts to look up.
+- **Frame security-adjacent requests up front.** Its classifiers can decline, and Haiku has
+  no server-side fallback.
+
+## Model: claude-fable-5-2
+
+Anthropic's most capable model open to all customers (claude-api skill, read 13 Nov 2026).
+Thinking is always on; effort defaults to `high`. When the prompt is going here:
+
+- **Under-specify the method.** State the goal, the constraints that matter and what done
+  looks like, then stop; prescriptive step lists make it worse.
+- **Leave out "think less" or "answer without deliberating".** It ignores them at medium
+  effort and above.
+- **Say it should finish the whole task**, which actions it may take without asking, and
+  which need approval, named exactly.
+- **Say who owns the code** ("you own and maintain this code") when you want it to fix
+  structure rather than add around it.
+- **Limit delegation explicitly** if subagents are available.
+- **For a final report, ask for one written for a reader who has not seen the work.**

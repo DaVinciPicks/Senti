@@ -21,7 +21,11 @@
 #     The bump forces install.sh to replace it (yours is kept at config.sh.bak).
 # v8: renamed back, Sanele → Senti. Same reason as v7, paths reversed (~/.config/sanele →
 #     ~/.config/senti, ~/.cache/sanele → ~/.cache/senti, sanele.log → senti.log).
-WF_CONFIG_VERSION=8
+# v9: three AI providers (WF_AI_PROVIDER pins; keys in the macOS Keychain), the audio_ctx
+#     gate moved from 10 s to 14 s (measured), WF_URL can be overridden (the self-test
+#     points it at a dead port to prove the transcription check fails), and the notes
+#     digest refresh is gone (WF_BRAIN_REFRESH no longer exists).
+WF_CONFIG_VERSION=9
 
 # --- Model ---
 # Selected via the menu bar (Fast/Accurate); persisted in model.pref.
@@ -32,7 +36,11 @@ WF_MODEL_ACCURATE="$WF_MODELS_DIR/ggml-large-v3-turbo-q5_0.bin"
 WF_MODEL_FAST="$WF_MODELS_DIR/ggml-base.en.bin"
 WF_MODEL_PREF="$HOME/.cache/senti/model.pref"
 if [ -z "${WF_MODEL:-}" ]; then
-  case "$(cat "$WF_MODEL_PREF" 2>/dev/null)" in
+  # builtin read: no spawn. It returns 1 on an empty file or a last line with no newline,
+  # and senti-serve.sh sources this under set -e, so the || true is load-bearing.
+  _wf_pref=""
+  if [ -f "$WF_MODEL_PREF" ]; then IFS= read -r _wf_pref < "$WF_MODEL_PREF" || true; fi
+  case "$_wf_pref" in
     fast) WF_MODEL="$WF_MODEL_FAST" ;;
     *)    WF_MODEL="$WF_MODEL_ACCURATE" ;;
   esac
@@ -49,7 +57,7 @@ fi
 # --- Server ---
 WF_HOST="${WF_HOST:-127.0.0.1}"
 WF_PORT="${WF_PORT:-8090}"
-WF_URL="http://${WF_HOST}:${WF_PORT}"
+WF_URL="${WF_URL:-http://${WF_HOST}:${WF_PORT}}"
 
 # --- Language --- ("auto" to autodetect, or "en", "es", etc.)
 WF_LANG="${WF_LANG:-en}"
@@ -64,7 +72,25 @@ WF_PIDFILE="$WF_RUN/sox.pid"
 WF_LOG="$HOME/Library/Logs/senti.log"
 
 # --- AI modes (prompt / command / context) ---
-# One provider, one key, one model: OpenAI gpt-6-luna ($0.10/$0.50 per 1M).
+# Three providers behind one adapter (senti-ai.sh): OpenAI, Anthropic and OpenRouter. The
+# menu bar writes the choice to ~/.config/senti/ai.pref; keys live in the macOS Keychain
+# (senti-key.sh). Defaults: OpenAI gpt-6-luna ($0.10/$0.50 per 1M), Anthropic
+# claude-opus-5-5, OpenRouter openai/gpt-6-luna. ai-models.json lists every model, its
+# price and the efforts it accepts.
+# Pins below OUTRANK the menu choice, which is why they are commented out. Provider and
+# model always resolve as a pair, so a pinned model is never sent to another provider:
+# WF_AI_PROVIDER=anthropic          # openai | anthropic | openrouter
+# WF_TEXT_MODEL="claude-haiku-5-5"  # claude-* means Anthropic, an id with "/" OpenRouter
+# WF_VISION_MODEL="claude-haiku-5-5"
+# Key file paths, used only when the Keychain holds no key (defaults shown):
+# WF_ANTHROPIC_KEY="$HOME/.config/senti/anthropic-key"
+# WF_OPENROUTER_KEY="$HOME/.config/senti/openrouter-key"
+# Anthropic refusal fallbacks (Opus and Sonnet; Haiku has none): a declined request is
+# re-run server-side on the model Anthropic recommends. On by default (owner, 13 Nov 2026).
+# WF_ANTHROPIC_FALLBACKS=0
+# OpenRouter: data_collection "deny" is always sent. Zero-data-retention routing is
+# stricter and can leave a model with no endpoint (the request then fails):
+# WF_OPENROUTER_ZDR=1
 # Measured on this Mac (8-case eval + per-call cost):
 #   gpt-4o-mini   vision 3.30s  37k tok  $0.00560   (the old vision model)
 #   deepseek-chat text   1.37s           $0.00003   (the old text model — still cheapest)
@@ -78,7 +104,7 @@ WF_LOG="$HOME/Library/Logs/senti.log"
 #   gpt-5.6-terra 8.25   text  $0.00568   (+0.25 eval for ~12x luna's cost — not worth it)
 # Eval granularity is integer scores over 8 cases, so ±0.25 is noise; luna is chosen
 # because it is newer and 3-4.5x cheaper at indistinguishable quality, not because 8.12>8.00.
-# For a one-off quality push: WF_TEXT_MODEL=gpt-5.6-sol bash senti-prompt.sh ...
+# For a one-off quality push: SENTI_PROVIDER=openai SENTI_MODEL=gpt-6.1-sol bash senti-prompt.sh ...
 WF_OPENAI_KEY="${WF_OPENAI_KEY:-$HOME/.config/senti/openai-key}"
 # Reasoning depth: none | low | medium | high | xhigh   ('minimal' is REJECTED by gpt-5.x)
 # Measured on the prompt-rewrite task (2 runs each): none 2.05s/$0.00115 ·
@@ -102,14 +128,12 @@ WF_SHOT_PX="${WF_SHOT_PX:-1536}"
 # Shrinking whisper's encoder window ~halves latency on short clips (measured 833ms →
 # 420ms on a 6s clip, byte-identical transcript) but TRUNCATES longer ones: at 16s the
 # transcript diverged and ran 3x slower; at 18.8s the end of the recording was silently
-# lost. So it only applies below WF_AUDIO_CTX_MAX_SEC — 12s was still identical, 10s is
-# the shipped margin. Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
+# lost. So it only applies below WF_AUDIO_CTX_MAX_SEC. 768 frames of 20 ms cover 15.36 s;
+# b2 measured identical words up to 14.61 s and a lost ending at 16.17 s (13 Nov 2026), and
+# moving the gate from 10 to 14 took 10.8 to 12.9 s dictations from about 1.15 s to 0.73 s.
+# Set WF_AUDIO_CTX_MAX_SEC=0 to disable the optimisation entirely.
 WF_AUDIO_CTX="${WF_AUDIO_CTX:-768}"
-WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-10}"
-# Uncomment to pin a model; otherwise each script's built-in default is used
-# (so upgrades take effect without editing this file).
-# WF_TEXT_MODEL="gpt-6-luna"
-# WF_VISION_MODEL="gpt-6-luna"
+WF_AUDIO_CTX_MAX_SEC="${WF_AUDIO_CTX_MAX_SEC:-14}"
 
 WF_OPERATING_PROMPT="${WF_OPERATING_PROMPT:-$HOME/.config/senti/prompts/operating.md}"
 # Model-aware prompting knowledge base: prompt mode reads the guidance file for
@@ -121,15 +145,17 @@ WF_MODEL_KB="${WF_MODEL_KB:-$HOME/.config/senti/prompts/models}"
 WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 
 # --- Second brain (Obsidian) ---
-# Off by default. When on, Prompt mode adds a capped digest of YOUR vault note for
-# the current project to the API call; that is the point and the risk. Only the
-# folders you list are searched, size is capped, every injection is logged to
-# senti.log. To turn it on, set both:
+# Off by default. When on, a heavy Prompt turn (one that opens with "think hard" or
+# "today let's work on") adds a capped digest of YOUR vault note for the current project
+# to the AI call; that is the point and the risk. Only the folders you list are searched,
+# size is capped, and senti.log records "sent: vault '<note>' N chars" for every digest
+# that joins a request. See what would be sent, locally:
+#   bash ~/.config/senti/senti-brain.sh --preview <project>
+# To turn it on, set both:
 # WF_BRAIN=1
 # WF_BRAIN_DIRS=$'Projects\nWork'              # vault folders it may read, one per line
 # WF_VAULT="$HOME/Documents/Obsidian Vault"
 # WF_BRAIN_MAX=700                            # digest cap, chars
-# WF_BRAIN_REFRESH=0                          # disable the background luna digest (~$0.001)
 
 # --- Binaries (absolute paths — Hammerspoon/launchd have a minimal PATH) ---
 WF_SOX="${WF_SOX:-/opt/homebrew/bin/sox}"
@@ -143,4 +169,4 @@ WF_SOUND_STOP="${WF_SOUND_STOP:-/System/Library/Sounds/Pop.aiff}"
 
 # 700 every time, not only at install: a cache wiped by a disk cleanup was recreated 755
 # here, and it holds audio, screenshots and selected text while a turn runs.
-{ mkdir -p "$WF_RUN" && chmod 700 "$WF_RUN"; } 2>/dev/null || true
+{ { [ -d "$WF_RUN" ] || mkdir -p "$WF_RUN"; } && chmod 700 "$WF_RUN"; } 2>/dev/null || true
