@@ -372,6 +372,7 @@ end
 -- nothing is copied that the contract does not name.
 local PART_LABEL = { speech = "What you said", selection = "Selected text", window_title = "Window title",
                      session = "Earlier turns in this window", vault = "Notes from your vault",
+                     notion = "Your Notion page",
                      target_digest = "Guidance for the destination model" }
 local MODE_LABEL = { prompt = "Prompt", command = "Command", context = "Context" }
 local function thousands(n)
