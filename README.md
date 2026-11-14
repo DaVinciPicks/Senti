@@ -327,8 +327,10 @@ hold key ─▶ Hammerspoon (senti.lua) ─▶ sox records mic ─▶ SIGINT fin
 
 ## Config
 
-Everything is tunable in `~/.config/senti/config.sh`: language, silence threshold, efforts,
-screenshot size, the notes bridge (`WF_BRAIN`) and the operating layer (`WF_OPERATING_LAYER`). Edit
+`~/.config/senti/config.sh` holds the settings: language (`WF_LANG`), efforts (`WF_EFFORT`,
+`WF_VISION_EFFORT`), screenshot size (`WF_SHOT_PX`) and the notes bridge (`WF_BRAIN`). 2 more are read
+from it but have no line there until you add one: the silence threshold (`WF_SILENCE_THOLD`, default
+0.005) and the operating layer (`WF_OPERATING_LAYER=0` turns it off). Edit
 `replacements.txt` for vocabulary fixes (for example "cloud md" to `CLAUDE.md`) and
 `eval/cases.txt` for eval cases.
 
