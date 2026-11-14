@@ -9,6 +9,9 @@
 #   senti-brain.sh <project-hint>             # the Obsidian digest for a project
 #   senti-brain.sh --notion                   # the Notion digest for the project in
 #                                             # SENTI_SLABEL (heavy turns only, see below)
+#   senti-brain.sh --retrieve                 # one more note from the project's vault
+#                                             # folder that matches the words in SENTI_Q
+#                                             # (WF_BRAIN_RETRIEVE=1, heavy turns only)
 #   senti-brain.sh --preview <project-hint>   # print, locally, what would ride a heavy
 #                                             # Prompt turn and where it would go. Sends
 #                                             # nothing to the AI provider; it may read the
@@ -42,6 +45,14 @@
 #     token, nothing from the speech or the window title. The gated digest (never the raw
 #     page) is kept in ~/.cache/senti/brain/notion-<page id>.txt (mode 600) for
 #     WF_NOTION_TTL_MIN minutes so the next heavy turn does not wait on Notion again.
+#   - Retrieval (WF_BRAIN_RETRIEVE=1, needs WF_BRAIN=1) adds at most ONE more note per heavy
+#     turn: the best keyword match (SQLite FTS5, bm25, in memory, nothing written to disk)
+#     for what the user said, among the notes in the SAME project folder as the matched
+#     note, above a score threshold. The index holds exactly what the gate would send for
+#     each listed note (never a raw body), built per turn after transcription; the query
+#     reaches python in the environment. Notes under People/, hidden folders and symlinks
+#     are never indexed, and a project folder that IS a listed folder is not a project
+#     folder, so nothing is retrieved from it.
 #   - There is no background upload. A lazy background step that sent the digest to the
 #     model to compress it was deleted on 13 Nov 2026: it had not run since 17 Oct (the
 #     key-down prefetch disabled it) and it was one more upload than the feature needs.
@@ -53,8 +64,9 @@ source "$HOME/.config/senti/config.sh"
 
 MODE=digest
 case "${1:-}" in
-  --preview) MODE=preview; shift ;;
-  --notion)  MODE=notion;  shift ;;
+  --preview)  MODE=preview;  shift ;;
+  --notion)   MODE=notion;   shift ;;
+  --retrieve) MODE=retrieve; shift ;;
 esac
 VAULT="${WF_VAULT:-$HOME/Documents/Obsidian Vault}"
 MAX="${WF_BRAIN_MAX:-700}"
@@ -108,6 +120,16 @@ sub digest {
   $d = substr(join("\n", @o), 0, $max);
   $d =~ s/\n+\z//;
   return $d;
+}
+if ($ENV{SENTI_BD_BATCH}) {     # NUL-separated paths in, "path\0digest\0" records out
+  local $/ = "\0";
+  while (my $p = <STDIN>) {
+    chomp $p; next unless length $p;
+    open(my $fh, "<", $p) or next;
+    my $t = ""; read($fh, $t, 1048576); close $fh;
+    print $p, "\0", digest($t), "\0";
+  }
+  exit 0;
 }
 local $/; my $t = <STDIN>; $t = "" unless defined $t;
 print digest($t);
@@ -188,9 +210,12 @@ obsidian_state() {
   fi
 }
 
-# resolve_hub → NOTE (the real path of the project's note), or nothing.
+# resolve_hub → NOTE (the real path of the project's note), or nothing, and PROJDIR: the
+# real path of the project's folder (the note's folder, else the first listed subfolder
+# whose name matches), which scopes retrieval.
+PROJDIR=""
 resolve_hub() {
-  local rel r k v NK RP d base NB M CAND NMD m
+  local rel r k v NK RP d base NB M CAND NMD m first=""
   ROOTS=""
   while IFS= read -r rel; do
     [ -n "$rel" ] && [ -d "$VAULT/$rel" ] || continue
@@ -213,22 +238,37 @@ EOF
         { [ -f "$VAULT/$v" ] || [ -L "$VAULT/$v" ]; } || continue
         RP="$(realnote "$VAULT/$v")"
         inside_roots "$RP" || { ignored "map entry for '$k'"; continue; }
-        NOTE="$RP"; return 0
+        NOTE="$RP"; PROJDIR="${RP%/*}"; return 0
       fi
     done < "$MAP"
   fi
 
-  # 2. Allowlisted dirs, matched by normalized name (either contains the other).
+  # 2. Allowlisted dirs, matched by normalized name (either contains the other). All the
+  # subfolder names of a listed folder are normalized in ONE tr pipeline (names on stdin,
+  # never argv): two spawns per folder made this scan cost about 0.5 s on 30 folders.
+  local names norms i
   while IFS= read -r rel; do
     [ -d "$VAULT/$rel" ] || continue
-    for d in "$VAULT/$rel"/*/; do
-      [ -d "$d" ] || continue
+    names=()
+    for d in "$VAULT/$rel"/*/; do [ -d "$d" ] && names+=("$d"); done
+    [ "${#names[@]}" -gt 0 ] || continue
+    norms=()
+    while IFS= read -r NB; do norms+=("$NB"); done <<EOF
+$(for d in "${names[@]}"; do base="${d%/}"; printf '%s\n' "${base##*/}"; done | /usr/bin/tr 'A-Z' 'a-z' | /usr/bin/tr -cd 'a-z0-9\n')
+EOF
+    # A folder name with a newline in it would shift the pairs: then normalize one by one.
+    if [ "${#norms[@]}" != "${#names[@]}" ]; then
+      norms=(); for d in "${names[@]}"; do base="${d%/}"; norms+=("$(norm "${base##*/}")"); done
+    fi
+    i=0
+    for d in "${names[@]}"; do
+      NB="${norms[$i]}"; i=$((i+1))
       base="${d%/}"; base="${base##*/}"
-      NB="$(norm "$base")"
       [ "${#NB}" -lt 3 ] && continue
       case "$NH" in *"$NB"*) M=1 ;; *) case "$NB" in *"$NH"*) M=1 ;; *) M=0 ;; esac ;; esac
       if [ "$M" = "1" ]; then
         inside_roots "$(realdir "$d")" || { ignored "folder '$rel/$base'"; continue; }
+        [ -n "$first" ] || first="$(realdir "$d")"
         CAND=""
         if [ -f "$d$base.md" ] || [ -L "$d$base.md" ]; then CAND="$d$base.md"
         else
@@ -245,12 +285,115 @@ EOF
           if inside_roots "$RP"; then NOTE="$RP"
           else ignored "note '$rel/$base/${CAND##*/}'"; fi
         fi
-        [ -n "$NOTE" ] && return 0
+        [ -n "$NOTE" ] && { PROJDIR="${NOTE%/*}"; return 0; }
       fi
     done
   done <<EOF
 $DIRS
 EOF
+  PROJDIR="$first"
+  return 0
+}
+
+# ── Retrieval ───────────────────────────────────────────────────────────────────────
+# Python only RANKS: it gets each listed note's gated digest (from the gate's batch mode)
+# and prints the winning path. The text that leaves is produced afterwards by brain_digest,
+# like every other note. Code on argv, data on stdin, the query and paths in the
+# environment.
+RANK_PY='
+import os, re, sqlite3, sys
+E = os.environ
+roots = [r.rstrip("/") for r in E.get("SENTI_RROOTS", "").split("\n") if r.strip()]
+proj, hub = E.get("SENTI_RPROJ", "").rstrip("/"), E.get("SENTI_RHUB", "")
+try:
+    floor = float(E.get("SENTI_RMIN") or 3)
+except ValueError:
+    floor = 3.0
+# Common words, and the heavy-turn openers ("today let us work on", "think hard"), never
+# count as evidence that a note is relevant.
+STOP = set("a about after again all also am an and any are as at be been but by can could did do "
+           "does doing done for from get got had has have how if in into is it its just let lets like "
+           "make me more most my need no not now of off on one or our out over please really should "
+           "so some than that the their them then there these they thing things this those to too try "
+           "up us use very want was way we well were what when where which while who why will with "
+           "would you your today work working think thinking hard harder figure".split())
+terms, seen = [], set()
+for w in re.findall(r"[a-z0-9]+", E.get("SENTI_Q", "").lower()):
+    if len(w) < 3 or w in STOP or w in seen:
+        continue
+    seen.add(w)
+    terms.append(w)
+terms = terms[:24]
+if not terms or not proj or not roots:
+    sys.exit(0)
+def root_of(p):
+    for r in roots:
+        if p.startswith(r + "/"):
+            return r
+    return None
+recs = []
+data = sys.stdin.buffer.read().split(b"\0")
+for i in range(0, len(data) - 1, 2):
+    p = data[i].decode("utf-8", "surrogateescape")
+    d = data[i + 1].decode("utf-8", "replace")
+    rp = os.path.realpath(p)
+    r = root_of(rp)
+    if r is None or rp != p or not d.strip():
+        continue
+    rel = rp[len(r) + 1:].split("/")
+    if "People" in rel or any(x.startswith(".") for x in rel):
+        continue
+    recs.append((rp, d))
+if not recs or root_of(proj) is None:
+    sys.exit(0)
+db = sqlite3.connect(":memory:")
+db.execute("create virtual table n using fts5(path unindexed, body, tokenize=\"porter unicode61\")")
+db.executemany("insert into n(path, body) values (?, ?)", recs)
+# Every term quoted: FTS5 operators in speech (NEAR, *, ^, quotes) never reach MATCH.
+q = " OR ".join("\"%s\"" % t for t in terms)
+for path, score in db.execute("select path, bm25(n) from n where n match ? order by bm25(n)", (q,)):
+    if not path.startswith(proj + "/") or path == hub:
+        continue
+    if -score >= floor:
+        sys.stdout.write("%s\n%.2f\n" % (path, -score))
+    break
+'
+# list_notes → every .md under the resolved listed folders, NUL-separated: regular files
+# only (find does not follow symlinks, and -type f skips symlinked notes), and nothing in a
+# hidden folder (.obsidian, .trash) below a listed folder. The pruning looks at names below
+# the listed folder only, so a vault that itself sits under a hidden folder still works.
+list_notes() {
+  local r
+  while IFS= read -r r; do
+    [ -n "$r" ] || continue
+    /usr/bin/find "$r" -mindepth 1 -name '.*' -prune -o -type f -name '*.md' -print0 2>/dev/null
+  done <<EOF
+$ROOTS
+EOF
+}
+# retrieve_pick → RNOTE (real path of the picked note) and RSCORE, or RSTATE (why not).
+RNOTE=""; RSCORE=""; RSTATE=""
+retrieve_pick() {
+  local out r
+  RNOTE=""; RSCORE=""; RSTATE=""
+  if [ "${WF_BRAIN_RETRIEVE:-0}" != "1" ]; then RSTATE="Retrieval is off (WF_BRAIN_RETRIEVE is not 1)."; return 0; fi
+  [ -z "$(obsidian_state)" ] || { RSTATE="Retrieval needs the Obsidian bridge on."; return 0; }
+  blank "${SENTI_Q:-}" && { RSTATE="Retrieval picks a note from what you say; there is nothing to match yet."; return 0; }
+  [ -n "$ROOTS" ] || resolve_hub
+  if [ -z "$PROJDIR" ] || ! inside_roots "$PROJDIR"; then
+    RSTATE="No project folder inside your listed folders matches '$HINT', so retrieval adds nothing."; return 0
+  fi
+  out="$(list_notes | SENTI_BD_MAX="$MAX" SENTI_BD_BATCH=1 /usr/bin/perl -e "$BRAIN_GATE_PL" \
+         | SENTI_RROOTS="$ROOTS" SENTI_RPROJ="$PROJDIR" SENTI_RHUB="$NOTE" \
+           SENTI_RMIN="${WF_BRAIN_RETRIEVE_MIN:-3}" /usr/bin/python3 -I -c "$RANK_PY" 2>/dev/null)"
+  [ -n "$out" ] || { RSTATE="No note in the project folder matches what you said well enough."; return 0; }
+  RNOTE="${out%%$'\n'*}"; RSCORE="${out#*$'\n'}"
+  # The same checks again on this side: a regular file, inside the project folder, inside
+  # the resolved listed folders.
+  case "$RNOTE" in "$PROJDIR"/*) ;; *) RNOTE=""; RSTATE="Retrieval pick ignored (outside the project folder)."; return 0 ;; esac
+  if [ ! -f "$RNOTE" ] || [ -L "$RNOTE" ] || ! inside_roots "$RNOTE"; then
+    RNOTE=""; RSTATE="Retrieval pick ignored."; return 0
+  fi
   return 0
 }
 
@@ -485,6 +628,20 @@ notion_digest() {
 noteout() { if [ -n "${SENTI_BRAIN_NOTEOUT:-}" ]; then printf '%s' "$1" > "$SENTI_BRAIN_NOTEOUT" 2>/dev/null; fi; }
 
 case "$MODE" in
+  retrieve)
+    retrieve_pick
+    if [ -z "$RNOTE" ]; then
+      [ "${WF_BRAIN_RETRIEVE:-0}" = "1" ] && [ -z "$(obsidian_state)" ] && blog "retrieval added nothing"
+      exit 0
+    fi
+    DIGEST="$(brain_digest "$RNOTE")"
+    blank "$DIGEST" && exit 0
+    NAME="${RNOTE##*/}"
+    noteout "$NAME"
+    blog "retrieved '$NAME' $(printf '%s' "$DIGEST" | wc -c | tr -d ' ') chars (score $RSCORE)"
+    printf 'Related note from the user'"'"'s own notes (it matched the words of this request):\n%s\n' "$DIGEST"
+    exit 0 ;;
+
   notion)
     notion_digest
     blank "$NDIGEST" && exit 0
@@ -511,6 +668,19 @@ case "$MODE" in
           echo "Senti would send these $NCH characters from '${NOTE##*/}' (cap $MAX) to $DEST:"
           echo "────"; printf '%s\n' "$DIGEST"; echo "────"
         fi
+      fi
+    fi
+    if [ "${WF_BRAIN_RETRIEVE:-0}" = "1" ]; then
+      export SENTI_Q="${SENTI_Q:-${SENTI_IN:-}}"
+      retrieve_pick
+      if [ -n "$RNOTE" ]; then
+        DIGEST="$(brain_digest "$RNOTE")"
+        NCH="$(printf '%s' "$DIGEST" | wc -c | tr -d ' ')"
+        echo "For this request, retrieval would add these $NCH characters from '${RNOTE##*/}' (score $RSCORE, cap $MAX):"
+        echo "────"; printf '%s\n' "$DIGEST"; echo "────"
+      else
+        echo "$RSTATE"
+        blank "$SENTI_Q" && echo "Set SENTI_IN to a sample request to see which note retrieval would add."
       fi
     fi
     notion_digest

@@ -26,7 +26,8 @@
 #     points it at a dead port to prove the transcription check fails), and the notes
 #     digest refresh is gone (WF_BRAIN_REFRESH no longer exists).
 # v10: Notion as a second notes source beside Obsidian (WF_BRAIN_NOTION, off by default; the
-#     token lives in the Keychain like the AI keys), with its timeout and cache settings.
+#     token lives in the Keychain like the AI keys), with its timeout and cache settings, and
+#     local keyword retrieval over the listed vault folders (WF_BRAIN_RETRIEVE, off by default).
 WF_CONFIG_VERSION=10
 
 # --- Model ---
@@ -158,6 +159,12 @@ WF_TARGET_PREF="${WF_TARGET_PREF:-$HOME/.cache/senti/target.pref}"
 # WF_BRAIN_DIRS=$'Projects\nWork'              # vault folders it may read, one per line
 # WF_VAULT="$HOME/Documents/Obsidian Vault"
 # WF_BRAIN_MAX=700                            # digest cap, chars
+# Retrieval, also off by default: on a heavy turn, add ONE more note from the same project
+# folder, the best keyword match (SQLite FTS5, in memory, nothing stored) for what you said,
+# capped at WF_BRAIN_MAX like the main note. Needs WF_BRAIN=1. It found the right note for 8
+# of 8 test requests on a synthetic vault; whether it makes prompts better is not proven.
+# WF_BRAIN_RETRIEVE=1
+# WF_BRAIN_RETRIEVE_MIN=3                     # bm25 score a note needs to be added (higher = stricter)
 
 # --- Second brain (Notion) ---
 # Off by default, and independent of the Obsidian switch above. When on, a heavy Prompt turn

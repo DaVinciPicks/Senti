@@ -64,10 +64,11 @@ ctx_note_file() {
   else printf '%s/ctx-note-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$$"; fi
 }
 senti_ctx_vault_note() { cat "$(ctx_note_file)" 2>/dev/null; }
-# Per-turn sidecars for what a heavy turn adds after transcription (the Notion page label).
+# Per-turn sidecars for what a heavy turn adds after transcription (the Notion page label,
+# the retrieved note's name).
 # Always keyed on this process, never on the window: they belong to one request.
 ctx_turn_file() { printf '%s/ctx-%s-pid%s' "${WF_RUN:-$HOME/.cache/senti}" "$1" "$$"; }
-senti_ctx_note() {   # senti_ctx_note <vault|notion> → the name to label last-request.json with
+senti_ctx_note() {   # senti_ctx_note <vault|notion|rnote> → the name to label last-request.json with
   case "$1" in
     vault) senti_ctx_vault_note ;;
     *)     cat "$(ctx_turn_file "$1")" 2>/dev/null ;;
@@ -75,7 +76,7 @@ senti_ctx_note() {   # senti_ctx_note <vault|notion> → the name to label last-
 }
 senti_ctx_cleanup() {
   [ -n "${SENTI_SKEY:-}" ] || rm -f "$(ctx_note_file)" 2>/dev/null
-  rm -f "$(ctx_turn_file notion)" 2>/dev/null
+  rm -f "$(ctx_turn_file notion)" "$(ctx_turn_file rnote)" 2>/dev/null
   return 0
 }
 
@@ -157,15 +158,17 @@ senti_intent() {
 # the split is measurable rather than a matter of belief, and logs "sent:" for each part
 # that joins this request: this, not "brain: prepared", is the record of what left the Mac.
 #
-# A heavy turn can also add a Notion digest. That is the only network call in this file,
-# so it happens HERE, after the speech is transcribed and only on a heavy turn: never in the
-# key-down prefetch (key-down is local work only; about 97% of turns are light and need
-# nothing). It runs in the background while the cached block is read, and senti-brain.sh
-# bounds it (WF_NOTION_TIMEOUT, default 2.5 s) and reuses a fetched digest for
-# WF_NOTION_TTL_MIN minutes. It gets its own nonce fence, because the cached block was
+# A heavy turn can also add a Notion digest and one retrieved vault note. Both need the
+# turn itself (retrieval matches the words just spoken; Notion is the only network call in
+# this file), so they happen HERE, after the speech is transcribed and only on a heavy
+# turn: never in the key-down prefetch (key-down is local work only; about 97% of turns are
+# light and need nothing). They run in the background, side by side, while the cached block
+# is read, so the turn waits for the slowest one, not the sum. senti-brain.sh bounds the
+# Notion read (WF_NOTION_TIMEOUT, default 2.5 s) and reuses its digest for
+# WF_NOTION_TTL_MIN minutes. Both go in their own nonce fence, because the cached block was
 # fenced at key-down.
 senti_ctx_for_intent() {
-  local mode block="" vchars schars note pn="" tn="" xn="" xbody="" nch out=""
+  local mode block="" vchars schars note pn="" tn="" xn="" pr="" rf="" xr="" xbody="" nch out=""
   mode="$(senti_intent "${1:-}")"
   echo "$(date '+%F %T') intent: $mode" >>"${WF_LOG:-/dev/null}" 2>/dev/null
   [ "$mode" = heavy ] || return 0
@@ -176,10 +179,28 @@ senti_ctx_for_intent() {
         bash "$HOME/.config/senti/senti-brain.sh" --notion > "$tn" 2>>"${WF_LOG:-/dev/null}" ) &
     pn=$!
   fi
+  if [ "${WF_BRAIN:-0}" = "1" ] && [ "${WF_BRAIN_RETRIEVE:-0}" = "1" ]; then
+    rf="$(ctx_turn_file xretrieve)"
+    : > "$(ctx_turn_file rnote)" 2>/dev/null; chmod 600 "$(ctx_turn_file rnote)" 2>/dev/null
+    # The utterance is the query: it reaches senti-brain.sh (and python) in the environment.
+    ( umask 077; SENTI_Q="${1:-}" SENTI_BRAIN_NOTEOUT="$(ctx_turn_file rnote)" \
+        bash "$HOME/.config/senti/senti-brain.sh" --retrieve > "$rf" 2>>"${WF_LOG:-/dev/null}" ) &
+    pr=$!
+  fi
   block="$(senti_untrusted_ctx)"
   if [ -n "$pn" ]; then
     wait "$pn" 2>/dev/null
     xn="$(cat "$tn" 2>/dev/null)"; rm -f "$tn"
+  fi
+  if [ -n "$pr" ]; then
+    wait "$pr" 2>/dev/null
+    xr="$(cat "$rf" 2>/dev/null)"; rm -f "$rf"
+  fi
+  if ! blank "$xr"; then
+    nch="$(printf '%s' "${xr#*$'\n'}" | wc -c | tr -d ' ')"
+    echo "$(date '+%F %T') sent: vault '$(senti_ctx_note rnote)' ${nch} chars (retrieved)" >>"${WF_LOG:-/dev/null}" 2>/dev/null
+    xbody="$xbody
+$xr"
   fi
   if ! blank "$xn"; then
     nch="$(printf '%s' "${xn#*$'\n'}" | wc -c | tr -d ' ')"
