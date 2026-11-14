@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Syntax and offline self-test
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: bash -n on every script (macOS bash 3.2)
+        run: |
+          set -u
+          /bin/bash --version | head -1
+          fail=0
+          for f in senti-*.sh install.sh uninstall.sh app/*.sh; do
+            [ -f "$f" ] || continue
+            if /bin/bash -n "$f"; then echo "ok   $f"; else echo "FAIL $f"; fail=1; fi
+          done
+          exit "$fail"
+
+      - name: Self-test, offline (--ci) in a throwaway HOME
+        run: |
+          set -u
+          export HOME="$(mktemp -d)"
+          /bin/bash senti-selftest.sh --ci
