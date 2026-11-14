@@ -2287,7 +2287,12 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 
 .mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .mnote { margin-top: 6px; max-width: 62ch; text-wrap: pretty; }
-.models { margin-top: 10px; display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.models { margin-top: 10px; display: flex; flex-direction: column; border-top: 1px solid var(--line);
+  /* OpenRouter lists 13 models: the list scrolls in place so the key and Test controls stay put. */
+  max-height: 336px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 24px), transparent); }
+.models:not(:has(.model:nth-child(7))) { -webkit-mask-image: none; }
+.models:focus-visible { outline: 2px solid var(--blue-strong); outline-offset: 2px; }
 .model { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 12px; text-align: left; align-items: start;
   padding: 11px 10px; border-bottom: 1px solid var(--line); transition: background-color 150ms ease; }
 .model:hover:not(:disabled) { background: var(--raise); }
@@ -2360,7 +2365,7 @@ h2 { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
     <section aria-labelledby="mtitle">
       <div class="mhead"><h2 id="mtitle">Model</h2></div>
       <p class="mnote" id="mnote"></p>
-      <div class="models" id="models" role="radiogroup" aria-labelledby="mtitle"></div>
+      <div class="models" id="models" role="radiogroup" aria-labelledby="mtitle" tabindex="0"></div>
     </section>
   </main>
 </div>
